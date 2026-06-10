@@ -18,7 +18,10 @@ const BUILTIN = [
   { name: 'stripe-key', re: /(?:sk|rk)_live_[A-Za-z0-9]{16,}/ },
   { name: 'google-api-key', re: /AIza[0-9A-Za-z_-]{30,}/ },
   { name: 'private-key', re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/ },
-  { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
+  // 線形化: 先頭 eyJ を否定後読みでアンカー（連結 eyJ 反復での全位置再走査を防ぐ）し、
+  // 各セグメントを有界 {8,2048} に。旧 `{8,}` は無上限でドット無し eyJ 反復に対し二次
+  // (1MB単一行で gate.match 約3.2s)になっていた。実JWTは各セグメント数百字で {8,2048} に収まる。
+  { name: 'jwt', re: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,2048}\.eyJ[A-Za-z0-9_-]{8,2048}\.[A-Za-z0-9_-]{8,2048}/ },
   { name: 'db-uri', re: /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i }, // user:pass@host（スキーム不問。先頭アンカーで線形化）
   { name: 'bearer', re: /bearer\s+[A-Za-z0-9_\-.=]{20,}/i },
   { name: 'authorization-header', re: /authorization\s*:\s*\S{8,}/i },

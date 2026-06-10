@@ -43,12 +43,18 @@ export function buildPrompt(observations, maxCandidates) {
   };
 }
 
-/** ある位置の `[` から対応する `]` までのバランスの取れた部分文字列を返す（なければ null） */
-function balancedArray(s, start) {
+/**
+ * ある位置の `[` から対応する `]` までのバランスの取れた部分文字列を返す（なければ slice:null）。
+ * budget: この呼び出しで走査してよい最大文字数。`scanned` に実走査量を返し、呼び出し側が
+ * 総走査量を入力長の定数倍に抑える（`[`×N 入力での O(n²) 爆発を防ぐ）。
+ * @returns {{slice: string|null, scanned: number}}
+ */
+function balancedArray(s, start, budget) {
   let depth = 0;
   let inStr = false;
   let esc = false;
-  for (let i = start; i < s.length; i++) {
+  const limit = Math.min(s.length, start + Math.max(0, budget));
+  for (let i = start; i < limit; i++) {
     const c = s[i];
     if (inStr) {
       if (esc) esc = false;
@@ -60,22 +66,29 @@ function balancedArray(s, start) {
     else if (c === '[') depth++;
     else if (c === ']') {
       depth--;
-      if (depth === 0) return s.slice(start, i + 1);
+      if (depth === 0) return { slice: s.slice(start, i + 1), scanned: i - start + 1 };
     }
   }
-  return null;
+  return { slice: null, scanned: limit - start };
 }
+
+// LLM 応答は信頼できない外部入力。無上限だと `[`×N 等で CPU/メモリ事故になるため上限を設ける。
+const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする
 
 /**
  * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
  * 散文中の `[1, 2, 3]` を誤って掴まないよう、「オブジェクトを含む配列」を優先する。
  * 全 `[` 位置を順に試し、object を含む最初の配列を返す。なければ最初に parse できた配列。
+ * 入力長と総走査量を有界化し、病的応答（`[`×N）でも線形時間に収める。
  */
 export function extractJsonArray(text) {
-  const s = String(text ?? '');
+  let s = String(text ?? '');
+  if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
   let fallback;
-  for (let i = s.indexOf('['); i !== -1; i = s.indexOf('[', i + 1)) {
-    const slice = balancedArray(s, i);
+  let budget = s.length * 2 + 65536; // 総走査量を入力長の定数倍に制限（O(n²) 防止）
+  for (let i = s.indexOf('['); i !== -1 && budget > 0; i = s.indexOf('[', i + 1)) {
+    const { slice, scanned } = balancedArray(s, i, budget);
+    budget -= scanned;
     if (!slice) continue;
     let parsed;
     try {

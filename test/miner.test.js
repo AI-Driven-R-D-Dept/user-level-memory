@@ -29,6 +29,19 @@ test('extractJsonArray: object を含む配列を優先', () => {
   assert.deepEqual(extractJsonArray('options [1,2] then [{"hypothesis":"h"}]'), [{ hypothesis: 'h' }]);
 });
 
+test('extractJsonArray: 病的応答（`[`×N）でも線形時間に収まる（MEDIUM-1 回帰）', () => {
+  // 旧実装は各 `[` から末尾まで走査して O(n²)（50k で 5s、100k で 31s）。
+  const t0 = Date.now();
+  assert.throws(() => extractJsonArray('['.repeat(50000) + 'x'));
+  assert.throws(() => extractJsonArray('[x '.repeat(100000)));
+  extractJsonArray('[]'.repeat(100000)); // 多数の空配列でも有界
+  assert.ok(Date.now() - t0 < 500, `病的応答が線形: ${Date.now() - t0}ms`);
+  // 正常抽出は維持
+  assert.deepEqual(extractJsonArray('```json\n[{"hypothesis":"h","condition":"c"}]\n```'), [
+    { hypothesis: 'h', condition: 'c' },
+  ]);
+});
+
 test('validateCandidates: 正常系の正規化', () => {
   const raw = [{ hypothesis: ' h1 ', conditions: 'c', counterexamples: ['x', ''], evidence: ['obs-1', 'obs-unknown'] }];
   const out = validateCandidates(raw, { knownObsIds: new Set(['obs-1']), maxCandidates: 5 });
