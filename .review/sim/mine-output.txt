@@ -1,0 +1,39 @@
+provider=codex model=gpt-5.5 で 14 件の観測から採掘中…
+✓ 採掘完了: 新規候補 5 件 / 重複 0 件（観測 14 件から, provider=codex）
+
+cand-1f7865 [inbox] 2026-06-10 出自=miner:codex:gpt-5.5 (irodori)
+  仮説: irodori の条件付け設定では use_caption_condition を有効にすると speaker 条件が暗黙または意図的に無効化される構成があるため、話者制御を期待する場合は use_speaker_condition とモデル世代を明示確認する。
+  条件: v2 base、v2 VoiceDesign、または use_speaker_condition が既定 None のまま use_caption_condition: true を使う irodori 設定で、reference audio や speaker conditioning による話者制御を期待しているとき。
+  反例: v3 VoiceDesign のように text+speaker+caption の3-branchが明示的にサポートされている構成
+  反例: caption-only 挙動を意図しており speaker conditioning を使わない推論や学習
+  根拠: obs-a17ac9, obs-50b309
+
+cand-5f70b8 [inbox] 2026-06-10 出自=miner:codex:gpt-5.5 (irodori)
+  仮説: irodori の checkpoint・tokenizer・codec・embedding は次元や vocab の不一致が推論開始時または学習開始時の ValueError/RuntimeError に直結するため、組み合わせ変更時は config と実体を事前検証する。
+  条件: speaker inversion embedding、text_tokenizer_repo、codec repo、caption_tokenizer、または checkpoint を差し替える irodori の学習・推論環境。
+  反例: 同一リリースで配布された検証済み checkpoint/tokenizer/codec 一式をそのまま使う場合
+  反例: 該当する機能を無効化しており、その依存コンポーネントをロードしない場合
+  根拠: obs-ccc23f, obs-61e0e5, obs-7fc346, obs-3bfa9c
+
+cand-891f4d [inbox] 2026-06-10 出自=miner:codex:gpt-5.5 (irodori)
+  仮説: irodori v2 の固定長前提と v3 の可変長前提を混同すると、長尺推論の安定性低下や可変長系列のマスク不備が起きやすい。
+  条件: fixed_target_latent_steps、fixed_target_full_mask、--seconds、duration predictor の有無を調整しながら v2/v3 の学習設定や推論長を変更するとき。
+  反例: v2 の固定30秒・750 latent steps 前提に合わせて推論長を抑える場合
+  反例: v3 の可変長学習と duration predictor を前提にした設定だけを使う場合
+  根拠: obs-556a86, obs-fbb036, obs-974007
+
+cand-2669df [inbox] 2026-06-10 出自=miner:codex:gpt-5.5 (irodori)
+  仮説: irodori の補助機能フラグは隠れた依存や非対応条件を持つため、有効化前に必要ライブラリ・checkpoint 形式・train_mode との適合を確認する。
+  条件: caption_warmup、reference audio の normalize_db、DACVAE deterministic_encode など、既定から外れる補助機能を有効にする場合。
+  反例: normalize_db=None のまま ref_ensure_max による peak scaling だけを使う場合
+  反例: 新形式の DACVAE checkpoint や対応 train_mode が明示的に確認済みの場合
+  根拠: obs-7167ae, obs-976cbe, obs-9696b4
+
+cand-45e3a7 [inbox] 2026-06-10 出自=miner:codex:gpt-5.5 (irodori)
+  仮説: irodori の LoRA v3 では duration predictor を使う adapter が modules_to_save に duration_predictor を含む前提になりやすいため、推論側もその保存物を含む adapter として扱う。
+  条件: v3 fine-tuning で use_duration_predictor: true かつ lora_modules_to_save: auto を使い、生成した adapter を別環境や推論パイプラインでロードするとき。
+  反例: use_duration_predictor: false の LoRA fine-tuning
+  反例: modules_to_save を明示指定し duration_predictor を保存対象に含めない設計を採る場合
+  根拠: obs-0e74e2
+
+候補は inbox にあります。採用は人間が判断: ulm inbox
