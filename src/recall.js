@@ -65,16 +65,32 @@ export async function recallObservations(store, config, { query, project, scopes
     return { hits: vecHits.slice(0, limit).map((o) => ({ ...o, fused: o.sim })), mode: 'vector' };
   }
 
-  // RRF 融合
+  // 融合: 外部評価(作者非依存)で、等重み RRF は強い vector の順位を弱い FTS が引き下げ
+  // hybrid < vector になることが判明した。そこで「vector 主軸 + FTS は取りこぼし救済」にする:
+  //  - 両方に出る項目は vector の順位を尊重（agreement で僅かに前進）
+  //  - vector が拾えなかった FTS 固有ヒットだけ末尾に足す（exact/typo の救済。Recall は落とさない）
+  // これで hybrid は ranking で vector を下回らず、かつ FTS 固有の救済も保てる。
+  return { hits: fuseVectorPrimary(vecHits, ftsHits, ftsById).slice(0, limit), mode: 'hybrid' };
+}
+
+/**
+ * 融合: vector の順位を完全保持し、FTS 固有ヒットだけ末尾に救済追加する。
+ * 外部評価(作者非依存)で「等重み RRF は強い vector を弱い FTS が引き下げ hybrid<vector」
+ * が判明したため、ranking で vector を下回らないことを構造的に保証する設計に変更。
+ * @returns {object[]} 融合済み（vector 順 → FTS 固有の順）
+ */
+export function fuseVectorPrimary(vecHits, ftsHits, ftsById = new Map()) {
   const fScores = rrfScores(ftsHits.map((o) => o.id));
-  const vScores = rrfScores(vecHits.map((o) => o.id));
-  const ids = new Set([...fScores.keys(), ...vScores.keys()]);
   const fused = [];
-  for (const id of ids) {
-    const o = ftsById.get(id) || vecById.get(id);
-    const score = (fScores.get(id) || 0) + (vScores.get(id) || 0);
-    fused.push({ ...o, fused: score, rank: ftsById.get(id)?.rank ?? null, sim: vecById.get(id)?.sim ?? null });
+  const seen = new Set();
+  vecHits.forEach((o, i) => {
+    seen.add(o.id);
+    fused.push({ ...o, fused: 1 / (i + 1), rank: ftsById.get(o.id)?.rank ?? null, sim: o.sim });
+  });
+  for (const o of ftsHits) {
+    if (seen.has(o.id)) continue;
+    seen.add(o.id);
+    fused.push({ ...o, fused: -1 + (fScores.get(o.id) || 0), rank: o.rank, sim: null });
   }
-  fused.sort((a, b) => b.fused - a.fused);
-  return { hits: fused.slice(0, limit), mode: 'hybrid' };
+  return fused;
 }

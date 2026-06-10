@@ -1,0 +1,256 @@
+{
+ "q0": {
+  "obs-ec2048": 1,
+  "obs-dfd705": 1,
+  "obs-5743d2": 2,
+  "obs-c66374": 1,
+  "obs-36e3d7": 1
+ },
+ "q1": {
+  "obs-fd0e5f": 2,
+  "obs-7a02ab": 1
+ },
+ "q2": {
+  "obs-61546d": 2,
+  "obs-6bfac7": 2,
+  "obs-eef1da": 1,
+  "obs-1a637d": 1,
+  "obs-fc99f6": 1,
+  "obs-8e63dd": 1
+ },
+ "q3": {
+  "obs-ad4cd4": 2,
+  "obs-abbc87": 1,
+  "obs-ca6786": 1,
+  "obs-c66374": 1,
+  "obs-fd0e5f": 1
+ },
+ "q4": {
+  "obs-618219": 1,
+  "obs-2a51b9": 1,
+  "obs-821735": 1,
+  "obs-ec2048": 1,
+  "obs-c66374": 1,
+  "obs-ae83da": 1,
+  "obs-add8bb": 2
+ },
+ "q5": {
+  "obs-736aaf": 1,
+  "obs-0b67ce": 1,
+  "obs-e90d79": 2
+ },
+ "q6": {
+  "obs-fc373b": 2,
+  "obs-5b006a": 1,
+  "obs-eef1da": 1,
+  "obs-1a637d": 1,
+  "obs-fc99f6": 1,
+  "obs-03c109": 1
+ },
+ "q7": {
+  "obs-abbc87": 1,
+  "obs-618219": 1,
+  "obs-ca6786": 1,
+  "obs-c66374": 1,
+  "obs-72f1ee": 1,
+  "obs-3dae4f": 2
+ },
+ "q8": {
+  "obs-471668": 2,
+  "obs-b80607": 1
+ },
+ "q9": {
+  "obs-dfd705": 1,
+  "obs-5743d2": 1,
+  "obs-0b67ce": 1,
+  "obs-b95ae1": 2
+ },
+ "q10": {
+  "obs-410622": 1,
+  "obs-9c8c46": 2
+ },
+ "q11": {
+  "obs-41eada": 1,
+  "obs-8d93f2": 1,
+  "obs-410504": 2
+ },
+ "q12": {
+  "obs-86aba9": 1,
+  "obs-7d43ce": 1,
+  "obs-4cddcd": 2
+ },
+ "q13": {
+  "obs-618219": 1,
+  "obs-ec2048": 1,
+  "obs-abbc87": 1,
+  "obs-2a51b9": 1,
+  "obs-36e3d7": 1,
+  "obs-821735": 1,
+  "obs-c66374": 1,
+  "obs-191803": 2
+ },
+ "q14": {
+  "obs-61546d": 2,
+  "obs-6bfac7": 1,
+  "obs-eef1da": 1,
+  "obs-fc99f6": 1,
+  "obs-8e63dd": 2
+ },
+ "q15": {
+  "obs-008ca1": 1,
+  "obs-9aa018": 1,
+  "obs-1078fe": 2
+ },
+ "q16": {
+  "obs-ad4cd4": 1,
+  "obs-ca6786": 1,
+  "obs-618219": 1,
+  "obs-abbc87": 1,
+  "obs-c66374": 2,
+  "obs-72f1ee": 1
+ },
+ "q17": {
+  "obs-abbc87": 1,
+  "obs-11c603": 2,
+  "obs-b1d95d": 1,
+  "obs-72f1ee": 1,
+  "obs-36e3d7": 1,
+  "obs-ca6786": 1,
+  "obs-c66374": 1,
+  "obs-ec2048": 1
+ },
+ "q18": {
+  "obs-f60ae0": 2,
+  "obs-618219": 1,
+  "obs-ae83da": 1,
+  "obs-caa5fb": 1,
+  "obs-436bf5": 2
+ },
+ "q19": {
+  "obs-e48f37": 1,
+  "obs-b28a72": 1,
+  "obs-2a51b9": 1,
+  "obs-25f8bc": 2
+ },
+ "q20": {
+  "obs-b80607": 2,
+  "obs-36b444": 1,
+  "obs-821735": 1,
+  "obs-cb8105": 1,
+  "obs-2a51b9": 1
+ },
+ "q21": {
+  "obs-6a6310": 1,
+  "obs-1d4134": 2,
+  "obs-e1bc12": 1,
+  "obs-20ea6c": 2
+ },
+ "q22": {
+  "obs-115cb1": 1,
+  "obs-6aa8e4": 2,
+  "obs-dfd705": 1,
+  "obs-7a02ab": 1,
+  "obs-e90d79": 1
+ },
+ "q23": {
+  "obs-6aa8e4": 1,
+  "obs-e249eb": 2
+ },
+ "q24": {
+  "obs-1d694b": 2
+ },
+ "q25": {
+  "obs-9f82fb": 1,
+  "obs-2e2936": 2
+ },
+ "q26": {
+  "obs-9f82fb": 1,
+  "obs-551afc": 2
+ },
+ "q27": {
+  "obs-008ca1": 2,
+  "obs-9aa018": 1,
+  "obs-1078fe": 1
+ },
+ "q28": {
+  "obs-bb4e6c": 2,
+  "obs-9f82fb": 1,
+  "obs-59c54a": 1,
+  "obs-9ab0f1": 1
+ },
+ "q29": {
+  "obs-94526a": 2
+ },
+ "q30": {
+  "obs-71ff24": 1,
+  "obs-0b67ce": 1,
+  "obs-e54004": 2,
+  "obs-e90d79": 1,
+  "obs-01118b": 2
+ },
+ "q31": {
+  "obs-e7f066": 1,
+  "obs-6a4d1c": 2
+ },
+ "q32": {
+  "obs-52ef57": 1,
+  "obs-2a51b9": 1,
+  "obs-a1e993": 2
+ },
+ "q33": {
+  "obs-0b67ce": 1,
+  "obs-736aaf": 2
+ },
+ "q34": {
+  "obs-0964e1": 1,
+  "obs-697fad": 1
+ },
+ "q35": {
+  "obs-0964e1": 1,
+  "obs-d6707f": 2,
+  "obs-c4a156": 1
+ },
+ "q36": {
+  "obs-54f6cf": 2
+ },
+ "q37": {
+  "obs-3ba891": 1,
+  "obs-411ef1": 1,
+  "obs-c1dead": 1,
+  "obs-e7a8dc": 2
+ },
+ "q38": {
+  "obs-3ba891": 1,
+  "obs-411ef1": 1,
+  "obs-c1dead": 2,
+  "obs-e7a8dc": 1,
+  "obs-8d93f2": 1,
+  "obs-ba05fd": 2
+ },
+ "q39": {
+  "obs-f07540": 2,
+  "obs-f8ec81": 1
+ },
+ "q40": {
+  "obs-e7f066": 1,
+  "obs-dfbe73": 1,
+  "obs-eb2932": 2,
+  "obs-6aa8e4": 1
+ },
+ "q41": {
+  "obs-9f82fb": 1,
+  "obs-eef1da": 1,
+  "obs-fc99f6": 1,
+  "obs-2e2936": 1,
+  "obs-2ca31c": 2
+ },
+ "q42": {
+  "obs-0011c6": 2
+ },
+ "q43": {
+  "obs-71ff24": 1,
+  "obs-2a51b9": 1,
+  "obs-caa5fb": 1,
+  "obs-88b91a": 2
+ }
+}
