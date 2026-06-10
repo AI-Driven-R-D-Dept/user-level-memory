@@ -338,7 +338,8 @@
   <tr><td class="k"><b>全体 Recall@5</b></td><td><b>0%</b></td><td><b>73%</b></td><td><b>97%</b></td></tr>
   <tr><td class="k"><b>全体 MRR</b></td><td>0.000</td><td>0.725</td><td><b>0.931</b></td></tr>
 </table>
-<div class="callout"><b>各層が異なる弱点を埋める。</b> recency は現実的ノイズ下で<b>完全に無力（0%）</b>。FTS(字句)は完全一致/タイプミスに強いが<b>同義語で頭打ち（20%）</b>。埋め込み(意味)がその同義語を <b>20%→87%</b> に引き上げる。「スタイルが反映されない ⇄ tailwind のクラスが効かない」「DBコネクションが足りない ⇄ 接続プールが枯渇」のような<b>字面ゼロ一致</b>を、実際に拾えることを実機(`claude` ヘッドレス)でも確認した。</div>
+<div class="callout"><b>各層が異なる弱点を埋める。</b> recency は現実的ノイズ下で<b>完全に無力（0%）</b>。FTS(字句)は完全一致/タイプミスに強いが<b>同義語で頭打ち（20%）</b>。埋め込み(意味)がその同義語を <b>20%→87%</b> に引き上げる。「スタイルが反映されない ⇄ tailwind のクラスが効かない」のような<b>字面ゼロ一致</b>を実機(`claude` ヘッドレス)でも拾えることを確認した。</div>
+<div class="callout limit"><b>正直な内訳（自己監査）：</b> このコーパスで vector 単独を測ると 97%（hybrid とほぼ同値）。つまり<b>API キーがある時の向上分は主に埋め込みの寄与</b>で、ハイブリッドが vector 単独を大きく上回るわけではない。FTS の固有価値は <b>(1) キー無しでも 73% を保つ依存ゼロの floor</b>（recency 0% との差は字句検索だけでも大きい）と <b>(2) 埋め込み障害/タイムアウト時の保険</b>。RRF 融合は「キーの有無に関わらず最良の経路を自動選択する」ための設計であって、両層の相乗で vector を超えると主張するものではない。</div>
 <p class="src">再現: <code>node test/eval/recall-eval-large.js 5 2000</code>（要 OPENAI_API_KEY）。回帰テスト <code>test/recall_quality.test.js</code> / <code>recall_large.test.js</code> が FTS≫recency と同義語の天井を固定。secret 観測は全リトリーバで top-5 に漏れない（0件）。</p>
 </section>
 

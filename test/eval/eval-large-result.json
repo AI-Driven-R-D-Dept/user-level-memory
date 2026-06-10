@@ -1,7 +1,7 @@
 {
   "K": 5,
-  "noise": 2000,
-  "embedded": 2015,
+  "noise": 500,
+  "embedded": 0,
   "cats": [
     "exact",
     "paraphrase",
@@ -60,18 +60,18 @@
         "n": 15
       },
       "paraphrase": {
-        "recall": 15,
-        "rr": 13.5,
+        "recall": 11,
+        "rr": 11,
         "n": 15
       },
       "synonym": {
-        "recall": 13,
-        "rr": 12.333333333333332,
+        "recall": 3,
+        "rr": 3,
         "n": 15
       },
       "typo": {
         "recall": 15,
-        "rr": 15,
+        "rr": 14.5,
         "n": 15
       }
     }
@@ -88,8 +88,8 @@
       "n": 60
     },
     "hybrid": {
-      "recall": 0.9666666666666667,
-      "mrr": 0.9305555555555555,
+      "recall": 0.7333333333333333,
+      "mrr": 0.725,
       "n": 60
     }
   },
