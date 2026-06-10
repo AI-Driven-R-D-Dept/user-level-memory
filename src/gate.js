@@ -126,6 +126,10 @@ const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g; // \r(\x0d) も含む。\t は残�
 // 前置は「英数字以外」（語境界）の否定後読み。これで `。SYSTEM:` / `．USER:` など
 // 記号直後の役割マーカーも捕捉しつつ、`ABUSER:` のような語中一致は除外する。
 const ROLE_WORDS = /(?<![A-Za-z0-9])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
+// 角括弧で囲んだ役割マーカー（`[SYSTEM]` `[/ASSISTANT]` `[USER: ...]`）も中和する。
+// コロンを伴わないチャットロール表記の脱出を塞ぐ。sanitize は注入時のみ適用され
+// DB の本文は不変なので、ログ断片の誤中和があっても表示上の影響に留まる（安全側）。
+const BRACKET_ROLE = /\[\s*\/?\s*(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\b[^\]]*\]/gi;
 
 /**
  * 注入・生成用の無害化。
@@ -151,6 +155,7 @@ export function sanitizeForContext(text) {
     .replace(CONTROL, ' ')
     .replace(/<\/?[A-Za-z][^>]*>/g, '[tag]')
     .replace(/[ \t]*\n[ \t]*/g, ' ')
+    .replace(BRACKET_ROLE, '[ロール]')
     .replace(ROLE_WORDS, ' ロール: ')
     .replace(/`{2,}/g, "'")
     .replace(/(?:^|\s)[-=]{3,}(?=\s|$)/g, ' — ')

@@ -73,6 +73,19 @@ test('safepath: symlink への追記は拒否', () => {
   });
 });
 
+test('safepath: dangling symlink（ターゲット未存在）も拒否（回帰: existsSync ガード穴）', () => {
+  sandbox(({ refRoot, work }) => {
+    // 作業ツリー内に、ツリー外の未存在ファイルを指す symlink を置く。
+    // existsSync はリンクを辿るので false を返し、以前は symlink 検査を素通りしていた。
+    const target = join(work, 'innocent.md');
+    const outside = join(refRoot, '..', 'outside-nonexistent.md');
+    symlinkSync(outside, target);
+    const r = checkWriteTarget(target, { refRoot, allowRoots: [work] });
+    assert.equal(r.ok, false, 'dangling symlink は許可してはならない');
+    assert.match(r.reason, /シンボリックリンク/);
+  });
+});
+
 test('safepath: 小文字の claude.md も拒否（M-3 回帰: case-insensitive FS）', () => {
   sandbox(({ refRoot, work }) => {
     assert.equal(checkWriteTarget(join(work, 'claude.md'), { refRoot, allowRoots: [work] }).ok, false);

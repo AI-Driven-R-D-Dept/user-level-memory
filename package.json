@@ -9,6 +9,15 @@
   "engines": {
     "node": ">=22.5"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "commands/",
+    "skills/",
+    "hooks/",
+    ".claude-plugin/",
+    "DESIGN.md"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "eval": "node test/eval/recall-eval.js 5"

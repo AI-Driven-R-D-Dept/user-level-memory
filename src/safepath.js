@@ -41,15 +41,18 @@ export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) 
   if (!abs.toLowerCase().endsWith('.md')) {
     return { ok: false, reason: '.md ファイルのみ追記できます' };
   }
-  // symlink 追従の悪用を防ぐ（既存ファイルが symlink なら拒否）
-  if (existsSync(abs)) {
-    try {
-      if (lstatSync(abs).isSymbolicLink()) {
-        return { ok: false, reason: 'シンボリックリンクへの追記は拒否します' };
-      }
-    } catch {
-      return { ok: false, reason: 'パスを評価できません' };
+  // symlink 追従の悪用を防ぐ。lstat はリンク自身を見るので、ターゲットが未存在の
+  // dangling symlink（existsSync が false を返す）でも確実に検出できる。
+  // 以前は existsSync(abs) ガード下で lstat していたため、dangling symlink が
+  // 検査を素通りし作業ツリー外へ追記できる穴があった（回帰: safepath dangling）。
+  try {
+    if (lstatSync(abs).isSymbolicLink()) {
+      return { ok: false, reason: 'シンボリックリンクへの追記は拒否します' };
     }
+  } catch (e) {
+    // ENOENT = そこに何も無い純粋な新規ファイル。後段の根/危険判定に委ねる。
+    // それ以外（EACCES 等）は評価不能として拒否（fail-closed）。
+    if (e.code !== 'ENOENT') return { ok: false, reason: 'パスを評価できません' };
   }
   // 親ディレクトリを realpath 解決（.. やリンク経由の脱出を無効化）
   const parent = dirname(abs);

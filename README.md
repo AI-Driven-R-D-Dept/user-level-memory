@@ -68,7 +68,7 @@ ulm status / ulm doctor                           # 統計 / 環境診断
 
 ## 想起の質（外部評価・作者非依存）
 
-「自作コーパスで有利では」という批判に答えるため、**作者が本文もクエリも正解も書かない**外部評価を用意した（`test/eval/external/`）：実OSS docs(ripgrep/fd/bat/uv/ruff/tokio 等)を観測化 → 別LLMが症状ベースのクエリを生成（原文の語彙を使わない）→ 第3のLLMが TREC スタイルで関連度採点。本番コードをそのまま通し、95%信頼区間つき。
+「自作コーパスで有利では」という批判に答えるため、**作者が本文もクエリも正解も書かない**外部評価を用意した（`test/eval/external/`）：実OSS docs（179段落。内訳は ripgrep 105 / bat 32 / fd 27 / tokio 8 / ruff 5 / esbuild・uv 各1 と ripgrep系に偏る）を観測化 → 別LLMが症状ベースのクエリを生成（原文の語彙を使わない）→ 第3のLLMが TREC スタイルで関連度採点。本番コードをそのまま通す。
 
 44クエリ・95%信頼区間つき。**Success@10**＝top-10 に関連が1件でも出れば成功（メモリ注入の運用指標）。**Recall@10**＝古典的定義（取得した関連数 ÷ 全関連数）。
 
@@ -141,6 +141,6 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 ## 開発
 
 ```bash
-node --test test/*.test.js          # ユニットテスト（111件）
+node --test test/*.test.js          # ユニットテスト（114件）
 node test/eval/external/run-external-eval.js 10   # 外部評価（要 OPENAI_API_KEY）
 ```
