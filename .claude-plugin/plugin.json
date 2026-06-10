@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "ulm",
+  "displayName": "user-level memory",
+  "version": "0.1.0",
+  "description": "現場の勘所を育てる『生もの』の長期記憶レイヤー。観測は追記、状態は上書き+TTL、仮説は inbox で育てて人間の承認で ref へ昇格する。CLAUDE.md / ref / beads の次に来るメタ観測事実レイヤー。",
+  "author": {
+    "name": "bond-ai"
+  },
+  "keywords": ["memory", "long-term-memory", "observations", "knowledge", "context"],
+  "license": "MIT",
+  "commands": "./commands/",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "ulm-marketplace",
+  "owner": {
+    "name": "bond-ai"
+  },
+  "description": "user-level memory プラグインのローカルマーケットプレイス",
+  "version": "0.1.0",
+  "plugins": [
+    {
+      "name": "ulm",
+      "source": "./",
+      "description": "現場の勘所を育てる『生もの』の長期記憶レイヤー（観測 / 可変状態 / 仮説候補）",
+      "version": "0.1.0",
+      "category": "productivity",
+      "tags": ["memory", "knowledge", "context"]
+    }
+  ]
+}

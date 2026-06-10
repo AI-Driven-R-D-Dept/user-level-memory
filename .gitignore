@@ -3,3 +3,8 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# ulm
+node_modules/
+.DS_Store
+*.log
