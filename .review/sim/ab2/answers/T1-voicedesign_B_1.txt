@@ -1,0 +1,3 @@
+v2 VoiceDesign は `use_caption_condition: true` だと既定で speaker 条件が無効化されるため、reference audio / speaker embedding を渡しても声質制御に効かない可能性があります。  
+対処は、VoiceDesign では caption 条件で声質を記述するか、speaker 条件を使う設計・checkpoint/config かを確認して一致させることです。  
+v2 base は speaker 有効、v2 VoiceDesign は caption 有効・speaker 無効になりやすいので、モデル種別を取り違えないでください。

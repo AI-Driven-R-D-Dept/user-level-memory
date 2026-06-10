@@ -1,0 +1,52 @@
+{
+  "tasks": [
+    {
+      "id": "T1-voicedesign",
+      "label": "v2 VoiceDesign で参照音声が効かない",
+      "a_correct": 0,
+      "b_correct": 1,
+      "n": 3,
+      "a_kt": 0.07,
+      "b_kt": 1
+    },
+    {
+      "id": "T2-vocab",
+      "label": "text vocab の ValueError",
+      "a_correct": 0,
+      "b_correct": 3,
+      "n": 3,
+      "a_kt": 0.47,
+      "b_kt": 1
+    },
+    {
+      "id": "T3-loradur",
+      "label": "LoRA の duration_predictor 自動保存",
+      "a_correct": 2,
+      "b_correct": 3,
+      "n": 3,
+      "a_kt": 0.8,
+      "b_kt": 0.8
+    },
+    {
+      "id": "T4-latentdim",
+      "label": "latent_dim mismatch",
+      "a_correct": 0,
+      "b_correct": 3,
+      "n": 3,
+      "a_kt": 0.6,
+      "b_kt": 0.8
+    }
+  ],
+  "overall": {
+    "a_correct_j1": 17,
+    "b_correct_j1": 83,
+    "a_correct_j2": 17,
+    "b_correct_j2": 100,
+    "a_mislead": 42,
+    "b_mislead": 8,
+    "a_kt": 0.48,
+    "b_kt": 0.9,
+    "a_hedge": 42,
+    "b_hedge": 42
+  }
+}

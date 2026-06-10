@@ -1,0 +1,3 @@
+`use_duration_predictor=true` で `lora_modules_to_save=auto` なら、LoRA だけでなく duration predictor 側の保存対象も adapter に含まれる前提なので、推論側は adapter の `modules_to_save` を無視しない実装で読むこと。  
+別環境では base checkpoint / model_config / tokenizer / codec を学習時と一致させる。特に `latent_dim`、`text_vocab_size`、caption 使用有無の不一致は即エラー要因。  
+v3/VoiceDesign 系なら `caption_tokenizer` 必須の checkpoint かも確認し、v1 用コードや v1 preprocessing では読まない。

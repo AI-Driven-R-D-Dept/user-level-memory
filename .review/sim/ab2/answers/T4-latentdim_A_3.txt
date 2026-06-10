@@ -1,0 +1,3 @@
+原因は多くの場合、読み込んだ checkpoint と現在のモデル設定（特に latent_dim / style encoder / tokenizer 周辺）が一致していないことです。  
+対処は、checkpoint 作成時と同じ config・commit・依存バージョンで起動するか、現在の config に対応した checkpoint を使い直してください。  
+独自学習モデルなら、推論側の設定ファイルを学習時のものに差し替え、キャッシュ済み埋め込みや中間生成物も再生成します。

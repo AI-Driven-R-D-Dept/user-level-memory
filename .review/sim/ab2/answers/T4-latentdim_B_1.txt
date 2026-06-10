@@ -1,0 +1,3 @@
+原因: checkpoint の `model_config.latent_dim` と、推論で読み込んだ codec repo の `codec.latent_dim` が一致していません。  
+対処: 学習時と同じ DACVAE/codec repo を指定するか、checkpoint 側の `latent_dim` と一致する codec に差し替えてください。  
+補足: v2/v3 移行中は古い checkpoint と新しい codec を混ぜないのが安全です。

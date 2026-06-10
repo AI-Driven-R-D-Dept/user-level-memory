@@ -1,0 +1,3 @@
+原因は多くの場合、推論時に読み込んだ text vocabulary / tokenizer 設定と、学習済みチェックポイント作成時の vocab が不一致なことです。  
+確認手順: checkpoint と同じリポジトリ版・config・vocab/tokenizer ファイルを使っているか、文字種追加や辞書差し替え後に古い checkpoint を読んでいないかを確認してください。  
+特に `vocab_size`、特殊トークン、文字ID順序が学習時と推論時で一致しているかを見ます。

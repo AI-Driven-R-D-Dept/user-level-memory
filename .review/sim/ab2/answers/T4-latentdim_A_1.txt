@@ -1,0 +1,3 @@
+原因は多くの場合、学習時のモデル設定と推論時に読み込んでいる設定・checkpoint の不一致です。特に `latent_dim`、speaker/style encoder、VC/normal TTS 用モデルの取り違えが典型です。  
+対処は、checkpoint と同じ config を推論に指定し、別実験の重み・古い config・互換性のないモデル種別を混ぜないことです。  
+それでも出る場合は、推論側のデフォルト値で config が上書きされていないか確認してください。

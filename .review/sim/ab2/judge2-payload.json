@@ -1,0 +1,170 @@
+[
+ {
+  "jid": 0,
+  "orig": 14,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "- 推論側も同じベースモデル構成で、`use_duration_predictor=true` を明示して初期化する。  \n- `lora_modules_to_save=auto` で保存された追加モジュールがあるため、LoRA本体だけでなく adapter 配下の設定・保存済み重み一式を読む。  \n- 別環境で `modules_to_save` の不一致や missing/unexpected keys が出たら、学習時と同じIrodori-TTS/PEFT実装版に揃える。"
+ },
+ {
+  "jid": 1,
+  "orig": 6,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因は多くの場合、学習時と推論時で使っている `text` の vocab / tokenizer 設定やチェックポイントが不一致なことです。  \n確認手順: 推論設定の vocab ファイル、config、チェックポイントが同じ学習成果物由来か確認し、学習時の文字集合にない文字を入力していないかを見る。  \n特に別モデルの config や vocab を流用していないか、モデル配布元の推論コマンド例と完全一致させて切り分けてください。"
+ },
+ {
+  "jid": 2,
+  "orig": 12,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "`lora_modules_to_save=auto` で保存された duration predictor などの追加モジュールも、推論側で同じ実装・同じモデル構成として復元できる必要があります。  \n別環境では Irodori-TTS / PEFT / Transformers 等のバージョン差で adapter 読み込み名や保存対象がずれることがあるため、学習時とできるだけ揃えてください。  \n`use_duration_predictor=true` 前提の adapter なので、推論側も duration predictor を有効にして読み込むのが安全です。"
+ },
+ {
+  "jid": 3,
+  "orig": 16,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "- 推論側も学習時と同じ v3 ベースモデル構成で、`use_duration_predictor=true` にして読み込む。  \n- `lora_modules_to_save=auto` で保存された duration predictor などの追加重みも adapter と一緒に配置し、欠けた状態で読まない。  \n- 別環境では Irodori-TTS / PEFT / Transformers 周辺のバージョン差で読み込み失敗や無視が起き得るので、学習環境と依存関係を揃える。"
+ },
+ {
+  "jid": 4,
+  "orig": 18,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因は多くの場合、学習時のモデル設定と推論時に読み込んでいる設定・checkpoint の不一致です。特に `latent_dim`、speaker/style encoder、VC/normal TTS 用モデルの取り違えが典型です。  \n対処は、checkpoint と同じ config を推論に指定し、別実験の重み・古い config・互換性のないモデル種別を混ぜないことです。  \nそれでも出る場合は、推論側のデフォルト値で config が上書きされていないか確認してください。"
+ },
+ {
+  "jid": 5,
+  "orig": 3,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "v2 VoiceDesign は `use_caption_condition: true` だと speaker 条件が既定で無効化されるため、reference audio を渡しても声質条件として効かない可能性が高いです。  \n対処は、VoiceDesign では caption/音声記述側で声を指定するか、参照音声を効かせたい場合は speaker 条件が有効な v2 base 系モデル・設定を使ってください。  \nまた caption 有効モデルでは `caption_tokenizer` 必須なので、未ロードなら推論設定も確認してください。"
+ },
+ {
+  "jid": 6,
+  "orig": 7,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因: `text tokenizer` の `vocab_size` が checkpoint 側の `model_config.text_vocab_size` と一致していません。  \n確認: checkpoint の `model_config.text_vocab_size` と、推論で指定している `text_tokenizer_repo` の vocab サイズを比較してください。  \n対処: 学習時と同じ tokenizer repo を使うか、checkpoint の `model_config.text_vocab_size` と同期した tokenizer に差し替えます。"
+ },
+ {
+  "jid": 7,
+  "orig": 15,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "`use_duration_predictor=true` の LoRA は duration predictor 側の重みも必要なので、推論側の v3 本体設定と duration predictor 有効/無効を学習時と合わせる。  \n`lora_modules_to_save=auto` で adapter に追加保存された非LoRAモジュールがあるため、adapter だけでなく対応する base checkpoint/config/tokenizer/codec の整合性を崩さない。  \n特に `text_vocab_size`、`latent_dim`、caption 有効なら `caption_tokenizer`、VoiceDesign 条件分岐の有無が別環境で一致しないと読み込みまたは推論時に失敗しやすい。"
+ },
+ {
+  "jid": 8,
+  "orig": 21,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因は checkpoint の `model_config.latent_dim` と、推論で指定した codec repo/checkpoint の `codec.latent_dim` が一致していないことです。  \n対処は、学習時に使った DACVAE/codec と同じ repo/checkpoint を推論に渡すか、checkpoint 側の `latent_dim` に一致する codec を選び直すことです。  \n設定だけを無理に書き換えると重み形状と実データ表現がずれるため、基本はモデルと codec の組み合わせを同期してください。"
+ },
+ {
+  "jid": 9,
+  "orig": 1,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "v2 VoiceDesign は `use_caption_condition: true` だと既定で speaker 条件が無効化されるため、reference audio / speaker embedding を渡しても声質制御に効かない可能性があります。  \n対処は、VoiceDesign では caption 条件で声質を記述するか、speaker 条件を使う設計・checkpoint/config かを確認して一致させることです。  \nv2 base は speaker 有効、v2 VoiceDesign は caption 有効・speaker 無効になりやすいので、モデル種別を取り違えないでください。"
+ },
+ {
+  "jid": 10,
+  "orig": 2,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "主因は、v2 VoiceDesign が「声質の完全なクローン」ではなく、参照音声から話者特徴を弱く条件付ける設計・学習になっている可能性です。  \n参照音声は短すぎる/ノイズ/無音/音量差/話し方差があると効きにくいので、清潔な10〜30秒程度の単一話者音声に整えてください。  \nそれでも似ない場合は仕様上の限界として、speaker embedding・学習済み話者・fine-tuning 対応モデルの利用を検討します。"
+ },
+ {
+  "jid": 11,
+  "orig": 22,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因は多くの場合、読み込んだ checkpoint と現在のモデル設定（特に latent_dim / style encoder / tokenizer 周辺）が一致していないことです。  \n対処は、checkpoint 作成時と同じ config・commit・依存バージョンで起動するか、現在の config に対応した checkpoint を使い直してください。  \n独自学習モデルなら、推論側の設定ファイルを学習時のものに差し替え、キャッシュ済み埋め込みや中間生成物も再生成します。"
+ },
+ {
+  "jid": 12,
+  "orig": 0,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "v2 VoiceDesign は「声質クローン」ではなく、参照音声から話者特徴を厳密に再現する用途ではないため、似ないことがあります。  \n参照音声の品質・長さ・ノイズ・話し方差、またはモデル/推論設定の不一致で特徴抽出が弱くなるのも典型原因です。  \n対処は、クリアな単一話者音声を使う、推論設定と対応モデルを確認する、それでも必要なら voice cloning 対応モデル/追加学習を検討してください。"
+ },
+ {
+  "jid": 13,
+  "orig": 10,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因は多くの場合、推論時に読み込んだ text vocabulary / tokenizer 設定と、学習済みチェックポイント作成時の vocab が不一致なことです。  \n確認手順: checkpoint と同じリポジトリ版・config・vocab/tokenizer ファイルを使っているか、文字種追加や辞書差し替え後に古い checkpoint を読んでいないかを確認してください。  \n特に `vocab_size`、特殊トークン、文字ID順序が学習時と推論時で一致しているかを見ます。"
+ },
+ {
+  "jid": 14,
+  "orig": 4,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "参照音声が短すぎる、音質が悪い、無音やBGMが多い、または話者特徴が弱い可能性があります。  \n10〜30秒程度の単一話者・高音質・無加工に近い音声を使い、無音やノイズを除去してください。  \nそれでも似ない場合は、v2 VoiceDesign が厳密な声質コピーではなく「声の傾向付け」程度の機能である可能性があります。"
+ },
+ {
+  "jid": 15,
+  "orig": 13,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "`use_duration_predictor=true` で `lora_modules_to_save=auto` なら、LoRA だけでなく duration predictor 側の保存対象も adapter に含まれる前提なので、推論側は adapter の `modules_to_save` を無視しない実装で読むこと。  \n別環境では base checkpoint / model_config / tokenizer / codec を学習時と一致させる。特に `latent_dim`、`text_vocab_size`、caption 使用有無の不一致は即エラー要因。  \nv3/VoiceDesign 系なら `caption_tokenizer` 必須の checkpoint かも確認し、v1 用コードや v1 preprocessing では読まない。"
+ },
+ {
+  "jid": 16,
+  "orig": 17,
+  "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+  "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+  "answer": "- 推論側も `use_duration_predictor=true` の同じ v3 構成で初期化し、`lora_modules_to_save=auto` で保存された duration predictor 等の非LoRA重みを落とさず読む。  \n- base checkpoint、`model_config`、text/caption tokenizer、codec の vocab/latent 次元を学習時と一致させる。  \n- adapter だけを別 base に当てると duration/condition 周りがずれやすいので、学習時 metadata/config も一緒に持ち込む。"
+ },
+ {
+  "jid": 17,
+  "orig": 9,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因: `model_config.text_vocab_size` と `text_tokenizer_repo` 側の実 vocab size が一致していない可能性が高いです。  \n確認: checkpoint に保存された `text_vocab_size` と、推論で渡している text tokenizer repo の vocab size を比較してください。  \n対処: 学習時と同じ text tokenizer repo を使うか、checkpoint/config/tokenizer の組み合わせを同期させてください。"
+ },
+ {
+  "jid": 18,
+  "orig": 11,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因: checkpoint の `model_config.text_vocab_size` と、推論時に指定した `text_tokenizer_repo` の実際の vocab size が不一致です。  \n確認: checkpoint 側の `text_vocab_size` と tokenizer repo 側の vocab 件数をそれぞれ確認し、同じ tokenizer を使っているか照合します。  \n対処: 学習時と同じ text tokenizer repo を指定するか、checkpoint/config と tokenizer vocab を同期させてください。"
+ },
+ {
+  "jid": 19,
+  "orig": 19,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因: checkpoint の `model_config.latent_dim` と、推論で読み込んだ codec repo の `codec.latent_dim` が一致していません。  \n対処: 学習時と同じ DACVAE/codec repo を指定するか、checkpoint 側の `latent_dim` と一致する codec に差し替えてください。  \n補足: v2/v3 移行中は古い checkpoint と新しい codec を混ぜないのが安全です。"
+ },
+ {
+  "jid": 20,
+  "orig": 20,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因はだいたい、学習時と推論時でモデル設定やチェックポイントの latent 次元が一致していないことです。  \n学習に使った `config` / `hparams` / tokenizer・speaker設定と同じものを推論側に読み込ませ、別実験の checkpoint を混ぜないでください。  \n直らない場合は checkpoint と設定ファイルの組み合わせを確認し、必要なら同じ設定で再学習または対応する推論設定へ戻します。"
+ },
+ {
+  "jid": 21,
+  "orig": 5,
+  "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+  "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+  "answer": "v2 VoiceDesign は `use_caption_condition: true` だと既定で speaker 条件が無効化されるため、reference audio を渡しても声質条件として効かない可能性が高いです。  \nVoiceDesign では参照音声ではなく caption/voice design 側の条件が効く前提で、`caption_tokenizer` を必ずロードして caption 条件を正しく渡してください。  \n参照音声で声を寄せたい場合は speaker 条件が有効な v2 base 系、または `use_speaker_condition` 設定と checkpoint/config の整合を確認してください。"
+ },
+ {
+  "jid": 22,
+  "orig": 8,
+  "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+  "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+  "answer": "原因は多くの場合、推論時の `text/vocab` 設定や辞書ファイルが、学習済みチェックポイント作成時のものと一致していないことです。  \n確認手順: 使用中の config、vocab/辞書ファイル、チェックポイントに紐づく学習時設定を照合し、文字数・特殊トークン・並び順が一致するか確認してください。  \n別モデルの config や vocab を混ぜていないか、最新版変更で vocab 形式が変わっていないかも確認対象です。"
+ },
+ {
+  "jid": 23,
+  "orig": 23,
+  "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+  "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+  "answer": "原因: checkpoint の `model_config.latent_dim` と、指定した codec repo/checkpoint の `codec.latent_dim` が一致していません。  \n対処: 学習時と同じ DACVAE/codec を指定するか、checkpoint 側の `latent_dim` と一致する codec に差し替えてください。  \n設定の取り違えを避けるため、v2/v3 や base/VoiceDesign 用の config と codec の組み合わせも確認してください。"
+ }
+]

@@ -1,0 +1,3 @@
+- 推論側も `use_duration_predictor=true` の同じ v3 構成で初期化し、`lora_modules_to_save=auto` で保存された duration predictor 等の非LoRA重みを落とさず読む。  
+- base checkpoint、`model_config`、text/caption tokenizer、codec の vocab/latent 次元を学習時と一致させる。  
+- adapter だけを別 base に当てると duration/condition 周りがずれやすいので、学習時 metadata/config も一緒に持ち込む。

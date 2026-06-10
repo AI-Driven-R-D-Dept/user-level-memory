@@ -1,0 +1,3 @@
+`use_duration_predictor=true` の LoRA は duration predictor 側の重みも必要なので、推論側の v3 本体設定と duration predictor 有効/無効を学習時と合わせる。  
+`lora_modules_to_save=auto` で adapter に追加保存された非LoRAモジュールがあるため、adapter だけでなく対応する base checkpoint/config/tokenizer/codec の整合性を崩さない。  
+特に `text_vocab_size`、`latent_dim`、caption 有効なら `caption_tokenizer`、VoiceDesign 条件分岐の有無が別環境で一致しないと読み込みまたは推論時に失敗しやすい。

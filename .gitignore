@@ -9,3 +9,5 @@ node_modules/
 .DS_Store
 *.log
 .review/codex-run.log
+.review/sim/ab2/harness.log
+.review/sim/ab2/score.log

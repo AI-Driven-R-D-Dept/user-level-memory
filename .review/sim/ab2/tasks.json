@@ -1,0 +1,26 @@
+[
+  {
+    "id": "T1-voicedesign",
+    "q": "Irodori-TTS の v2 VoiceDesign モデルで reference audio（参照音声）を渡しても出力の声が参照に全く似ない。原因と対処を3行以内で。",
+    "truth": "v2 VoiceDesign は use_caption_condition=true のとき speaker 条件が無効化される（use_speaker_condition 既定 None なら caption true で speaker false）ため reference audio による話者制御が効かない。話者模倣には speaker 条件が有効な v2 base 系を使う。",
+    "key_terms": ["use_caption_condition", "speaker", "無効", "v2 base", "caption"]
+  },
+  {
+    "id": "T2-vocab",
+    "q": "Irodori-TTS の推論起動時に text の vocab に関する ValueError が出る。原因と確認手順を3行以内で。",
+    "truth": "tokenizer.vocab_size が checkpoint の model_config.text_vocab_size と不一致だと推論ランタイムで ValueError。text_tokenizer_repo の vocab と checkpoint の text_vocab_size を一致させる。",
+    "key_terms": ["vocab_size", "text_vocab_size", "tokenizer", "一致", "checkpoint"]
+  },
+  {
+    "id": "T3-loradur",
+    "q": "Irodori-TTS の v3 LoRA を use_duration_predictor=true・lora_modules_to_save=auto で学習した。生成した adapter を別環境の推論で読む時の注意を3行以内で。",
+    "truth": "lora_modules_to_save=auto は use_duration_predictor=true のとき duration_predictor を modules_to_save に自動追加するため、adapter に duration_predictor が含まれる前提で推論側もロードする。",
+    "key_terms": ["duration_predictor", "modules_to_save", "auto", "adapter", "含む"]
+  },
+  {
+    "id": "T4-latentdim",
+    "q": "Irodori-TTS の推論開始時に latent dimension の mismatch エラーが出る。原因と対処を3行以内で。",
+    "truth": "checkpoint の model_config.latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。checkpoint の latent_dim と codec repo の latent 次元を一致させる。",
+    "key_terms": ["latent_dim", "codec", "不一致", "一致", "checkpoint"]
+  }
+]

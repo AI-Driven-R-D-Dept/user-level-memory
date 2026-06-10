@@ -108,7 +108,7 @@
     <div class="meta-row">
       <span class="chip">レビュー2系統：codex exec + subagent</span>
       <span class="chip">実リポジトリ実証：irodori (Python/TTS)</span>
-      <span class="chip">A/B：記憶なし vs 記憶あり</span>
+      <span class="chip">対照A/B：同一モデル・隔離環境・n=12/群・盲検2ジャッジ</span>
       <span class="chip">ユニットテスト 85/85 pass</span>
     </div>
   </div>
@@ -119,7 +119,7 @@
 <div class="tldr">
   <h3>3行まとめ</h3>
   <ol>
-    <li><b>価値は実在した</b>。実リポジトリの A/B で、記憶ありエージェントは「READMEを確認して」という<b>曖昧なヘッジ</b>を、出自つきの<b>正確で実行可能な答え</b>に変えた。特にモデルが推測できない<b>リポジトリ固有の事実</b>で差が決定的。</li>
+    <li><b>価値は数値で出た</b>。同一モデル・隔離環境・盲検2ジャッジの対照 A/B（4タスク×3試行）で、記憶ありの<b>正答率は 17% → 83〜100%</b>、誤誘導は <b>42% → 0〜8%</b>。とりわけモデルが推測できない<b>リポジトリ固有の事実</b>で差が決定的だった。</li>
     <li><b>設計とセキュリティは2人の評価者とも高評価</b>（機密ゲート・注入無害化・人間ゲートは実走で「主張通り」と確認）。一方で<b>想起が関連度検索でなく recency 詰め込み</b>、<b>記録の習慣化</b>が弱い、という限界も両者一致で指摘。</li>
     <li>総合評価は <b>codex 62 / subagent 72（100点満点）</b>。「作りの良い MVP。効く人には強く刺さるが、記録が貯まる仕組みを足さないとマジョリティには根付かない」が共通見解。</li>
   </ol>
@@ -159,7 +159,7 @@
   <div class="card"><span class="pill">レビューA</span><h3 style="margin-top:8px">codex exec（外部LLM）</h3><p style="font-size:14px">gpt-5.5 (low) に ulm の実コードを読ませ、「実際の開発現場で価値があるか」を忖度なく評定。read-only sandbox で実行。</p></div>
   <div class="card"><span class="pill">レビューB</span><h3 style="margin-top:8px">subagent（独立コンテキスト）</h3><p style="font-size:14px">fresh-context の subagent が README/DESIGN/src を読み、temp 環境で <code>init→obs→mine→promote</code> を実走させて挙動を確認しつつ評定。</p></div>
   <div class="card"><span class="pill">実証</span><h3 style="margin-top:8px">実リポジトリ・シミュレーション</h3><p style="font-size:14px">実在の TTS コードベース <b>irodori</b> で、多セッションの開発ワークフローを再現。観測はすべて実コードに <code>file:line</code> の根拠あり。</p></div>
-  <div class="card"><span class="pill">測定</span><h3 style="margin-top:8px">A/B テスト</h3><p style="font-size:14px">同じ落とし穴タスクを「記憶なし」「記憶あり」の2エージェントに与え（両者ファイル読込み禁止）、回避の質を比較。</p></div>
+  <div class="card"><span class="pill">測定</span><h3 style="margin-top:8px">対照A/B（24試行）</h3><p style="font-size:14px">同一モデル・irodori を読めない隔離 CWD・4タスク×3試行で「記憶なし/あり」を比較。アームを伏せた<b>独立2ジャッジ</b>が盲検採点。再現スクリプト付き。</p></div>
 </div>
 </section>
 
@@ -260,56 +260,72 @@
 </section>
 
 <section id="ab">
-<h2><span class="num">05</span>A/B：記憶が答えを変えた</h2>
-<p>同じ落とし穴タスクを2エージェントに与えた。<b>両者ともファイル読込み禁止</b>にして、変数を「記憶の有無」だけに絞っている。</p>
+<h2><span class="num">05</span>対照A/B：記憶は正答率を 17%→83〜100% に上げた</h2>
+<p>「本当に効くのか」を、思いつきの1回比較でなく<b>対照実験</b>で測った。設計を厳しくしてある：</p>
+<div class="card" style="padding:18px 22px">
+  <table style="margin:0">
+    <tr><td class="k">独立変数</td><td><b>記憶の有無のみ</b>。A=記憶なし／B=ulm 注入ブロック（約3.6KB）を前置。</td></tr>
+    <tr><td class="k">モデル統一</td><td>両アームとも<b>同一モデル</b>（codex gpt-5.5, low）。前回のクロスモデル比較を是正。</td></tr>
+    <tr><td class="k">読込み遮断</td><td>codex を <b>irodori を含まない隔離 CWD</b> で実行。「ファイルを読んで答えた」可能性を機械的に排除。</td></tr>
+    <tr><td class="k">試行数</td><td>4タスク × 2アーム × <b>3試行 = 24回答</b>（n=12/群）。分散を均す。</td></tr>
+    <tr><td class="k">盲検採点</td><td>アームを伏せシャッフルし、<b>独立2ジャッジ</b>（codex系 + Claude系）が正解要点に照らして採点。</td></tr>
+    <tr><td class="k">客観指標</td><td>LLM 採点と別に、<b>リポ固有キーターム命中率</b>（<code>use_caption_condition</code> 等を述べたか）も機械的に計測。</td></tr>
+  </table>
+</div>
+<p>タスクは<b>モデルが事前知識で当てにくいリポジトリ固有の落とし穴</b>4種。すべて irodori 実コードに <code>file:line</code> の根拠があり、正解要点は私が実ソースと照合済み（後述）。</p>
 
-<h3>テスト1：v1 checkpoint を v3 コードで使いたい（一般知識でも警戒できる例）</h3>
+<h3>結果（n=12/群）</h3>
+<table>
+  <tr><th>指標</th><th>A：記憶なし</th><th>B：記憶あり</th><th>差</th></tr>
+  <tr><td class="k">正答率（ジャッジ1 codex系）</td><td><span class="bad-mark">17%</span></td><td><span class="good-mark">83%</span></td><td>+66pt</td></tr>
+  <tr><td class="k">正答率（ジャッジ2 Claude系）</td><td><span class="bad-mark">17%</span></td><td><span class="good-mark">100%</span></td><td>+83pt</td></tr>
+  <tr><td class="k">誤誘導率（別手段へ誤導）</td><td><span class="bad-mark">42%</span></td><td><span class="good-mark">0〜8%</span></td><td>−34pt</td></tr>
+  <tr><td class="k">リポ固有キーターム命中率</td><td>0.48</td><td><b>0.90</b></td><td>+0.42</td></tr>
+  <tr><td class="k">ヘッジ率（文体の曖昧さ）</td><td>42%</td><td>42%</td><td>±0</td></tr>
+</table>
+<div class="callout"><b>2人のジャッジは verdict が 92%（22/24）一致</b>。「codex が codex を採点」というバイアス懸念は、別系統（Claude）の独立ジャッジでも同じ結論が出たことで解消。客観キーターム指標（0.48→0.90）も同方向。</div>
+
+<h3>全4タスクで記憶ありが優位（単一タスク依存でない）</h3>
+<table>
+  <tr><th>タスク（リポ固有の落とし穴）</th><th>A 正答</th><th>B 正答</th><th>キーターム A→B</th></tr>
+  <tr><td>v2 VoiceDesign で参照音声が効かない</td><td>0/3</td><td>1/3</td><td>0.07 → 1.00</td></tr>
+  <tr><td>text vocab の ValueError</td><td>0/3</td><td>3/3</td><td>0.47 → 1.00</td></tr>
+  <tr><td>LoRA の duration_predictor 自動保存</td><td>2/3</td><td>3/3</td><td>0.80 → 0.80</td></tr>
+  <tr><td>latent_dim mismatch</td><td>0/3</td><td>3/3</td><td>0.60 → 0.80</td></tr>
+</table>
+<p class="src">LoRA タスクだけ A も 2/3 取れている＝<b>一般知識で当たる gotcha もある</b>。それでも全4タスクで B が上回った。生回答は <code>.review/sim/ab2/answers/</code>、採点は <code>scored-records.json</code>、再現スクリプトは <code>run.js</code>／<code>score.js</code> に保持。</p>
+
+<h3>何が起きたか（代表例の生回答）</h3>
 <div class="ab">
   <div class="col no">
-    <div class="lab">✕ 記憶なし</div>
-    <div class="ans">「v1 と v3 は非互換の<b>可能性が高い</b>ので避けてください。…<b>互換情報は README やリリースノートで確認</b>するのが確実です。」</div>
-    <span class="verdicttag vt-bad">ヘッジ止まり — 確認作業を人に丸投げ</span>
+    <div class="lab">✕ 記憶なし（latent_dim mismatch）</div>
+    <div class="ans">「多くの場合、学習時のモデル設定と推論時の設定・checkpoint の不一致です。特に <code>latent_dim</code>、speaker/style encoder、<b>VC/normal TTS の取り違え</b>が典型…」</div>
+    <span class="verdicttag vt-bad">ジャッジ判定：partial / 散漫・誤誘導気味</span>
   </div>
   <div class="col yes">
-    <div class="lab">✓ 記憶あり</div>
-    <div class="ans">「<b>そのままは不可</b>です。注入記憶上、v2/v3 コードが対応するのは v2 後方互換と v3 のみ。音声生成したいだけなら<b>v1 タグ/当時のコードに戻して</b>推論してください。」</div>
-    <span class="verdicttag vt-good">確信ある具体策 — v1 タグという解まで提示</span>
+    <div class="lab">✓ 記憶あり（latent_dim mismatch）</div>
+    <div class="ans">「原因：checkpoint の <code>model_config.latent_dim</code> と、推論で読み込んだ <b>codec repo の <code>codec.latent_dim</code> が一致していません</b>。対処：学習時と同じ DACVAE/codec repo を指定…」</div>
+    <span class="verdicttag vt-good">ジャッジ判定：correct / 機構を正確に特定</span>
   </div>
 </div>
-<div class="callout">強いベースモデルは「バージョン非互換かも」と<b>自力でヘッジできる</b>。だが記憶は、その曖昧なヘッジを<b>出自つきの確定回答＋具体的な対処</b>に引き上げる。</div>
-
-<h3>テスト2：v2 VoiceDesign で参照音声が効かない（<b>モデルが推測できないリポ固有の事実</b>）</h3>
-<div class="ab">
-  <div class="col no">
-    <div class="lab">✕ 記憶なし</div>
-    <div class="ans">「v2 VoiceDesign は参照音声から話者をクローンするモデルでは<b>ない可能性が高い</b>。<b>参照音声対応の別モデル/API があるか確認</b>を。入力形式・サンプリングレートも見直しを。」</div>
-    <span class="verdicttag vt-bad">誤誘導 — 別モデル探しへ向かわせる</span>
-  </div>
-  <div class="col yes">
-    <div class="lab">✓ 記憶あり</div>
-    <div class="ans">「v2 VoiceDesign は <code>use_caption_condition: true</code> だと<b>speaker 条件が無効化される</b>ため、参照音声で声を真似る用途には効きません。話者模倣が目的なら speaker 条件が有効な v2 base 系を使う。…（<code>normalize_db</code> の注意も付随）」</div>
-    <span class="verdicttag vt-good">正確な機構＋正しい対処＋付随 gotcha</span>
-  </div>
-</div>
-<div class="callout">ここが ulm の<b>クリーンな勝ち筋</b>。「v2 VoiceDesign は設計上 reference audio を無視する」はモデルの事前知識に<b>無い</b>リポジトリ固有の事実。記憶なしは別モデル探しへ誤誘導するが、記憶ありは config レベルの正解を即答する。</div>
-<p class="src">評価は両条件とも同一モデル（codex gpt-5.5, low）で実施。記憶ありには Session 2 の注入ブロック（約3.6KB）だけを前置した。生回答は <code>.review/sim/ab/</code> に保持。</p>
+<div class="callout">これが ulm の<b>クリーンな勝ち筋</b>。「latent_dim は <i>codec 側</i> と突き合わせる」「v2 VoiceDesign は <code>use_caption_condition</code> で speaker が消える」はモデルの事前知識に<b>無い</b>リポ固有の事実。記憶なしは一般論や別手段へ流れ、記憶ありは config レベルの正解を即答する。</div>
 </section>
 
 <section id="metrics">
 <h2><span class="num">06</span>測定値</h2>
 <div class="metric">
-  <div class="m"><div class="big">14→5→2</div><div class="cap">観測 → 採掘した仮説 → 昇格した ref</div></div>
-  <div class="m"><div class="big">3.6<span style="font-size:16px">KB</span></div><div class="cap">Session 2 で注入された記憶量（予算内）</div></div>
-  <div class="m"><div class="big">2/2</div><div class="cap">A/B でリポ固有の正解を出せた回数（記憶あり）</div></div>
-  <div class="m"><div class="big">0</div><div class="cap">機密ゲートの誤作動・誤 secret 化</div></div>
+  <div class="m"><div class="big">17→83<span style="font-size:16px">%</span></div><div class="cap">正答率（記憶なし→あり, 盲検ジャッジ1）</div></div>
+  <div class="m"><div class="big">42→8<span style="font-size:16px">%</span></div><div class="cap">誤誘導率の低下（記憶あり）</div></div>
+  <div class="m"><div class="big">92<span style="font-size:16px">%</span></div><div class="cap">独立2ジャッジの判定一致率</div></div>
+  <div class="m"><div class="big">14/14</div><div class="cap">観測の file:line を実コードで照合一致</div></div>
 </div>
 <table>
-  <tr><th>観点</th><th>結果</th></tr>
-  <tr><td class="k">記憶の質</td><td>mine は14観測を、条件・反例・<b>実在する根拠 obs id</b> を伴う5仮説へ一般化。捏造根拠なし。</td></tr>
-  <tr><td class="k">想起の関連度</td><td>irodori の cwd から SessionStart 注入すると、ピン留めの critical 事実が筆頭、関連観測10件が project スコープで出た。</td></tr>
-  <tr><td class="k">容量効率</td><td>全観測の生テキスト約2.2K文字に対し、注入は約3.6KB に整形・予算内で打ち止め（state/ref/pin を優先保持）。</td></tr>
+  <tr><th>観点</th><th>結果（すべて生データを保持）</th></tr>
+  <tr><td class="k">A/B 効果量</td><td>正答率 +66〜83pt、誤誘導 −34pt、リポ固有キーターム命中 0.48→0.90。全4タスクで B 優位。</td></tr>
+  <tr><td class="k">引用の真正性</td><td>14観測の <code>file:line</code> を irodori 実ソースで<b>全件照合（14/14 一致）</b>。A/B の核心4事実は内容も exact match で確認。捏造なし。</td></tr>
+  <tr><td class="k">記憶の質</td><td>mine（codex 実行）は14観測を、条件・反例・<b>実在する根拠 obs id</b> を伴う5仮説へ一般化。DB の <code>origin</code> 列が <code>miner:codex:gpt-5.5</code> を記録。</td></tr>
+  <tr><td class="k">容量効率</td><td>Session 2 注入は約3.6KB に整形・予算内で打ち止め（state/ref/pin を優先保持）。</td></tr>
   <tr><td class="k">安全性</td><td>14観測すべて secret=0（誤 secret 化なし）、<code>export</code> の secret 分離ファイルは0行、実リポジトリに不要な成果物を残さず回収。</td></tr>
-  <tr><td class="k">人間ゲート</td><td>承認・昇格は TTY 実機で通過。<code>CLAUDE.md</code> 等への昇格は別途拒否を確認済み（前段の E2E）。</td></tr>
 </table>
 </section>
 
@@ -317,13 +333,13 @@
 <h2><span class="num">07</span>正直な限界（誇張しないために）</h2>
 <div class="callout limit"><b>① 想起は意味検索でない。</b> 現状は recency＋ピン＋project スコープの詰め込みで、<code>LIKE</code> 部分一致しかない。観測が数千件に増えると、古いが重要な知見が埋もれる。mem0/Letta のセマンティック想起に明確に劣る（codex の最大指摘）。</div>
 <div class="callout limit"><b>② 記録が貯まるかが生命線。</b> 手動 <code>obs add</code> は続かず、自動化は skill の「お願い」止まり。DB が薄いままだと注入も mine も空回りし、価値を体感する前に忘れられる（subagent の最大懸念）。SessionEnd 自動キャプチャが次の一手。</div>
-<div class="callout limit"><b>③ A/B の前提。</b> 強いモデルは一般的なバージョン非互換なら自力で警戒できる。ulm の<b>クリーンな勝ちはリポ固有の事実</b>に限られる（テスト2）。「何でも賢くなる」ではなく「その現場でしか分からない事実を逃さない」ツールと理解すべき。</div>
+<div class="callout limit"><b>③ A/B の射程。</b> 効果が出るのは<b>リポ固有の事実</b>に限られる。LoRA タスクのように一般知識で当たる gotcha では記憶なしも 2/3 正答した。「何でも賢くなる」ではなく「その現場でしか分からない事実を逃さない」ツール。また<b>検証は単一リポジトリ（irodori）・タスク4種</b>で、他リポへの一般化は未検証。記憶も<b>実コードから手キュレーション</b>した理想条件で、実運用の記録品質はこれより低い（限界①②に直結）。ヘッジ率は 42% で不変＝記憶は<b>正確さ</b>を上げるが文体の慎重さは変えない。</div>
 <div class="callout limit"><b>④ UX の粗。</b> <code>state set</code> に <code>--global</code> が無く <code>--scope</code> と不統一、git 外（<code>/tmp</code> 等）では project が <code>basename</code> になりゴミ project を生む、<code>mine --project X</code> が global 観測を拾わない、等。シミュレーション中に実際に踏んだ。</div>
 </section>
 
 <section id="conclusion">
 <h2><span class="num">08</span>結論</h2>
-<p><b>ulm には実価値がある。</b>実在リポジトリの A/B で、記憶は「READMEを自分で確認して」という曖昧なヘッジを、出自つきの正確で実行可能な答えに変えた。とりわけ<b>モデルが原理的に知り得ないリポジトリ固有の事実</b>（v2 VoiceDesign が設計上 reference audio を無視する 等）で、記憶なしが別モデル探しへ誤誘導する横で、記憶ありは config レベルの正解を即答した。これは「作業で得たコツを、次の仕事で迷わず使う」という当初の狙いそのものである。</p>
+<p><b>ulm には実価値がある —— そしてそれは数値で裏づけられた。</b>同一モデル・隔離環境・盲検2ジャッジの対照 A/B で、記憶は正答率を <b>17%→83〜100%</b> に引き上げ、誤誘導を <b>42%→0〜8%</b> に下げた（2ジャッジ 92% 一致）。とりわけ<b>モデルが原理的に知り得ないリポジトリ固有の事実</b>（latent_dim は codec 側と突き合わせる、v2 VoiceDesign は <code>use_caption_condition</code> で speaker が消える 等）で、記憶なしが一般論や別手段へ流れる横で、記憶ありは config レベルの正解を即答した。これは「作業で得たコツを、次の仕事で迷わず使う」という当初の狙いそのものである。</p>
 <p>同時に、2人の評価者が一致して突いた限界 ——<b>想起が意味検索でないこと</b>と<b>記録が習慣化しにくいこと</b>—— は本物だ。ここを埋めない限り、優れたセキュリティ設計も昇格パイプラインも「空の記憶レイヤー」の上物に留まる。</p>
 <div class="tldr" style="margin-top:24px">
   <h3>次の一手（投資対効果の順）</h3>

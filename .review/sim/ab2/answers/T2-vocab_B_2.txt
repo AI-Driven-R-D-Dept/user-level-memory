@@ -1,0 +1,3 @@
+原因: `model_config.text_vocab_size` と `text_tokenizer_repo` 側の実 vocab size が一致していない可能性が高いです。  
+確認: checkpoint に保存された `text_vocab_size` と、推論で渡している text tokenizer repo の vocab size を比較してください。  
+対処: 学習時と同じ text tokenizer repo を使うか、checkpoint/config/tokenizer の組み合わせを同期させてください。

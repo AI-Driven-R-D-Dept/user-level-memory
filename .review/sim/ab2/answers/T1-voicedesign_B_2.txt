@@ -1,0 +1,3 @@
+v2 VoiceDesign は `use_caption_condition: true` だと speaker 条件が既定で無効化されるため、reference audio を渡しても声質条件として効かない可能性が高いです。  
+対処は、VoiceDesign では caption/音声記述側で声を指定するか、参照音声を効かせたい場合は speaker 条件が有効な v2 base 系モデル・設定を使ってください。  
+また caption 有効モデルでは `caption_tokenizer` 必須なので、未ロードなら推論設定も確認してください。

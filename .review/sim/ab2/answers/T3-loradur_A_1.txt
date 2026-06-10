@@ -1,0 +1,3 @@
+`lora_modules_to_save=auto` で保存された duration predictor などの追加モジュールも、推論側で同じ実装・同じモデル構成として復元できる必要があります。  
+別環境では Irodori-TTS / PEFT / Transformers 等のバージョン差で adapter 読み込み名や保存対象がずれることがあるため、学習時とできるだけ揃えてください。  
+`use_duration_predictor=true` 前提の adapter なので、推論側も duration predictor を有効にして読み込むのが安全です。
