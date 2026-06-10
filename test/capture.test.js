@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extractTranscriptText, validateAutoObs } from '../src/capture.js';
+import { extractTranscriptText, validateAutoObs, stripSecretLines } from '../src/capture.js';
 import { compileGate } from '../src/gate.js';
 
 const gate = compileGate({ deny_patterns: [] });
@@ -40,6 +40,22 @@ test('capture: 機密パターンを含む行は LLM 入力前に除去（生成
 
 test('capture: 壊れた/存在しない transcript は空文字（fail-safe）', () => {
   assert.equal(extractTranscriptText('/nonexistent/path.jsonl', gate), '');
+});
+
+test('stripSecretLines: PEM 複数行ブロックと高エントロピー行を除去・有用行は残す（M1 回帰）', () => {
+  const t = [
+    '普通の説明文',
+    '-----BEGIN OPENSSH PRIVATE KEY-----',
+    'b3BlbnNzaC1rZXktdjEAAAAA1234567890ABCDEFGH',
+    'AAK7x9KQwertyUIOPasdfghjklZXCVBNM1234567890',
+    '-----END OPENSSH PRIVATE KEY-----',
+    '内部トークンは MyUnknownToken_Zx9Q2mKpLrA7Bd3eFgH8jN0sT です',
+    '結論はこうだ',
+  ].join('\n');
+  const safe = stripSecretLines(t, gate);
+  assert.ok(!/b3BlbnNz|AAK7x9/.test(safe), 'PEM 本体行が残らない');
+  assert.ok(!/Zx9Q2mKpLrA7Bd3/.test(safe), '高エントロピートークンが残らない');
+  assert.ok(safe.includes('普通の説明文') && safe.includes('結論はこうだ'), '有用な行は残る');
 });
 
 test('validateAutoObs: 機密を含む抽出結果を破棄・上限尊重・短文除外', () => {

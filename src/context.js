@@ -31,10 +31,14 @@ export function buildContext(store, config, { project } = {}) {
 
   // 1. 可変状態（global + 当該 project。期限切れ・secret は除外）
   const scopes = project ? ['global', project] : ['global'];
-  const states = store.listStates({ scopes, includeSecret: false }).filter((s) => !gate.match(s.value) && !detectHighEntropy(s.value));
+  // 読み取りゲートは key と value の両方を検査（M4: key 経由の機密混入も止める）
+  const states = store.listStates({ scopes, includeSecret: false }).filter(
+    (s) => !gate.match(s.value) && !detectHighEntropy(s.value) && !gate.match(s.key) && !detectHighEntropy(s.key)
+  );
   if (states.length) {
     const lines = states.map((s) => {
-      const scope = s.scope === 'global' ? '' : ` (${s.scope})`;
+      // scope も注入ブロックに出るので無害化（M3: 悪意あるディレクトリ名=scope による fence 脱出を防ぐ）
+      const scope = s.scope === 'global' ? '' : ` (${sanitizeForContext(s.scope)})`;
       const exp = s.expires_at ? ` [期限 ${shortDate(s.expires_at)}]` : '';
       return `- ${sanitizeForContext(s.key)}${scope}: ${sanitizeForContext(truncate(s.value, 200))}${exp}`;
     });
@@ -73,8 +77,10 @@ export function buildContext(store, config, { project } = {}) {
     .filter((o, i, arr) => arr.findIndex((x) => x.id === o.id) === i)
     .slice(0, c.max_obs);
   if (recent.length) {
+    // project（=git root の basename, 攻撃者が握りうる）も注入ブロックに出るので無害化（M3）
+    const projLabel = project ? `（${sanitizeForContext(project)} + global）` : '（global）';
     sections.push({
-      title: `## 最近の観測${project ? `（${project} + global）` : '（global）'}`,
+      title: `## 最近の観測${projLabel}`,
       lines: recent.map(obsLine.bind(null, c)),
       priority: 3,
     });

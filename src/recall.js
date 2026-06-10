@@ -40,7 +40,10 @@ export async function recallObservations(store, config, { query, project, scopes
   const usedFts = ftsHits.length && ftsHits[0].rank != null;
 
   let vecHits = [];
-  if (embedAvailable(config) && store.embeddingCount() > 0) {
+  // M2 対策: クエリ（生プロンプト）が機密を含むなら外部 embeddings API に送らない。
+  // 書込観測はゲート済みでも、ライブクエリは無検査だった＝プロンプト内の鍵が平文 exfil されうる。
+  const querySafe = !gate.match(q) && !detectHighEntropy(q);
+  if (querySafe && embedAvailable(config) && store.embeddingCount() > 0) {
     try {
       const [qv] = await embedTexts([q], config);
       const qvec = Float32Array.from(qv);

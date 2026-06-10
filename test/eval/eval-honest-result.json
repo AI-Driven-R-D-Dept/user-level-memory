@@ -1,0 +1,103 @@
+{
+  "K": 5,
+  "NOISE": 1000,
+  "embedded": 1030,
+  "cats": [
+    "exact",
+    "synonym",
+    "typo",
+    "cross"
+  ],
+  "acc": {
+    "recency": {
+      "exact": {
+        "h": 0,
+        "n": 10
+      },
+      "synonym": {
+        "h": 0,
+        "n": 10
+      },
+      "typo": {
+        "h": 0,
+        "n": 10
+      },
+      "cross": {
+        "h": 0,
+        "n": 10
+      }
+    },
+    "fts": {
+      "exact": {
+        "h": 10,
+        "n": 10
+      },
+      "synonym": {
+        "h": 3,
+        "n": 10
+      },
+      "typo": {
+        "h": 10,
+        "n": 10
+      },
+      "cross": {
+        "h": 10,
+        "n": 10
+      }
+    },
+    "vector": {
+      "exact": {
+        "h": 10,
+        "n": 10
+      },
+      "synonym": {
+        "h": 8,
+        "n": 10
+      },
+      "typo": {
+        "h": 9,
+        "n": 10
+      },
+      "cross": {
+        "h": 10,
+        "n": 10
+      }
+    },
+    "hybrid": {
+      "exact": {
+        "h": 10,
+        "n": 10
+      },
+      "synonym": {
+        "h": 8,
+        "n": 10
+      },
+      "typo": {
+        "h": 10,
+        "n": 10
+      },
+      "cross": {
+        "h": 10,
+        "n": 10
+      }
+    }
+  },
+  "overall": {
+    "recency": 0,
+    "fts": 0.825,
+    "vector": 0.925,
+    "hybrid": 0.95
+  },
+  "recencyByAge": {
+    "fresh": {
+      "h": 0,
+      "n": 20
+    },
+    "old": {
+      "h": 0,
+      "n": 20
+    }
+  },
+  "ftsUniqueRescue": 1,
+  "vecUniqueRescue": 5
+}

@@ -43,16 +43,31 @@ export function extractTranscriptText(path, gate) {
     else if (Array.isArray(msg.content)) text = msg.content.map((c) => (typeof c === 'string' ? c : c.text || '')).join(' ');
     text = String(text).trim();
     if (!text) continue;
-    // 機密パターンを含む行を落とす（生成ゲート）
-    const safe = text
-      .split('\n')
-      .filter((l) => !gate.match(l))
-      .join('\n');
+    // 生成ゲート: 機密パターン/高エントロピー行を落とし、PEM 等の複数行ブロックは丸ごと除去する。
+    // 単純な行フィルタだけだと PEM の本文行・END 行が残って外部 LLM に送られる（M1）。
+    const safe = stripSecretLines(text, gate);
     if (safe.trim()) turns.push(`[${role}] ${safe}`);
   }
   let joined = turns.join('\n');
   if (joined.length > MAX_TRANSCRIPT_CHARS) joined = joined.slice(-MAX_TRANSCRIPT_CHARS); // 直近を優先
   return joined;
+}
+
+/** 機密行/高エントロピー行を除去し、PEM 等の複数行ブロックは BEGIN〜END を丸ごと落とす */
+export function stripSecretLines(text, gate) {
+  const lines = String(text).split('\n');
+  const out = [];
+  let inBlock = false;
+  for (const l of lines) {
+    if (/-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE|OPENSSH)/.test(l)) { inBlock = true; continue; }
+    if (inBlock) {
+      if (/-----END /.test(l)) inBlock = false;
+      continue; // ブロック内の本文・END 行をすべて落とす
+    }
+    if (gate.match(l) || detectHighEntropy(l)) continue; // 行単位の機密/高エントロピー
+    out.push(l);
+  }
+  return out.join('\n');
 }
 
 export function validateAutoObs(raw, gate, max) {

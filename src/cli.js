@@ -324,7 +324,8 @@ function cmdState(args) {
       }
       const [key, ...rest] = positionals;
       const value = rest.join(' ');
-      const { secret, notes } = gateWrite(config, value, { explicitSecret: values.secret });
+      // key も value もゲートする（M4: key 経由の機密混入を防ぐ）
+      const { secret, notes } = gateWrite(config, `${key}\n${value}`, { explicitSecret: values.secret });
       for (const n of notes) console.error(`⚠ ${n}`);
       store.setState(key, value, { scope: scopeOf(values), ttlMs, secret });
       console.log(`✓ state を更新: ${key}${values.ttl ? ` (TTL ${values.ttl})` : ''}${secret ? ' (secret)' : ''}`);
@@ -355,10 +356,15 @@ function cmdState(args) {
       all: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
     });
-    return withStore((store) => {
+    return withStore((store, config) => {
+      const gate = compileGate(config);
+      // キー自体が機密になりうる（M4）。非対話では secret state のキーもマスクする。
+      const maskKey = (r) => (r.secret && !process.stdin.isTTY && (gate.match(r.key) || detectHighEntropy(r.key)) ? '[secret-key]' : r.key);
       const rows = store.listStates({ includeExpired: values.all });
       if (values.json) {
-        console.log(JSON.stringify(rows, null, 2));
+        // 非対話では secret の値・機密キーをマスクして出す（エージェントへの平文ダンプを防ぐ）
+        const safe = process.stdin.isTTY ? rows : rows.map((r) => (r.secret ? { ...r, key: maskKey(r), value: '***' } : r));
+        console.log(JSON.stringify(safe, null, 2));
         return 0;
       }
       if (!rows.length) console.log('（state なし）');
@@ -367,7 +373,7 @@ function cmdState(args) {
         const exp = r.expires_at ? ` [期限 ${shortDate(r.expires_at)}${expired ? ' 切れ' : ''}]` : '';
         const sec = r.secret ? ' 🔒' : '';
         const val = r.secret ? '***' : truncate(r.value, 120);
-        console.log(`${r.scope === 'global' ? '' : `(${r.scope}) `}${r.key}${sec} = ${val}${exp}`);
+        console.log(`${r.scope === 'global' ? '' : `(${r.scope}) `}${maskKey(r)}${sec} = ${val}${exp}`);
       }
       return 0;
     });
@@ -806,11 +812,12 @@ function cmdImport(args) {
       const path = join(dir, file);
       if (!existsSync(path)) continue;
       let rows = readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => parseJsonSafe(l, null)).filter(Boolean);
-      // 取込時ゲート: 外部由来の行が gateWrite を通っていないので、ここで機密を secret 化する
+      // 取込時ゲート: 外部由来の行が gateWrite を通っていないので、ここで機密を secret 化する。
+      // states は value だけでなく key も検査する（M4）。
       if (table === 'observations' || table === 'states') {
-        const field = table === 'observations' ? 'text' : 'value';
         for (const r of rows) {
-          if (!r.secret && (gate.match(r[field]) || detectHighEntropy(String(r[field] ?? '')))) {
+          const blob = table === 'observations' ? String(r.text ?? '') : `${r.key ?? ''}\n${r.value ?? ''}`;
+          if (!r.secret && (gate.match(blob) || detectHighEntropy(blob))) {
             r.secret = 1;
             flagged++;
           }

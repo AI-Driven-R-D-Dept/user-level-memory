@@ -312,8 +312,29 @@ export class Store {
         }
       }
     }
-    // フォールバック: LIKE 部分一致（関連度なし、recency 順）
-    const out = this.listObservations({ project: globalOnly ? undefined : project, global: globalOnly, tags, includeSecret, includeArchived, query: q, limit });
+    // フォールバック: LIKE 部分一致（関連度なし、recency 順）。
+    // M5: scopes を必ず尊重する。FTS 経路は WHERE で scopes を絞るのに、ここで全 project を
+    // 返すとプロジェクト分離が壊れる（短いクエリ/ fts5 非対応ビルドで常時この経路）。
+    let out;
+    if (scopes && scopes.length) {
+      const seen = new Set();
+      out = [];
+      const wantGlobal = scopes.includes('global');
+      const projScopes = scopes.filter((s) => s !== 'global');
+      if (wantGlobal) {
+        for (const o of this.listObservations({ global: true, tags, includeSecret, includeArchived, query: q, limit })) {
+          if (!seen.has(o.id)) (seen.add(o.id), out.push(o));
+        }
+      }
+      for (const p of projScopes) {
+        for (const o of this.listObservations({ project: p, tags, includeSecret, includeArchived, query: q, limit })) {
+          if (!seen.has(o.id)) (seen.add(o.id), out.push(o));
+        }
+      }
+      out = out.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, limit);
+    } else {
+      out = this.listObservations({ project: globalOnly ? undefined : project, global: globalOnly, tags, includeSecret, includeArchived, query: q, limit });
+    }
     return out.map((o) => ({ ...o, rank: null }));
   }
 
@@ -363,13 +384,16 @@ export class Store {
       for (const t of tags) params.push(`%"${escapeLike(t)}"%`);
     }
     const rows = this.db
-      .prepare(`SELECT o.*, v.vec AS _vec FROM obs_vec v JOIN observations o ON ${cond.join(' AND ')}`)
+      .prepare(`SELECT o.*, v.vec AS _vec, v.dim AS _dim FROM obs_vec v JOIN observations o ON ${cond.join(' AND ')}`)
       .all(...params);
-    const scored = rows.map((r) => {
+    const scored = [];
+    for (const r of rows) {
+      // M6: 次元が一致しないベクトル（モデル変更で混在）は cosine を歪めるのでスキップ
+      if (r._dim !== queryVec.length) continue;
       const vec = bufToVec(r._vec); // アライン安全な復元（DataView コピー）
-      const { _vec, ...rest } = r;
-      return { ...rowToObs(rest), sim: cosine(queryVec, vec) };
-    });
+      const { _vec, _dim, ...rest } = r;
+      scored.push({ ...rowToObs(rest), sim: cosine(queryVec, vec) });
+    }
     scored.sort((a, b) => b.sim - a.sim);
     return scored.slice(0, limit);
   }
