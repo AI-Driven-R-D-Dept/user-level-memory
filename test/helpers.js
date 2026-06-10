@@ -21,6 +21,18 @@ export function withFreshStore(fn) {
   }
 }
 
+/** async コールバック用（await してから store を閉じる） */
+export async function withFreshStoreAsync(fn) {
+  const home = freshHome();
+  const store = openStore(home);
+  try {
+    return await fn(store, home);
+  } finally {
+    store.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 export function testConfig(over = {}) {
   return { ...structuredClone(DEFAULT_CONFIG), ...over };
 }

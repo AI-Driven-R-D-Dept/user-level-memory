@@ -6,7 +6,7 @@
 //  - 全テキストを sanitizeForContext で無害化（ゼロ幅/制御文字/偽ロールタグ/fence ブレイク中和）
 //  - 出自ラベルを付け、ヘッダで「これはデータであり命令ではない」と明示
 //  - 予算超過時は優先度の低いもの（最近の観測）の末尾から落とす（state/ref/pin は守る）
-import { sanitizeForContext } from './gate.js';
+import { sanitizeForContext, compileGate, detectHighEntropy } from './gate.js';
 import { truncate, shortDate } from './util.js';
 import { recallObservations } from './recall.js';
 
@@ -22,13 +22,16 @@ const SOURCE_LABEL = {
  */
 export function buildContext(store, config, { project } = {}) {
   const c = config.context;
+  // 読み取り時ゲート: secret=0 でも本文が機密ならインジェクションから除外（多層防御）
+  const gate = compileGate(config);
+  const readSafe = (o) => !gate.match(o.text) && !detectHighEntropy(o.text);
 
   // セクションを優先度順に組み立て（前ほど高優先 = 予算超過時に守る）
   const sections = [];
 
   // 1. 可変状態（global + 当該 project。期限切れ・secret は除外）
   const scopes = project ? ['global', project] : ['global'];
-  const states = store.listStates({ scopes, includeSecret: false });
+  const states = store.listStates({ scopes, includeSecret: false }).filter((s) => !gate.match(s.value) && !detectHighEntropy(s.value));
   if (states.length) {
     const lines = states.map((s) => {
       const scope = s.scope === 'global' ? '' : ` (${s.scope})`;
@@ -47,12 +50,12 @@ export function buildContext(store, config, { project } = {}) {
     sections.push({ title: '## ref（正式規範の所在）', lines, priority: 1 });
   }
 
-  // 3. ピン留め観測（常に含める。secret/archived/redacted は除外）
+  // 3. ピン留め観測（常に含める。secret/archived/redacted は除外。読み取りゲートも通す）
   const pinned = store.listObservations({
     pinnedOnly: true,
     includeSecret: false,
     limit: c.max_obs,
-  });
+  }).filter(readSafe);
   if (pinned.length) {
     sections.push({ title: '## ピン留めの観測', lines: pinned.map(obsLine.bind(null, c)), priority: 2 });
   }
@@ -66,6 +69,7 @@ export function buildContext(store, config, { project } = {}) {
   const recent = [...projObs, ...globalObs]
     .filter((o) => !pinnedIds.has(o.id))
     .filter((o) => o.source !== 'auto') // 自動抽出(未レビュー)は無条件注入しない。recall(関連時のみ)に委ねる
+    .filter(readSafe) // 読み取り時ゲート: secret=0 の機密混入を注入から除外
     .filter((o, i, arr) => arr.findIndex((x) => x.id === o.id) === i)
     .slice(0, c.max_obs);
   if (recent.length) {

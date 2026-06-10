@@ -102,7 +102,8 @@ function entropy(str) {
 
 /**
  * 高エントロピーの長いトークンを検出（パターンに当たらない未知形式機密のヒント）。
- * 誤検知が多いので「警告」用途。自動 secret 化はしない。
+ * 既定では fail-closed（cli の gateWrite が secret 化、recall/context が読み取り除外）。
+ * config.gate.entropy_secret=false のときのみ「警告」用途に降格する。
  * @returns {string|null} 疑わしいトークンの断片、なければ null
  */
 export function detectHighEntropy(text) {

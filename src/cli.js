@@ -700,11 +700,12 @@ async function cmdReindex(args) {
       return 0;
     }
     let pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
-    // 多層防御: secret=0 で残った機密/高エントロピーは外部 embeddings に送らない
+    // 多層防御: secret=0 で残った機密/高エントロピーは外部 embeddings に送らず、secret=1 に昇格して修復する
     const gate = compileGate(config);
     const skipped = pending.filter((p) => gate.match(p.text) || detectHighEntropy(p.text));
+    for (const p of skipped) store.setObservationFlags(p.id, { secret: true }); // legacy/import の取りこぼしを修復
     pending = pending.filter((p) => !gate.match(p.text) && !detectHighEntropy(p.text));
-    if (skipped.length) console.error(`⚠ ${skipped.length} 件を機密の疑いで埋め込みから除外しました`);
+    if (skipped.length) console.error(`⚠ ${skipped.length} 件を機密の疑いで secret 化し、埋め込みから除外しました`);
     if (!pending.length) {
       console.log(`埋め込み済み: ${store.embeddingCount()} 件、新規なし`);
       return 0;
@@ -784,8 +785,10 @@ function cmdExport(args) {
 function cmdImport(args) {
   const { positionals } = parse(args, {}, { positionals: 1 });
   const dir = resolve(positionals[0]);
-  return withStore((store) => {
+  return withStore((store, config) => {
+    const gate = compileGate(config);
     let total = 0;
+    let flagged = 0;
     for (const [table, file] of [
       ['observations', 'observations.jsonl'],
       ['observations', 'observations.secret.jsonl'],
@@ -796,12 +799,23 @@ function cmdImport(args) {
     ]) {
       const path = join(dir, file);
       if (!existsSync(path)) continue;
-      const rows = readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => parseJsonSafe(l, null)).filter(Boolean);
+      let rows = readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => parseJsonSafe(l, null)).filter(Boolean);
+      // 取込時ゲート: 外部由来の行が gateWrite を通っていないので、ここで機密を secret 化する
+      if (table === 'observations' || table === 'states') {
+        const field = table === 'observations' ? 'text' : 'value';
+        for (const r of rows) {
+          if (!r.secret && (gate.match(r[field]) || detectHighEntropy(String(r[field] ?? '')))) {
+            r.secret = 1;
+            flagged++;
+          }
+        }
+      }
       const n = store.importRows(table, rows);
       if (n) console.log(`  ${file}: ${n} 行を取込`);
       total += n;
     }
     console.log(`✓ import 完了: 合計 ${total} 行（既存 ID は INSERT OR IGNORE でスキップ）`);
+    if (flagged) console.log(`  ${flagged} 行を機密の疑いで secret 化しました`);
     console.log('  取り込んだ観測は source 表示で出自を区別できます。注入前に内容を確認してください。');
     return 0;
   });

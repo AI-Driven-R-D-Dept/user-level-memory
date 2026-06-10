@@ -5,8 +5,14 @@
 // 埋め込みは「スタイルが反映されない⇄クラスが効かない」のような意味的近接を拾う。
 // 両者を融合することで、どちらの取りこぼしも補完する。
 import { embedAvailable, embedTexts, cosine } from './embed.js';
+import { compileGate, detectHighEntropy } from './gate.js';
 
 const RRF_K = 60;
+
+/** 読み取り時ゲート: secret=0 でも本文が機密パターン/高エントロピーなら注入候補から除外（多層防御） */
+function readSafe(gate, o) {
+  return !gate.match(o.text) && !detectHighEntropy(o.text);
+}
 
 /** ランク配列(idの順)→ {id: rrf寄与} */
 function rrfScores(rankedIds) {
@@ -24,9 +30,12 @@ export async function recallObservations(store, config, { query, project, scopes
   if (!q) return { hits: [], mode: 'none' };
   const scopes = scopesIn || (project ? ['global', project] : null);
   const minSim = config.context?.recall_min_sim ?? 0.28; // 無関係な vector 候補の足切り（精度制御）
+  // 読み取り時ゲート: secret=0 でも本文が機密なら除外。import/legacy/別書き込み経路で
+  // secret フラグが付かなかった機密が注入チャネルに乗るのを機械的に止める（多層防御）。
+  const gate = compileGate(config);
   const ftsOpts = { query: q, scopes, includeSecret: false, includeArchived: false, limit: candidateK };
 
-  const ftsHits = store.searchObservations(ftsOpts);
+  let ftsHits = store.searchObservations(ftsOpts).filter((o) => readSafe(gate, o));
   const ftsById = new Map(ftsHits.map((o) => [o.id, o]));
   const usedFts = ftsHits.length && ftsHits[0].rank != null;
 
@@ -36,8 +45,8 @@ export async function recallObservations(store, config, { query, project, scopes
       const [qv] = await embedTexts([q], config);
       const qvec = Float32Array.from(qv);
       vecHits = store.vectorSearch(qvec, { scopes, includeSecret: false, includeArchived: false, limit: candidateK, cosine });
-      // 類似度が閾値未満の候補は落とす（cosine が低いものは無関係。tail のノイズ注入を防ぐ）
-      vecHits = vecHits.filter((o) => o.sim >= minSim);
+      // 類似度が閾値未満／読み取りゲート不通過の候補は落とす
+      vecHits = vecHits.filter((o) => o.sim >= minSim && readSafe(gate, o));
     } catch {
       vecHits = []; // 埋め込み失敗時は FTS のみ
     }
