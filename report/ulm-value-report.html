@@ -121,21 +121,23 @@
   <ol>
     <li><b>価値は数値で出た</b>。同一モデル・隔離環境・盲検2ジャッジの対照 A/B（4タスク×3試行）で、記憶ありの<b>正答率は 17% → 83〜100%</b>、誤誘導は <b>42% → 0〜8%</b>。とりわけモデルが推測できない<b>リポジトリ固有の事実</b>で差が決定的だった。</li>
     <li><b>想起品質を本質改善した</b>。2人の評価者が一致して突いた弱点「recency 詰め込み・字句一致止まり」を、FTS5(BM25) + 埋め込みの<b>ハイブリッド想起</b>で解消。2000件ノイズの拡張評価で <b>recency 0% → FTS 73% → hybrid 97%</b>、同義語は <b>20% → 87%</b>（Recall@5）。</li>
-    <li>評価は反復レビューで <b>62/72 → 89〜91/100</b> まで上昇。FTS/埋め込み/評価ハーネス/自動キャプチャ、そして指摘された<b>機密ゲートの漏洩穴2件を実バグとして修正</b>して到達した。</li>
+    <li>評価は反復レビューで <b>62/72 → 一旦 89〜92</b> まで上がったが、最後に<b>「壊す目的」の敵対監査</b>を2系統かけたところ、<b>評価設計のバイアス</b>と<b>5つの実セキュリティ穴</b>が露見し「実力相応は 70-75」と判定された。それらを修正・是正したのが本最終版。<b>スコアは一度盛れたが、敵対監査で正直な水準に引き戻して作り直した</b>。</li>
   </ol>
 </div>
 
 <div class="card" style="border-color:#bfdcc4;background:#f3f9f4">
-  <h3 style="margin-top:0;color:var(--good)">追記：90点までの改善（fresh-context 反復レビュー駆動）</h3>
-  <p style="font-size:14.5px">初回 62/72 のレビューが突いた2大弱点（<b>想起品質</b>・<b>記録の習慣化</b>）を、外部 LLM(codex) と独立 subagent に<b>実際に動かして再評価</b>させながら反復改善した。</p>
+  <h3 style="margin-top:0;color:var(--good)">改善とスコアの推移（fresh-context 反復レビュー駆動）</h3>
+  <p style="font-size:14.5px">初回 62/72 のレビューが突いた2大弱点（<b>想起品質</b>・<b>記録の習慣化</b>）を、外部 LLM(codex) と独立 subagent に<b>実際に動かして再評価</b>させながら反復改善。最後に<b>敵対的（壊す目的）監査</b>で過大評価を引き戻した。</p>
   <table style="margin:8px 0">
-    <tr><th>段階</th><th>codex</th><th>subagent</th><th>主な手</th></tr>
-    <tr><td class="k">初回</td><td>62</td><td>72</td><td>MVP（recency 注入・LIKE 検索）</td></tr>
-    <tr><td class="k">FTS+自動キャプチャ</td><td>82</td><td>82</td><td>BM25 想起・UserPromptSubmit・Stop 自動記録・評価ハーネス</td></tr>
-    <tr><td class="k">埋め込みハイブリッド</td><td>90</td><td>89</td><td>意味的想起（FTS+embedding RRF）で同義語 20→87%</td></tr>
-    <tr><td class="k">機密ゲート修正</td><td><b>—</b></td><td><b>91</b></td><td>hf_ 等の漏洩バグ + fail-closed + 読み取り時ゲート</td></tr>
+    <tr><th>段階</th><th>評価</th><th>主な出来事</th></tr>
+    <tr><td class="k">初回</td><td>62 / 72</td><td>MVP（recency 注入・LIKE 検索）</td></tr>
+    <tr><td class="k">FTS+自動キャプチャ</td><td>82 / 82</td><td>BM25 想起・自動記録・評価ハーネス</td></tr>
+    <tr><td class="k">埋め込みハイブリッド</td><td>90 / 89</td><td>意味的想起（FTS+embedding RRF）</td></tr>
+    <tr><td class="k">機密ゲート修正</td><td>92 / 91</td><td>hf_ 漏洩・read-path 漏洩を修正</td></tr>
+    <tr><td class="k" style="color:var(--bad)">敵対監査（Fable）</td><td style="color:var(--bad)"><b>70-75 判定</b></td><td><b>評価バイアス露見・5実バグ(PoC)発見</b></td></tr>
+    <tr><td class="k">最終是正</td><td><b>—</b></td><td>5バグ修正・正直な4-way評価・誇大表現を是正</td></tr>
   </table>
-  <p style="font-size:13.5px;color:var(--muted)">各段階で「実測して再採点」させ、指摘された実バグ（HuggingFace トークンの未検出、read-path の secret=0 漏洩）を都度修正。スコアは主張でなく、評価者が手を動かした実測値。</p>
+  <p style="font-size:13.5px;color:var(--muted)">「90」は一度実測で出たが、それは<b>評価者に都合のよい土俵での値</b>だった。敵対監査がそれを暴き（数値の捏造はなく、設計バイアス）、実バグも見つけた。最終版は<b>その指摘を全部呑んで正直に引き戻した</b>もの。これ自体が「fresh-context で徹底的に見る」ことの実演になっている。</p>
 </div>
 
 <nav class="card">
@@ -326,21 +328,39 @@
 </section>
 
 <section id="recall">
-<h2><span class="num">05.5</span>想起品質の進化 — recency → FTS → ハイブリッド</h2>
-<p>初回レビューの最大弱点は「SessionStart が<b>関連度でなく recency（最近順）で詰め込む</b>」「検索が <code>LIKE</code> 部分一致のみ」だった。ここを2層で作り直した：<b>FTS5(BM25, 字句)</b> と <b>埋め込み(cosine, 意味)</b> を Reciprocal Rank Fusion で融合し、依存ゼロを保つため<b>埋め込みは任意</b>（API キーが無ければ FTS のみに自動 degrade）。</p>
-<p>有利設計を避けるため、評価コーパスを現実寄りにした：<b>2000件のノイズ観測を「新しい」</b>＝recency が上位を独占、<b>関連する15観測を「古い」</b>＝recency では埋もれる罠。クエリは4カテゴリ（完全一致 / 言い換え / 同義語 / タイプミス）×15。</p>
+<h2><span class="num">05.5</span>想起品質の進化 — recency → FTS → ハイブリッド（自己監査で割り引いた正直版）</h2>
+<p>初回レビューの最大弱点は「SessionStart が<b>関連度でなく recency（最近順）で詰め込む</b>」「検索が <code>LIKE</code> 部分一致のみ」だった。これを2層で作り直した：<b>FTS5(BM25, 字句)</b> と <b>埋め込み(cosine, 意味)</b> を Reciprocal Rank Fusion で融合し、依存ゼロを保つため<b>埋め込みは任意</b>（API キーが無ければ FTS のみに自動 degrade）。</p>
+
+<p><b>この数字は割り引いて読む必要がある。</b>敵対的な「評価公正性監査」を別エージェントに依頼したところ、初版コーパスに3つのバイアス（recency を構造的に 0% にする年齢分離、FTS が K=5 で実質貢献ゼロ、最難の cross カテゴリ未実装）が見つかった。それを是正した<b>正直な4-way 評価</b>（混在recency + cross/hard-negative + 重いタイポ）の結果がこちら：</p>
 <table>
-  <tr><th>クエリの種類</th><th>recency</th><th>FTSのみ</th><th>ハイブリッド</th></tr>
-  <tr><td class="k">完全一致（exact）</td><td><span class="bad-mark">0%</span></td><td>100%</td><td class="">100%</td></tr>
-  <tr><td class="k">言い換え（paraphrase）</td><td><span class="bad-mark">0%</span></td><td>73%</td><td><span class="good-mark">100%</span></td></tr>
-  <tr><td class="k">同義語・字面ゼロ一致（synonym）</td><td><span class="bad-mark">0%</span></td><td><span class="bad-mark">20%</span></td><td><span class="good-mark">87%</span></td></tr>
-  <tr><td class="k">タイプミス（typo）</td><td><span class="bad-mark">0%</span></td><td>100%</td><td>100%</td></tr>
-  <tr><td class="k"><b>全体 Recall@5</b></td><td><b>0%</b></td><td><b>73%</b></td><td><b>97%</b></td></tr>
-  <tr><td class="k"><b>全体 MRR</b></td><td>0.000</td><td>0.725</td><td><b>0.931</b></td></tr>
+  <tr><th>クエリの種類</th><th>recency</th><th>FTSのみ<br><small>(キー無しの実力)</small></th><th>vector<br><small>(意味のみ)</small></th><th>ハイブリッド</th></tr>
+  <tr><td class="k">完全一致 / cross / タイプミス</td><td>0%</td><td>100% / 100% / 100%</td><td>100% / 100% / 90%</td><td>100% / 100% / 100%</td></tr>
+  <tr><td class="k">同義語（字面ゼロ一致）</td><td>0%</td><td><span class="bad-mark">30%</span></td><td><span class="good-mark">80%</span></td><td><span class="good-mark">80%</span></td></tr>
+  <tr><td class="k"><b>全体 Recall@5</b></td><td><b>0%</b></td><td><b>83%</b></td><td><b>93%</b></td><td><b>95%</b></td></tr>
 </table>
-<div class="callout"><b>各層が異なる弱点を埋める。</b> recency は現実的ノイズ下で<b>完全に無力（0%）</b>。FTS(字句)は完全一致/タイプミスに強いが<b>同義語で頭打ち（20%）</b>。埋め込み(意味)がその同義語を <b>20%→87%</b> に引き上げる。「スタイルが反映されない ⇄ tailwind のクラスが効かない」のような<b>字面ゼロ一致</b>を実機(`claude` ヘッドレス)でも拾えることを確認した。</div>
-<div class="callout limit"><b>正直な内訳（自己監査）：</b> このコーパスで vector 単独を測ると 97%（hybrid とほぼ同値）。つまり<b>API キーがある時の向上分は主に埋め込みの寄与</b>で、ハイブリッドが vector 単独を大きく上回るわけではない。FTS の固有価値は <b>(1) キー無しでも 73% を保つ依存ゼロの floor</b>（recency 0% との差は字句検索だけでも大きい）と <b>(2) 埋め込み障害/タイムアウト時の保険</b>。RRF 融合は「キーの有無に関わらず最良の経路を自動選択する」ための設計であって、両層の相乗で vector を超えると主張するものではない。</div>
-<p class="src">再現: <code>node test/eval/recall-eval-large.js 5 2000</code>（要 OPENAI_API_KEY）。回帰テスト <code>test/recall_quality.test.js</code> / <code>recall_large.test.js</code> が FTS≫recency と同義語の天井を固定。secret 観測は全リトリーバで top-5 に漏れない（0件）。</p>
+<div class="callout"><b>各層の固有価値（正直な切り分け）：</b>
+<br>・<b>recency</b> は「最近の記憶」を低ノイズなら 60% 拾うが、<b>古い記憶は常に 0%</b>（どのノイズ量でも）。活動が増えると全崩壊。<b>長期記憶の本来の仕事＝古い知見の想起ができない</b>のが構造的限界。
+<br>・<b>FTS(字句)</b> は完全一致・タイプミス・cross に強く、<b>キー無しでも 83% の floor</b>。タイポでは vector(90%) を救済し hybrid を 100% に戻す（FTS のユニーク貢献を実測 1 件確認）。
+<br>・<b>埋め込み(意味)</b> が同義語を <b>30%→80%</b> に引き上げる。「DBの同時接続上限に達する ⇄ 接続プールが枯渇」のような<b>字面ゼロ一致</b>を拾うのは埋め込みだけ（vector ユニーク貢献 5 件）。</div>
+<div class="callout limit"><b>誇張しないための注記：</b>
+<br>(1) 別の有利コーパス（2000ノイズ・近接言い換え）では hybrid 97%/synonym 87% も出るが、これは<b>キーがある前提</b>で、その向上分は主に埋め込みの寄与（vector 単独でもほぼ同値）。「ハイブリッドが相乗で vector を超える」とは主張しない。
+<br>(2) これらは<b>自作の合成コーパス・各カテゴリ n=10〜15・単発実行</b>で、信頼区間は広い。実プロジェクトログでのブラインド評価は未実施。
+<br>(3) キーが無いデフォルト体験では synonym は 30% に落ちる。意味的想起は<b>外部 embeddings API（OpenAI 等）を使えるときの上澄み</b>であり、ローカル完結ではない。</div>
+<p class="src">再現: <code>node test/eval/recall-eval-honest.js 5</code>（正直版・要 OPENAI_API_KEY）/ <code>recall-eval-large.js 5 2000</code>（有利版）。回帰テストが FTS≫recency と同義語の天井を固定。secret 観測は全リトリーバで top-5 に漏れない（0件）。</p>
+</section>
+
+<section id="security">
+<h2><span class="num">05.7</span>敵対監査で塞いだ実バグ（多層防御の穴）</h2>
+<p>「90点」を疑い、別エージェントに<b>壊す目的のコード監査</b>を依頼したところ、PoC 付きで複数の実漏洩経路が見つかった。「多層防御」と謳いながら<b>各層が同じフィールド（text/value）しか見ず、別フィールドが無防備</b>だった。すべて修正・回帰テスト化した：</p>
+<table>
+  <tr><th>穴（PoC実証）</th><th>修正</th></tr>
+  <tr><td class="k">capture が PEM 本体行・高エントロピーを外部 LLM に送信</td><td>生成ゲートに複数行ブロック除去 + エントロピー検査</td></tr>
+  <tr><td class="k">recall のクエリ（生プロンプト）が無検査で埋め込み API へ</td><td>機密を含むクエリは埋め込みに送らず FTS のみ</td></tr>
+  <tr><td class="k">注入ブロックの scope/project（ディレクトリ名）が無サニタイズ → fence 脱出</td><td>scope/project も <code>sanitizeForContext</code> で無害化</td></tr>
+  <tr><td class="k">state の「キー」が全層でゲート素通り（キー自体が機密のケース）</td><td>キーも write/read/import/list で検査・マスク</td></tr>
+  <tr><td class="k">短いクエリの LIKE フォールバックで scopes 喪失 → クロスプロジェクト混入</td><td>フォールバックでも scopes を尊重</td></tr>
+</table>
+<p class="src">この監査が「90点は過大、実力相応は 70-75点」と判定したのは正当。上の穴は実在し、修正後に再攻撃して塞がったことを確認した。誇大広告（「多層防御」「97%」）も条件明示を加えて是正済み。</p>
 </section>
 
 <section id="metrics">
@@ -381,7 +401,8 @@
     <li><b>UX/安全</b> → <code>state --global</code>、<code>mine</code> の global 取り込み、そしてレビューが見つけた<b>機密ゲートの漏洩バグ2件（hf_ 未検出・read-path の secret=0 漏洩）を実バグとして修正</b>。</li>
   </ol>
 </div>
-<p style="margin-top:20px">評価は <b>62/72 → 91〜92/100</b>（最新コードで codex 92 / subagent 91-92、2人とも 90 到達）。<b>「効く人に刺さる MVP」から「長期記憶レイヤーとして使える完成度」へ</b>。依存ゼロ・テスト101件・多層セキュリティを保ったまま、ツールの“入口（記録）と出口（想起）”を本質的に作り直した。残る課題は大規模(数万件)でのベクトル探索の近似化と、実プロジェクトログによるブラインド評価で、これは 95+ に向けた成熟化である。</p>
+<p style="margin-top:20px"><b>正直な最終評価。</b> スコアは一度 91/92 まで出たが、敵対監査が<b>評価設計バイアスと5つの実セキュリティ穴</b>を暴き「70-75 が妥当」と判定した。それは正しい。本最終版は<b>その指摘を全部反映</b>した：穴は塞ぎ（再攻撃で確認）、評価は正直な4-way に作り直し、誇大表現は条件明示で是正した。</p>
+<p>残るのは<b>本物の価値</b>だ：意味的想起（同義語の字面ゼロ一致を 30%→80% で拾う）は実装として確かで実機でも動く。記録の自動化、人間承認の昇格、依存ゼロ・テスト106件・多フィールドに揃えた機密ゲートも健在。一方で限界も明確だ — <b>意味的想起は外部 embeddings API があるときの上澄み</b>（キー無しでは字句のみ）、評価は<b>合成コーパスで実ログのブラインド評価は未実施</b>、recency は古い記憶を構造的に拾えない。<b>「効く人・効く条件では確かに刺さる、正直に作り込んだツール」</b>——それが過大評価を割り引いた後に残る、嘘のない結論である。</p>
 </section>
 
 <footer>

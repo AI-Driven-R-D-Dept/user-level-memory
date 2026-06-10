@@ -1,7 +1,7 @@
 {
   "K": 5,
-  "NOISE": 1000,
-  "embedded": 1030,
+  "NOISE": 500,
+  "embedded": 530,
   "cats": [
     "exact",
     "synonym",
@@ -55,7 +55,7 @@
         "n": 10
       },
       "typo": {
-        "h": 9,
+        "h": 10,
         "n": 10
       },
       "cross": {
@@ -85,7 +85,7 @@
   "overall": {
     "recency": 0,
     "fts": 0.825,
-    "vector": 0.925,
+    "vector": 0.95,
     "hybrid": 0.95
   },
   "recencyByAge": {
@@ -98,6 +98,6 @@
       "n": 20
     }
   },
-  "ftsUniqueRescue": 1,
+  "ftsUniqueRescue": 0,
   "vecUniqueRescue": 5
 }
