@@ -59,9 +59,9 @@ export function stripSecretLines(text, gate) {
   const out = [];
   let inBlock = false;
   for (const l of lines) {
-    if (/-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE|OPENSSH)/.test(l)) { inBlock = true; continue; }
+    if (/-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE|OPENSSH)/i.test(l)) { inBlock = true; continue; }
     if (inBlock) {
-      if (/-----END /.test(l)) inBlock = false;
+      if (/-----END /i.test(l)) inBlock = false;
       continue; // ブロック内の本文・END 行をすべて落とす
     }
     if (gate.match(l) || detectHighEntropy(l)) continue; // 行単位の機密/高エントロピー

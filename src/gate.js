@@ -107,8 +107,14 @@ function entropy(str) {
  * @returns {string|null} 疑わしいトークンの断片、なければ null
  */
 export function detectHighEntropy(text) {
-  for (const tok of String(text ?? '').split(/[\s"'`,;]+/)) {
-    if (tok.length >= 24 && /^[A-Za-z0-9+/=_-]+$/.test(tok) && entropy(tok) >= 4.0) {
+  // 区切りを増やして kebab/path/dotted な識別子（k8s 設定名・URL 風）を語に分解し誤検知を減らす。
+  for (const tok of String(text ?? '').split(/[\s"'`,;:/.\\|()<>\[\]{}]+/)) {
+    if (tok.length < 24) continue;
+    if (!/^[A-Za-z0-9+=_-]+$/.test(tok)) continue;
+    // 実在トークン/鍵はほぼ必ず数字を含む。純アルファの長語（CamelCase クラス名等）は除外し
+    // 誤 secret 化を抑える。数字を含み高エントロピーなものだけを機密の兆候とみなす。
+    const hasDigit = /[0-9]/.test(tok);
+    if (hasDigit && entropy(tok) >= 4.0) {
       return tok.length > 12 ? `${tok.slice(0, 6)}…${tok.slice(-4)}` : tok;
     }
   }
