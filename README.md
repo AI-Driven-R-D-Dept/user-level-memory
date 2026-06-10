@@ -141,6 +141,6 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 ## 開発
 
 ```bash
-node --test test/*.test.js          # ユニットテスト（114件）
+node --test test/*.test.js          # ユニットテスト（118件）
 node test/eval/external/run-external-eval.js 10   # 外部評価（要 OPENAI_API_KEY）
 ```

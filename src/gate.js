@@ -19,13 +19,17 @@ const BUILTIN = [
   { name: 'google-api-key', re: /AIza[0-9A-Za-z_-]{30,}/ },
   { name: 'private-key', re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/ },
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
-  { name: 'db-uri', re: /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i }, // user:pass@host（スキーム不問）
+  { name: 'db-uri', re: /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i }, // user:pass@host（スキーム不問。先頭アンカーで線形化）
   { name: 'bearer', re: /bearer\s+[A-Za-z0-9_\-.=]{20,}/i },
   { name: 'authorization-header', re: /authorization\s*:\s*\S{8,}/i },
   { name: 'gcp-service-account', re: /"private_key_id"\s*:|"type"\s*:\s*"service_account"/ },
   { name: 'azure-key', re: /AccountKey\s*=\s*[A-Za-z0-9+/=]{16,}/i },
   { name: 'hex-token', re: /\b[0-9a-f]{32,}\b/i }, // 32桁以上の連続 hex（汎用トークン）
-  { name: 'env-secret-assign', re: /[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|APIKEY|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*[:=]\s*['"]?[^\s'"]{5,}/ },
+  // 線形化: 識別子の先頭に否定後読みでアンカーし、キーワード前のスキャンを有界(0,80)化。
+  // 以前の `[A-Z0-9_]*KW[A-Z0-9_]*` は前後の無制限 * がキーワード文字と重なり、
+  // `TOKEN_`×N 入力で指数バックトラック(16KB=20s ハング)していた。アンカーで開始位置を
+  // 識別子先頭のみに限定し、本体は単一の貪欲クラス `[A-Z0-9_]+` で1回マッチ→全体 O(n)。
+  { name: 'env-secret-assign', re: /(?<![A-Z0-9_])(?=[A-Z0-9_]{0,80}(?:TOKEN|SECRET|PASSWORD|APIKEY|API_KEY|PRIVATE_KEY))[A-Z0-9_]+\s*[:=]\s*['"]?[^\s'"]{5,}/ },
   {
     name: 'credential-assignment',
     re: /(?:password|passwd|pwd|api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)\s*[:=]\s*['"]?[^\s'"]{5,}/i,
@@ -33,7 +37,11 @@ const BUILTIN = [
 ];
 
 const MAX_PATTERN_LENGTH = 300; // 極端に長い独自パターンを拒否
-const MAX_SCAN_LENGTH = 16 * 1024; // ReDoS/CPU 事故予防: これ以上は先頭のみ走査（多項式爆発も有界化）
+// 走査は行単位＋重なり窓で全域をカバーする（16KB 先頭打ち切りによる末尾機密の取りこぼしを廃止）。
+// BUILTIN を線形化済みなので、窓ごとのコストは O(窓長) に収まる。
+const MAX_LINE_SCAN = 8 * 1024; // 1行(または1窓)あたりの走査長
+const WINDOW_OVERLAP = 1024; // 窓境界をまたぐトークンの取りこぼし防止の重なり（想定トークン長より大）
+const MAX_TOTAL_SCAN = 1024 * 1024; // 総走査量のバックストップ（1MB。極端な入力での CPU 事故予防）
 
 /**
  * ユーザー由来の deny パターンが ReDoS 安全かを静的に判定する。
@@ -74,11 +82,24 @@ export function compileGate(config, warn = () => {}) {
   return {
     /** 機密パターンに一致したらパターン名、なければ null。例外時は fail-closed で 'gate-error' */
     match(text) {
-      let s = String(text ?? '');
-      if (s.length > MAX_SCAN_LENGTH) s = s.slice(0, MAX_SCAN_LENGTH);
+      const full = String(text ?? '');
       try {
-        for (const p of patterns) {
-          if (p.re.test(s)) return p.name;
+        let scanned = 0;
+        // 行単位で全域を走査（末尾の機密も見落とさない）。無改行で長大な行は
+        // 重なり付き窓に分割し、各窓を線形パターンで検査する（窓境界の機密は overlap で救済）。
+        for (const line of full.split('\n')) {
+          if (scanned > MAX_TOTAL_SCAN) break;
+          if (line.length <= MAX_LINE_SCAN) {
+            scanned += line.length;
+            for (const p of patterns) if (p.re.test(line)) return p.name;
+            continue;
+          }
+          for (let i = 0; i < line.length; i += MAX_LINE_SCAN - WINDOW_OVERLAP) {
+            if (scanned > MAX_TOTAL_SCAN) break;
+            const seg = line.slice(i, i + MAX_LINE_SCAN);
+            scanned += seg.length;
+            for (const p of patterns) if (p.re.test(seg)) return p.name;
+          }
         }
         return null;
       } catch {
@@ -123,6 +144,19 @@ export function detectHighEntropy(text) {
 
 const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g; // \r(\x0d) も含む。\t は残し後段で空白化
+
+// cross-script 同形異字（キリル/ギリシャ）を Latin に畳む。NFKC では畳まれないため、
+// `ЅYSTEM:`(キリル Ѕ) のような非Latin 偽装で役割マーカー中和を回避されるのを塞ぐ。
+const CONFUSABLES = {
+  А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', Ѕ: 'S', І: 'I', Ј: 'J', Ү: 'Y',
+  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', ѕ: 's', і: 'i', ј: 'j',
+  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X', Ϲ: 'C', ο: 'o', ϲ: 'c',
+};
+const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join('')}]`, 'g');
+// NFKC で畳まれない角括弧変種（〈〉⟨⟩）を ASCII 山括弧に正規化し、後段の [tag] 化に乗せる。
+// 全角＜＞は NFKC が畳むのでここでは扱わない。
+const ANGLE_OPEN = /[〈⟨]/g;
+const ANGLE_CLOSE = /[〉⟩]/g;
 // 前置は「英数字以外」（語境界）の否定後読み。これで `。SYSTEM:` / `．USER:` など
 // 記号直後の役割マーカーも捕捉しつつ、`ABUSER:` のような語中一致は除外する。
 const ROLE_WORDS = /(?<![A-Za-z0-9])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
@@ -138,9 +172,10 @@ const BRACKET_ROLE = /\[\s*\/?\s*(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|T
  * 防御の要は「データfence(<user-memory>)の境界を閉じさせないこと」。境界さえ守れれば、
  * 内部に役割マーカーや同形異字が残ってもモデルには fence 内のデータとして提示される。
  * - NFKC 正規化（全角 SYSTEM：→ SYSTEM: 等の同形を畳む）
+ * - cross-script 同形異字(キリル/ギリシャ)を Latin に畳む（NFKC では畳まれない偽装対策）
  * - ゼロ幅/制御文字(\r 含む)の除去（不可視命令・端末操作対策）
- * - あらゆる山括弧タグを [tag] 化（</user-memory> 等での境界脱出を一律封じる）
- * - 1行化してから役割マーカー（行頭/語境界）を中和（mid-line も捕捉）
+ * - 角括弧変種(〈〉⟨⟩)を ASCII 化し、タグ様の山括弧 `</word>` を [tag] 化（fence 境界の閉じを封じる）
+ * - 1行化してから役割マーカー（行頭/語境界・角括弧形）を中和（mid-line も捕捉）
  * - コードフェンス/水平線の中和
  */
 export function sanitizeForContext(text) {
@@ -151,8 +186,11 @@ export function sanitizeForContext(text) {
     // 不正なコードポイントは握りつぶす
   }
   return s
+    .replace(CONFUSABLE_RE, (c) => CONFUSABLES[c] || c)
     .replace(ZERO_WIDTH, '')
     .replace(CONTROL, ' ')
+    .replace(ANGLE_OPEN, '<')
+    .replace(ANGLE_CLOSE, '>')
     .replace(/<\/?[A-Za-z][^>]*>/g, '[tag]')
     .replace(/[ \t]*\n[ \t]*/g, ' ')
     .replace(BRACKET_ROLE, '[ロール]')

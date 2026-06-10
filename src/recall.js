@@ -76,15 +76,19 @@ export async function recallObservations(store, config, { query, project, scopes
   // 融合: 外部評価(作者非依存)で、等重み RRF は強い vector の順位を弱い FTS が引き下げ
   // hybrid < vector になることが判明した。そこで「vector 主軸 + FTS は取りこぼし救済」にする:
   //  - 両方に出る項目は vector の順位を尊重（agreement で僅かに前進）
-  //  - vector が拾えなかった FTS 固有ヒットだけ末尾に足す（exact/typo の救済。Recall は落とさない）
-  // これで hybrid は ranking で vector を下回らず、かつ FTS 固有の救済も保てる。
+  //  - vector が拾えなかった FTS 固有ヒットだけ末尾に足す（exact/typo の救済）
+  // 融合ステップ自体は vector 順を保持するので融合で順位は下がらない。ただし end-to-end の
+  // hybrid は上流の棄権機構（best cosine < inject_min なら vecHits=[]）により、raw vector を
+  // ごく僅かに下回りうる（外部評価で Success 95 vs 98）。精度（誤注入0）を優先した意図的トレードオフ。
   return { hits: fuseVectorPrimary(vecHits, ftsHits, ftsById).slice(0, limit), mode: 'hybrid' };
 }
 
 /**
  * 融合: vector の順位を完全保持し、FTS 固有ヒットだけ末尾に救済追加する。
  * 外部評価(作者非依存)で「等重み RRF は強い vector を弱い FTS が引き下げ hybrid<vector」
- * が判明したため、ranking で vector を下回らないことを構造的に保証する設計に変更。
+ * が判明したため、この融合関数は vector 順を構造的に保持する（FTS が vector を押し下げない）。
+ * ※これは融合ステップの保証であって、end-to-end の hybrid は上流の棄権機構により raw vector を
+ *   僅かに下回りうる（recallObservations のコメント参照。意図的なトレードオフ）。
  * @returns {object[]} 融合済み（vector 順 → FTS 固有の順）
  */
 export function fuseVectorPrimary(vecHits, ftsHits, ftsById = new Map()) {
