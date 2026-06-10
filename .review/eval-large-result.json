@@ -1,0 +1,101 @@
+{
+  "K": 5,
+  "noise": 2000,
+  "embedded": 2015,
+  "cats": [
+    "exact",
+    "paraphrase",
+    "synonym",
+    "typo"
+  ],
+  "acc": {
+    "recency": {
+      "exact": {
+        "recall": 0,
+        "rr": 0,
+        "n": 15
+      },
+      "paraphrase": {
+        "recall": 0,
+        "rr": 0,
+        "n": 15
+      },
+      "synonym": {
+        "recall": 0,
+        "rr": 0,
+        "n": 15
+      },
+      "typo": {
+        "recall": 0,
+        "rr": 0,
+        "n": 15
+      }
+    },
+    "fts": {
+      "exact": {
+        "recall": 15,
+        "rr": 15,
+        "n": 15
+      },
+      "paraphrase": {
+        "recall": 11,
+        "rr": 11,
+        "n": 15
+      },
+      "synonym": {
+        "recall": 3,
+        "rr": 3,
+        "n": 15
+      },
+      "typo": {
+        "recall": 15,
+        "rr": 14.5,
+        "n": 15
+      }
+    },
+    "hybrid": {
+      "exact": {
+        "recall": 15,
+        "rr": 15,
+        "n": 15
+      },
+      "paraphrase": {
+        "recall": 15,
+        "rr": 13.5,
+        "n": 15
+      },
+      "synonym": {
+        "recall": 13,
+        "rr": 12.333333333333332,
+        "n": 15
+      },
+      "typo": {
+        "recall": 15,
+        "rr": 15,
+        "n": 15
+      }
+    }
+  },
+  "overall": {
+    "recency": {
+      "recall": 0,
+      "mrr": 0,
+      "n": 60
+    },
+    "fts": {
+      "recall": 0.7333333333333333,
+      "mrr": 0.725,
+      "n": 60
+    },
+    "hybrid": {
+      "recall": 0.9666666666666667,
+      "mrr": 0.9305555555555555,
+      "n": 60
+    }
+  },
+  "secretLeak": {
+    "recency": 0,
+    "fts": 0,
+    "hybrid": 0
+  }
+}

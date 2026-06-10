@@ -4,7 +4,7 @@ import { newId, hypothesisHash } from './ids.js';
 import { nowIso, parseJsonSafe } from './util.js';
 import { dbPath } from './config.js';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -85,6 +85,15 @@ function migrate(db) {
   // v3: FTS5(trigram) による関連度想起。fts5 が無い環境では握りつぶして LIKE にフォールバック。
   ensureFts(db);
 
+  // v4: 意味的想起のための埋め込みベクトル置き場（任意。OpenAI 互換 embeddings がある時だけ使う）
+  db.exec(`CREATE TABLE IF NOT EXISTS obs_vec (
+    obs_id TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vec BLOB NOT NULL,
+    FOREIGN KEY (obs_id) REFERENCES observations(id) ON DELETE CASCADE
+  );`);
+
   db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(SCHEMA_VERSION));
 }
 
@@ -160,17 +169,6 @@ function buildFtsMatch(q) {
   return phrases.size ? [...phrases].join(' OR ') : null;
 }
 
-/** FTS 検索結果に project/tags/secret/archived フィルタを JS 側で適用 */
-function applyObsFilters(rows, { project, globalOnly, tags, includeSecret, includeArchived, scopes }) {
-  let out = rows;
-  if (scopes) out = out.filter((o) => o.project == null || scopes.includes(o.project));
-  else if (globalOnly) out = out.filter((o) => o.project == null);
-  else if (project) out = out.filter((o) => o.project === project);
-  if (!includeSecret) out = out.filter((o) => !o.secret);
-  if (!includeArchived) out = out.filter((o) => !o.archived);
-  if (tags && tags.length) out = out.filter((o) => o.tags.some((t) => tags.includes(t)));
-  return out;
-}
 
 function rowToObs(r) {
   return {
@@ -283,17 +281,31 @@ export class Store {
       const match = buildFtsMatch(q);
       if (match) {
         try {
+          // フィルタは SQL 側（WHERE）で適用。さもないと BM25 上位がスコープ外で埋まり
+          // 本来のヒットが LIMIT で切られる（codex 指摘の取りこぼしバグ）。
+          const cond = ['obs_fts MATCH ?', 'o.redacted = 0'];
+          const params = [match];
+          if (scopes) {
+            cond.push(`(o.project IS NULL OR o.project IN (${scopes.map(() => '?').join(',')}))`);
+            params.push(...scopes);
+          } else if (globalOnly) cond.push('o.project IS NULL');
+          else if (project) cond.push('o.project = ?'), params.push(project);
+          if (!includeSecret) cond.push('o.secret = 0');
+          if (!includeArchived) cond.push('o.archived = 0');
+          if (tags && tags.length) {
+            const ors = tags.map(() => "o.tags LIKE ? ESCAPE '\\'");
+            cond.push(`(${ors.join(' OR ')})`);
+            for (const t of tags) params.push(`%"${escapeLike(t)}"%`);
+          }
           const rows = this.db
             .prepare(
               `SELECT o.*, bm25(obs_fts) AS rank
                FROM obs_fts JOIN observations o ON o.id = obs_fts.obs_id
-               WHERE obs_fts MATCH ? AND o.redacted = 0
+               WHERE ${cond.join(' AND ')}
                ORDER BY rank LIMIT ?`
             )
-            .all(match, limit * 4);
-          let out = rows.map((r) => ({ ...rowToObs(r), rank: r.rank }));
-          out = applyObsFilters(out, { project, globalOnly, tags, includeSecret, includeArchived, scopes });
-          return out.slice(0, limit);
+            .all(...params, limit);
+          return rows.map((r) => ({ ...rowToObs(r), rank: r.rank }));
         } catch {
           // FTS クエリ構文エラー時は LIKE へ
         }
@@ -302,6 +314,55 @@ export class Store {
     // フォールバック: LIKE 部分一致（関連度なし、recency 順）
     const out = this.listObservations({ project: globalOnly ? undefined : project, global: globalOnly, tags, includeSecret, includeArchived, query: q, limit });
     return out.map((o) => ({ ...o, rank: null }));
+  }
+
+  // ---- 埋め込み（意味的想起。任意） ----
+
+  upsertEmbedding(obsId, model, vecBuf) {
+    const dim = Math.floor(vecBuf.byteLength / 4);
+    this.db
+      .prepare('INSERT INTO obs_vec (obs_id, model, dim, vec) VALUES (?, ?, ?, ?) ON CONFLICT(obs_id) DO UPDATE SET model=excluded.model, dim=excluded.dim, vec=excluded.vec')
+      .run(obsId, model, dim, vecBuf);
+  }
+
+  /** 埋め込み未作成・かつ非 secret・非 redacted の観測（埋め込み対象） */
+  observationsNeedingEmbedding({ limit = 1000 } = {}) {
+    return this.db
+      .prepare(`SELECT o.id, o.text FROM observations o LEFT JOIN obs_vec v ON v.obs_id = o.id
+                WHERE v.obs_id IS NULL AND o.secret = 0 AND o.redacted = 0 LIMIT ?`)
+      .all(limit);
+  }
+
+  embeddingCount() {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM obs_vec').get().n;
+  }
+
+  /** 全ベクトルを読み、cosine 上位を返す。フィルタは observations と JOIN して適用。 */
+  vectorSearch(queryVec, { project, global: globalOnly, tags, includeSecret = false, includeArchived = false, scopes = null, limit = 20, cosine } = {}) {
+    const cond = ['o.redacted = 0', 'v.obs_id = o.id'];
+    const params = [];
+    if (scopes) {
+      cond.push(`(o.project IS NULL OR o.project IN (${scopes.map(() => '?').join(',')}))`);
+      params.push(...scopes);
+    } else if (globalOnly) cond.push('o.project IS NULL');
+    else if (project) cond.push('o.project = ?'), params.push(project);
+    if (!includeSecret) cond.push('o.secret = 0');
+    if (!includeArchived) cond.push('o.archived = 0');
+    if (tags && tags.length) {
+      cond.push(`(${tags.map(() => "o.tags LIKE ? ESCAPE '\\'").join(' OR ')})`);
+      for (const t of tags) params.push(`%"${escapeLike(t)}"%`);
+    }
+    const rows = this.db
+      .prepare(`SELECT o.*, v.vec AS _vec FROM obs_vec v JOIN observations o ON ${cond.join(' AND ')}`)
+      .all(...params);
+    const scored = rows.map((r) => {
+      const buf = r._vec;
+      const vec = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+      const { _vec, ...rest } = r;
+      return { ...rowToObs(rest), sim: cosine(queryVec, vec) };
+    });
+    scored.sort((a, b) => b.sim - a.sim);
+    return scored.slice(0, limit);
   }
 
   /** 墓石化（追記専用を保ちつつ訂正・機密の事後消去を可能にする） */

@@ -166,6 +166,29 @@ function callCodex(prompt, config, home) {
 // 改ざん耐性が要る環境では allowed_hosts を環境変数経由にするなどの運用を推奨。
 const DEFAULT_ALLOWED_HOSTS = ['api.openai.com', 'api.groq.com', 'openrouter.ai', 'localhost', '127.0.0.1'];
 
+/** base_url を allowlist 検証する汎用版（miner/embed 共用） */
+export function assertBaseUrlAllowed(baseUrl, allowedHosts = []) {
+  let u;
+  try {
+    u = new URL(baseUrl);
+  } catch {
+    throw new Error(`base_url が不正な URL です: ${baseUrl}`);
+  }
+  if (u.protocol !== 'https:' && u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') {
+    throw new Error(`base_url は https のみ許可されます: ${baseUrl}`);
+  }
+  const allowed = new Set([...DEFAULT_ALLOWED_HOSTS, ...(allowedHosts ?? [])]);
+  if (!allowed.has(u.hostname)) {
+    throw new Error(`base_url のホスト ${u.hostname} は許可リストにありません（許可: ${[...allowed].join(', ')}）`);
+  }
+  return u;
+}
+
+/** embed 層用の base_url 検証 */
+export function assertEmbedAllowed(ec) {
+  return assertBaseUrlAllowed(ec.base_url, ec.allowed_hosts);
+}
+
 function assertAllowedBaseUrl(config) {
   let u;
   try {

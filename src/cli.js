@@ -9,6 +9,7 @@ import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
 import { capture } from './capture.js';
+import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget } from './safepath.js';
 import { resolveProject } from './project.js';
@@ -647,8 +648,8 @@ async function cmdRecall(args) {
       const query = String(input.prompt || input.user_prompt || '').slice(0, 4000);
       const project = values.project ?? resolveProject(input.cwd || process.cwd());
       if (!query.trim()) return 0;
-      const out = await withStore((store, config) => {
-        const { text } = buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
+      const out = await withStore(async (store, config) => {
+        const { text } = await buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
         return hookOutput(text, 'UserPromptSubmit');
       });
       if (out) console.log(JSON.stringify(out));
@@ -662,17 +663,38 @@ async function cmdRecall(args) {
   const query = positionals.join(' ');
   if (!query.trim()) throw new UsageError('ulm recall <query>');
   const project = values.project ?? resolveProject(process.cwd());
-  return withStore((store, config) => {
-    const { text, hits } = buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
+  return withStore(async (store, config) => {
+    const { text, hits, mode } = await buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
     if (values.json) {
-      console.log(JSON.stringify({ hits, text }, null, 2));
+      console.log(JSON.stringify({ mode, hits, text }, null, 2));
       return 0;
     }
     if (values.explain) {
-      console.error(`query="${query}" project=${project} fts=${store.hasFts()} hits=${hits.length}`);
-      for (const h of hits) console.error(`  rank=${h.rank == null ? 'LIKE' : h.rank.toFixed(2)} ${h.id} ${truncate(h.text, 60)}`);
+      console.error(`query="${query}" project=${project} mode=${mode} fts=${store.hasFts()} embeds=${store.embeddingCount()} hits=${hits.length}`);
+      for (const h of hits) console.error(`  ${h.fused != null ? 'fused=' + h.fused.toFixed(4) : h.sim != null ? 'sim=' + h.sim.toFixed(3) : 'rank=' + (h.rank == null ? 'LIKE' : h.rank.toFixed(2))} ${h.id} ${truncate(h.text, 56)}`);
     }
     console.log(text || '（関連する記憶なし）');
+    return 0;
+  });
+}
+
+// 観測の埋め込みを作成/更新（意味的想起の有効化）。キーが無ければ no-op。
+async function cmdReindex(args) {
+  const { values } = parse(args, { limit: { type: 'string' }, json: { type: 'boolean', default: false } });
+  return withStore(async (store, config) => {
+    if (!embedAvailable(config)) {
+      console.log('埋め込みは無効です（API キー未設定）。FTS5 のみで動作します。');
+      return 0;
+    }
+    const pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
+    if (!pending.length) {
+      console.log(`埋め込み済み: ${store.embeddingCount()} 件、新規なし`);
+      return 0;
+    }
+    const model = embedConfig(config).model;
+    const vecs = await embedTexts(pending.map((p) => p.text), config);
+    for (let i = 0; i < pending.length; i++) store.upsertEmbedding(pending[i].id, model, vecToBuf(vecs[i]));
+    console.log(`✓ 埋め込み作成: ${pending.length} 件（model=${model}, 累計 ${store.embeddingCount()} 件）`);
     return 0;
   });
 }
@@ -808,6 +830,7 @@ export async function main(argv) {
       case 'context': return await cmdContext(rest);
       case 'recall': return await cmdRecall(rest);
       case 'capture': return await cmdCapture(rest);
+      case 'reindex': return await cmdReindex(rest);
       case 'export': return await cmdExport(rest);
       case 'import': return await cmdImport(rest);
       case 'status': return await cmdStatus();

@@ -54,23 +54,39 @@ claude plugin install ulm@ulm-marketplace
 ```bash
 ulm init                                          # ~/.claude/user-memory を初期化
 ulm obs add "node:sqlite は Node 22.5 未満で落ちる" --tags ci --pin
-ulm state set 現在の担当 "決済リファクタ" --ttl 30d
+ulm state set 現在の担当 "決済リファクタ" --ttl 30d --global
+ulm recall "金額計算で丸め誤差が出る"             # BM25 で関連する過去の勘所を想起（FTS5）
+ulm capture --transcript <session.jsonl>          # 作業ログから観測を自動抽出（source=auto）
 ulm mine                                          # 観測 → 仮説候補を inbox へ（LLM）
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
 ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
 ulm promote <cand-id> --ref ./decisions.md        # 承認済みを ref へ昇格（人間の操作）
-ulm context                                       # 注入される内容を確認
-ulm obs search decimal                            # 過去の勘所を能動的に検索
 ulm status / ulm doctor                           # 統計 / 環境診断
 ```
 
 全コマンドは `ulm help` を参照。
 
+## 想起の質（FTS5 / BM25）
+
+SessionStart の「最近分の詰め込み」だけでなく、**プロンプトに関連する記憶を BM25 で取り出す**のが ulm の中核。
+`node:sqlite` の FTS5(trigram) を使い、日本語クエリもトライグラム分解で関連度検索する。
+同梱の評価ハーネス（`node test/eval/recall-eval.js`）で、recency baseline との差を実測できる：
+
+| 指標 | BM25 (recall) | recency baseline |
+|---|---|---|
+| Recall@5 | **1.00** | 0.20 |
+| MRR | **1.00** | 0.16 |
+| secret 漏洩 | 0 | 0 |
+
+（古いが関連する記憶を recency は取りこぼすが、BM25 は関連度で拾う。`test/eval/corpus.json` の罠つきデータで検証。）
+
 ## Claude Code プラグイン
 
 | 種類 | 名前 | 役割 |
 |---|---|---|
-| hook | SessionStart | `ulm context --hook` で記憶を `additionalContext` 注入（fail-open） |
+| hook | SessionStart | `ulm context --hook` で state/ref/pin/最近を `additionalContext` 注入（fail-open） |
+| hook | **UserPromptSubmit** | `ulm recall --hook` でプロンプト関連の記憶を BM25 動的注入 |
+| hook | **Stop** | `ulm capture --hook` で作業ログから観測を自動抽出（async・fail-open） |
 | hook | SessionEnd | `ulm export --quiet` で JSONL 控えを更新（push はしない） |
 | command | `/ulm:note` | 観測を記録 |
 | command | `/ulm:state` | 可変状態の更新/参照 |

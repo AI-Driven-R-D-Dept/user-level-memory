@@ -17,6 +17,13 @@ export const DEFAULT_CONFIG = {
     enabled: true, // Stop hook での観測自動抽出
     provider: 'auto', // auto | codex | openai（miner と同設定を流用）
     max_per_session: 3, // 1セッションで自動抽出する観測の上限
+    recall_auto: false, // 自動抽出(source=auto)の未レビュー観測を recall 注入に含めるか（既定 false）
+  },
+  embed: {
+    // 意味的想起のための埋め込み（任意）。キーが無ければ自動で無効になり FTS のみで動く。
+    enabled: true,
+    model: 'text-embedding-3-small',
+    // base_url / api_key_env / allowed_hosts は未指定なら miner 設定を流用
   },
   miner: {
     provider: 'auto', // auto | codex | openai

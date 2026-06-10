@@ -195,9 +195,9 @@ test('export/import: ラウンドトリップ', () => {
   });
 });
 
-test('schema version は 3（FTS5 込み）', () => {
+test('schema version は 4（FTS5+埋め込み枠）', () => {
   withFreshStore((store) => {
-    assert.equal(store.schemaVersion(), 3);
+    assert.equal(store.schemaVersion(), 4);
     assert.equal(store.hasFts(), true);
   });
 });
@@ -269,7 +269,7 @@ test('migration: v1 形の DB を開くと v2 カラムが揃う', () => {
   // openStore で migrate が走り v3 に（FTS バックフィル込み）
   const store = openStore(home);
   try {
-    assert.equal(store.schemaVersion(), 3);
+    assert.equal(store.schemaVersion(), 4);
     const o = store.getObservation('obs-old001');
     assert.equal(o.text, 'legacy');
     assert.equal(o.pinned, false); // 後付けカラムが既定値で読める
