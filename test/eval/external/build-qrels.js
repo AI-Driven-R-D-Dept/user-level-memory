@@ -17,7 +17,10 @@ const config = loadConfig();
 const prov = process.env[config.miner.api_key_env || 'OPENAI_API_KEY'] ? 'openai' : 'codex';
 
 const corpus = readFileSync(join(DIR, 'corpus.external.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-const queries = readFileSync(join(DIR, 'queries.external.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+// クエリファイルと出力先は env で差し替え可（Claude 生成クエリの独立評価に使う）
+const QFILE = process.env.QUERIES_FILE || 'queries.external.jsonl';
+const QOUT = process.env.QRELS_OUT || 'qrels.external.json';
+const queries = readFileSync(join(DIR, QFILE), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 // 永続 eval home（embeddings を snapshot 再利用するため）
 const EVAL_HOME = join(DIR, '.evalhome', 'ulm');
@@ -87,7 +90,7 @@ async function main() {
     qrels[qid] = Object.fromEntries(Object.entries(grades).filter(([, g]) => g >= 1));
   }
   store.close();
-  writeFileSync(join(DIR, 'qrels.external.json'), JSON.stringify(qrels, null, 1));
+  writeFileSync(join(DIR, QOUT), JSON.stringify(qrels, null, 1));
   const withRel = Object.values(qrels).filter((m) => Object.keys(m).length).length;
   console.log(`qrels 構築完了: ${queries.length} クエリ中 ${withRel} 件に relevant あり`);
 }

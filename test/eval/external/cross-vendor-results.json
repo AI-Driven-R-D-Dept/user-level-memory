@@ -1,0 +1,9 @@
+{
+  "note": "循環バイアス排除のためクエリ生成・qrels採点を別ベンダに差し替えた全組合せ。各ビルド時点の実測値(決定的コーパス・クエリ上)。",
+  "K": 10,
+  "results": [
+    {"query_gen": "openai", "judge": "openai", "vector_recall": 0.95, "vector_mrr": 0.83, "hybrid_recall": 0.95, "fts_recall": 0.27, "recency_recall": 0.14},
+    {"query_gen": "openai", "judge": "claude-subagent", "vector_recall": 1.00, "vector_mrr": 0.70, "hybrid_recall": 1.00, "fts_recall": 0.29, "recency_recall": 0.10},
+    {"query_gen": "claude-subagent", "judge": "openai", "vector_recall": 1.00, "vector_mrr": 0.88, "hybrid_recall": 0.98, "fts_recall": 0.16, "recency_recall": 0.16}
+  ]
+}

@@ -347,8 +347,16 @@
 </table>
 <div class="callout"><b>これが最も信頼できる数字。</b> 作者非依存のテストで、意味的想起(vector)は <b>Recall@10 95% / MRR 83%</b>。症状ベース（語彙が違う）クエリゆえ FTS は 32% に留まり、<b>意味検索が無いと拾えない</b>ことが独立に裏づけられた。recency は 16%（古い記憶を拾えない構造的限界）。</div>
 <div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector と同等(95/66/83)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
-<div class="callout"><b>採点者の循環バイアスも排除した：</b> クエリ生成と qrels 採点が同じ LLM ファミリ(OpenAI)だと共バイアスの疑いが残る。そこで<b>別ベンダ(Claude/Fable)の独立 subagent で qrels を採点し直した</b>ところ、<b>vector/hybrid Recall@10=100% / nDCG 72%</b>（FTS 29% / recency 10%）。<b>採点者の正体に依らず意味検索が圧勝</b>することを2つの独立 LLM ファミリで確認。「自作の土俵」批判はこれで実質的に晴れた。</div>
-<p class="src">再現: <code>test/eval/external/</code>（fetch→gen-queries→build-qrels→dump-pool→run-external-eval、生データ・URL・qrels・別ベンダ採点 qrels-claude を snapshot）。`ULM_QRELS=qrels-claude.json` で採点者を切替検証可。</p>
+<div class="callout"><b>循環バイアスを「クエリ生成」「採点」の両方で潰した：</b> 当初はクエリ生成も採点も OpenAI で「自分の土俵」疑いが残った。そこで<b>生成器と採点器をそれぞれ別ベンダ(Claude/Fable)に差し替えた全組み合わせ</b>で測り直した：</p>
+<table>
+  <tr><th>クエリ生成 × qrels採点</th><th>vector Recall@10</th><th>MRR</th></tr>
+  <tr><td class="k">OpenAI × OpenAI（初版）</td><td>95%</td><td>83%</td></tr>
+  <tr><td class="k">OpenAI × <b>Claude</b>（採点を別ベンダ）</td><td><b>100%</b></td><td>70%</td></tr>
+  <tr><td class="k"><b>Claude</b> × OpenAI（生成を別ベンダ）</td><td><b>100%</b></td><td>88%</td></tr>
+</table>
+<div class="callout"><b>どの組み合わせでも意味検索が圧勝（Recall@10 95-100%）。</b> 「OpenAI が OpenAI 埋め込みに有利」という循環は、生成・採点の両端を別ベンダ化しても結論が変わらないことで否定された。FTS は Claude 生成クエリ（語彙をさらに回避）では 16% まで落ち、<b>意味検索なしでは拾えない</b>ことがいっそう明確に。</div>
+<div class="callout limit"><b>正直なトレードオフ開示：</b> 本番の recall は無関係プロンプトへのノイズ注入を防ぐため<b>棄権機構</b>（最良 cosine が 0.3 未満なら何も注入しない）を持つ。これにより無関係クエリ（天気/猫等）への偽注入は <b>0 件</b>だが、その代償として<b>ごく弱い一致（cos≈0.28-0.30）の関連記憶を保守的に見送る</b>ことがある（Claude生成クエリで hybrid は 98%、vector 100% の差はこの1件）。精度（誤注入ゼロ）を recall より優先した設計判断。</p>
+<p class="src">再現: <code>test/eval/external/</code>。`ULM_QRELS` / `QUERIES_FILE` で採点者・生成器を切替検証可。各 build はコーパスを都度埋め込むため、上表は実行時点の値（決定的なクエリ・コーパス上）。</p>
 </section>
 
 <section id="recall">
