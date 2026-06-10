@@ -18,7 +18,7 @@
 - `npm test`（96テスト）
 - 一時環境で `ulm init && obs add 数件 && reindex && recall "<同義語クエリ>" --explain`（mode=hybrid/vector を確認）
 
-OPENAI_API_KEY=***REDACTED-OPENAI-KEY-ROTATE-ME***
+OPENAI_API_KEY=$OPENAI_API_KEY（環境変数で渡す。リポジトリに鍵を書かない）
 
 ## 採点
 新採点(0-100)、82からの増減と理由、拡張ハーネスの実測値(カテゴリ別)、残る弱点、90に届いたか。

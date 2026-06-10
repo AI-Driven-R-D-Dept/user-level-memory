@@ -11,7 +11,7 @@
 4. ゲートの**自動**検出を回帰テスト化（手動 secret:true に頼らない）。
 
 ## 必ず実行して確認
-- `export OPENAI_API_KEY=***REDACTED-OPENAI-KEY-ROTATE-ME***`
+- `export OPENAI_API_KEY=$OPENAI_API_KEY（環境変数で渡す。リポジトリに鍵を書かない）`
 - 一時 ULM_HOME で:
   - `ulm init && ulm obs add "token は hf_SHOULDNOTLEAK1234567890ABCD"` → **自動で secret 化されるか**（手動フラグ無し）
   - `ulm reindex` → 機密が埋め込まれないか
