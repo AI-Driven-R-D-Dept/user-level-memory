@@ -346,8 +346,9 @@
   <tr><td class="k">hybrid（最終）</td><td><span class="good-mark">95%</span> [89-100]</td><td>66%</td><td>82%</td></tr>
 </table>
 <div class="callout"><b>これが最も信頼できる数字。</b> 作者非依存のテストで、意味的想起(vector)は <b>Recall@10 95% / MRR 83%</b>。症状ベース（語彙が違う）クエリゆえ FTS は 32% に留まり、<b>意味検索が無いと拾えない</b>ことが独立に裏づけられた。recency は 16%（古い記憶を拾えない構造的限界）。</div>
-<div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector と同等(nDCG 66)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
-<p class="src">再現: <code>test/eval/external/</code>（fetch→gen-queries→build-qrels→run-external-eval、生データ・URL・qrels を snapshot）。</p>
+<div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector と同等(95/66/83)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
+<div class="callout"><b>採点者の循環バイアスも排除した：</b> クエリ生成と qrels 採点が同じ LLM ファミリ(OpenAI)だと共バイアスの疑いが残る。そこで<b>別ベンダ(Claude/Fable)の独立 subagent で qrels を採点し直した</b>ところ、<b>vector/hybrid Recall@10=100% / nDCG 72%</b>（FTS 29% / recency 10%）。<b>採点者の正体に依らず意味検索が圧勝</b>することを2つの独立 LLM ファミリで確認。「自作の土俵」批判はこれで実質的に晴れた。</div>
+<p class="src">再現: <code>test/eval/external/</code>（fetch→gen-queries→build-qrels→dump-pool→run-external-eval、生データ・URL・qrels・別ベンダ採点 qrels-claude を snapshot）。`ULM_QRELS=qrels-claude.json` で採点者を切替検証可。</p>
 </section>
 
 <section id="recall">
