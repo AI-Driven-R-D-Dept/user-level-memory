@@ -112,7 +112,8 @@ function printObs(o, { full = false } = {}) {
   const tags = o.tags.length ? ` #${o.tags.join(' #')}` : '';
   const flags = [o.secret && '🔒secret', o.pinned && '📌pin', o.archived && '🗄archived'].filter(Boolean).join(' ');
   const proj = o.project ? ` (${o.project})` : ' (global)';
-  const text = full ? o.text : truncate(o.text.replace(/\s*\n\s*/g, ' '), 100);
+  // `\s+`→空白の単一量化子で線形（旧 `\s*\n\s*` は空白だけの長文で二次になりうる）
+  const text = full ? o.text : truncate(o.text.replace(/\s+/g, ' '), 100);
   console.log(`${o.id} ${shortDate(o.ts)}${proj}${tags}${flags ? '  ' + flags : ''}  ${text}`);
 }
 

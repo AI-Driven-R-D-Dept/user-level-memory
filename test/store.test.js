@@ -82,6 +82,16 @@ test('state: set/get と上書き', () => {
   });
 });
 
+test('state: 長すぎるキー/値を拒否（DoS/暴走入力対策の回帰）', () => {
+  withFreshStore((store) => {
+    assert.throws(() => store.setState('k'.repeat(2000), 'v'), /キーが長すぎます/);
+    assert.throws(() => store.setState('k', 'v'.repeat(70 * 1024)), /値が長すぎます/);
+    // 通常長は通る
+    store.setState('normal', 'value');
+    assert.equal(store.getState('normal').value, 'value');
+  });
+});
+
 test('state: TTL 期限切れは get で無視', () => {
   withFreshStore((store) => {
     store.setState('exp', 'x', { ttlMs: -1000 }); // 過去

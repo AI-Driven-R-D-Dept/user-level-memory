@@ -37,6 +37,13 @@ const BUILTIN = [
     name: 'credential-assignment',
     re: /(?:password|passwd|pwd|api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)\s*[:=]\s*['"]?[^\s'"]{5,}/i,
   },
+  // 自然言語の秘密開示（`passphrase is X` / `password word is hunter2`）。構造化代入を
+  // 通り抜ける平文機密の盲点(read-path 漏洩)を塞ぐ。強い秘密語＋近接(≤16字)の is/was/:/=
+  // ＋6字以上の値に限定して誤検知を抑制。量化子は有界で線形。過検出は安全側(secret化)。
+  {
+    name: 'nl-secret-phrase',
+    re: /\b(?:passphrase|password|passwd|secret[ _-]?key|private[ _-]?key|api[ _-]?key|access[ _-]?key|auth[ _-]?token|credential)\b[^\n]{0,16}?(?:\bis\b|\bwas\b|[:=])\s*\S{6,}/i,
+  },
 ];
 
 const MAX_PATTERN_LENGTH = 300; // 極端に長い独自パターンを拒否
@@ -161,12 +168,18 @@ const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join('')}]`, 'g');
 const ANGLE_OPEN = /[〈⟨]/g;
 const ANGLE_CLOSE = /[〉⟩]/g;
 // 前置は「英数字以外」（語境界）の否定後読み。これで `。SYSTEM:` / `．USER:` など
-// 記号直後の役割マーカーも捕捉しつつ、`ABUSER:` のような語中一致は除外する。
-const ROLE_WORDS = /(?<![A-Za-z0-9])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
+// 記号直後の役割マーカーも捕捉。コロンクラスには同形異字コロン(∶ː꞉⁚＝U+2236/02D0/A789/205A,
+// 全角：)も含め、`SYSTEM∶` のような偽装も中和する。`ABUSER:` のような語中一致は除外。
+const ROLE_WORDS = /(?<![A-Za-z0-9])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：∶ː꞉⁚]/gi;
 // 角括弧で囲んだ役割マーカー（`[SYSTEM]` `[/ASSISTANT]` `[USER: ...]`）も中和する。
-// コロンを伴わないチャットロール表記の脱出を塞ぐ。sanitize は注入時のみ適用され
-// DB の本文は不変なので、ログ断片の誤中和があっても表示上の影響に留まる（安全側）。
-const BRACKET_ROLE = /\[\s*\/?\s*(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\b[^\]]*\]/gi;
+// 量化子は有界（\s{0,40}・[^\]\n]{0,200}）。旧 `\[\s*\/?\s*` の二重 `\s*` は空白分割で
+// O(n²) になり、長大な空白入力で CPU ストール(`context --hook` 15s)を起こしていた。
+const BRACKET_ROLE = /\[\s{0,40}\/?\s{0,40}(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\b[^\]\n]{0,200}\]/gi;
+// タグ様の山括弧を [tag] 化。`<` 直後や `/` 周りの空白も許容（CONTROL→空白置換で
+// `<\x01/user-memory>`→`< /user-memory>` となり fence 脱出していた順序バグを塞ぐ）。
+// 量化子は有界で線形。
+const TAG_LIKE = /<\s{0,40}\/?\s{0,40}[A-Za-z][^>\n]{0,256}>/g;
+const MAX_SANITIZE = 64 * 1024; // 注入表示用の入力上限（DoS backstop。元データは DB に保持）
 
 /**
  * 注入・生成用の無害化。
@@ -183,6 +196,9 @@ const BRACKET_ROLE = /\[\s*\/?\s*(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|T
  */
 export function sanitizeForContext(text) {
   let s = String(text);
+  // 注入表示用の上限。これ自体が ReDoS/CPU 事故の最終 backstop（全 regex を線形化済みだが
+  // 二重防御）。元データは DB に保持され、ここで切るのは context へ出す見え方だけ。
+  if (s.length > MAX_SANITIZE) s = s.slice(0, MAX_SANITIZE);
   try {
     s = s.normalize('NFKC');
   } catch {
@@ -194,8 +210,8 @@ export function sanitizeForContext(text) {
     .replace(CONTROL, ' ')
     .replace(ANGLE_OPEN, '<')
     .replace(ANGLE_CLOSE, '>')
-    .replace(/<\/?[A-Za-z][^>]*>/g, '[tag]')
-    .replace(/[ \t]*\n[ \t]*/g, ' ')
+    .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化（線形。残りの空白は末尾の \s{2,} で畳む）
+    .replace(TAG_LIKE, '[tag]')
     .replace(BRACKET_ROLE, '[ロール]')
     .replace(ROLE_WORDS, ' ロール: ')
     .replace(/`{2,}/g, "'")

@@ -440,6 +440,9 @@ export class Store {
 
   setState(key, value, { scope = 'global', ttlMs = null, secret = false } = {}) {
     if (!key || !String(key).trim()) throw new Error('state キーが空です');
+    // 長さ上限（暴走入力・注入経路でのCPU負荷予防。state キー/値は本来短い）
+    if (String(key).length > 1024) throw new Error('state キーが長すぎます（最大1024文字）');
+    if (String(value).length > 64 * 1024) throw new Error('state 値が長すぎます（最大64KB）');
     const expires = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : null;
     this.db
       .prepare(
