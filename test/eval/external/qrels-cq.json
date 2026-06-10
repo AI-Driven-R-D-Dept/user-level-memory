@@ -1,247 +1,247 @@
 {
  "cq0": {
-  "obs-b1d78b": 1,
-  "obs-108456": 1,
-  "obs-ba1410": 2,
-  "obs-c70bda": 1,
-  "obs-ec813e": 1,
-  "obs-f640b3": 1
+  "ext-ripgrep_FAQ-102": 1,
+  "ext-ripgrep_GUIDE-161": 1,
+  "ext-ripgrep_GUIDE-154": 2,
+  "ext-ripgrep_FAQ-101": 1,
+  "ext-ripgrep_FAQ-91": 1,
+  "ext-ripgrep_FAQ-97": 1
  },
  "cq1": {
-  "obs-d9bb1d": 2,
-  "obs-704d82": 1
+  "ext-ripgrep_GUIDE-166": 2,
+  "ext-ripgrep_GUIDE-165": 1
  },
  "cq2": {
-  "obs-d1a078": 2,
-  "obs-b0d669": 1,
-  "obs-2ca9c5": 1
+  "ext-ripgrep_FAQ-78": 2,
+  "ext-ripgrep_FAQ-79": 1,
+  "ext-bat_README-27": 1,
+  "ext-ripgrep_FAQ-77": 1
  },
  "cq3": {
-  "obs-a8480e": 2,
-  "obs-0f119a": 1,
-  "obs-3eda1a": 1
+  "ext-ripgrep_FAQ-87": 2,
+  "ext-ripgrep_FAQ-83": 1,
+  "ext-ripgrep_FAQ-85": 1
  },
  "cq4": {
-  "obs-6ef1e7": 1,
-  "obs-5d034f": 1,
-  "obs-906771": 1,
-  "obs-3ba5d6": 2,
-  "obs-bbf538": 1,
-  "obs-9a68c2": 1
+  "ext-ripgrep_FAQ-100": 1,
+  "ext-ripgrep_FAQ-95": 1,
+  "ext-ripgrep_FAQ-103": 1,
+  "ext-ripgrep_FAQ-89": 2,
+  "ext-ripgrep_FAQ-99": 1,
+  "ext-ripgrep_FAQ-90": 1
  },
  "cq5": {
-  "obs-0db2fd": 1,
-  "obs-2a5ecc": 1,
-  "obs-108456": 1,
-  "obs-062794": 2,
-  "obs-ba1410": 1,
-  "obs-52c9a3": 1
+  "ext-ripgrep_GUIDE-162": 1,
+  "ext-ripgrep_GUIDE-163": 1,
+  "ext-ripgrep_GUIDE-161": 1,
+  "ext-ripgrep_GUIDE-157": 2,
+  "ext-ripgrep_GUIDE-154": 1,
+  "ext-ripgrep_GUIDE-129": 1
  },
  "cq6": {
-  "obs-203910": 2,
-  "obs-bbec04": 1,
-  "obs-0bb2e3": 1,
-  "obs-58c596": 1,
-  "obs-30d916": 1,
-  "obs-8adfc5": 1
+  "ext-bat_README-20": 1,
+  "ext-bat_README-22": 1,
+  "ext-bat_README-13": 1,
+  "ext-bat_README-27": 1,
+  "ext-bat_README-28": 1,
+  "ext-bat_README-12": 1
  },
  "cq7": {
-  "obs-8d36b3": 2
+  "ext-bat_README-19": 2
  },
  "cq8": {
-  "obs-fc1674": 1,
-  "obs-9a1c4f": 2
+  "ext-tokio_README-173": 1,
+  "ext-bat_README-14": 1,
+  "ext-bat_README-31": 2
  },
  "cq9": {
-  "obs-bcf418": 1,
-  "obs-39f161": 2
+  "ext-ripgrep_FAQ-69": 1,
+  "ext-ripgrep_GUIDE-148": 1,
+  "ext-ripgrep_GUIDE-164": 1,
+  "ext-ripgrep_FAQ-70": 2
  },
  "cq10": {
-  "obs-b84588": 2
+  "ext-ripgrep_FAQ-99": 1,
+  "ext-ripgrep_FAQ-96": 1,
+  "ext-ripgrep_FAQ-97": 1,
+  "ext-ripgrep_FAQ-74": 2,
+  "ext-ripgrep_FAQ-101": 1
  },
  "cq11": {
-  "obs-30d916": 1,
-  "obs-2ca9c5": 1,
-  "obs-b0d669": 2,
-  "obs-58c596": 1,
-  "obs-0bb2e3": 1,
-  "obs-135420": 1
+  "ext-bat_README-28": 1,
+  "ext-ripgrep_FAQ-77": 1,
+  "ext-ripgrep_FAQ-79": 2,
+  "ext-bat_README-27": 1,
+  "ext-ripgrep_FAQ-88": 1
  },
  "cq12": {
-  "obs-b026b4": 2,
-  "obs-36fcb1": 1,
-  "obs-0caafe": 1
+  "ext-ripgrep_FAQ-81": 2,
+  "ext-ripgrep_FAQ-82": 1
  },
  "cq13": {
-  "obs-6ef1e7": 1,
-  "obs-ad5406": 1,
-  "obs-c70bda": 2,
-  "obs-bbf538": 1
+  "ext-ripgrep_FAQ-100": 1,
+  "ext-ripgrep_FAQ-104": 1,
+  "ext-ripgrep_FAQ-101": 2,
+  "ext-ripgrep_FAQ-99": 1
  },
  "cq14": {
-  "obs-6ef1e7": 1,
-  "obs-9a68c2": 1,
-  "obs-906771": 2,
-  "obs-ad5406": 1,
-  "obs-bbf538": 1
+  "ext-ripgrep_FAQ-100": 1,
+  "ext-ripgrep_FAQ-90": 1,
+  "ext-ripgrep_FAQ-103": 2,
+  "ext-ripgrep_FAQ-104": 1,
+  "ext-ripgrep_FAQ-99": 1
  },
  "cq15": {
-  "obs-c6bfc7": 1,
-  "obs-ec813e": 2,
-  "obs-9cfaca": 2,
-  "obs-ec811e": 2
+  "ext-ruff_README-171": 1,
+  "ext-ruff_README-172": 1,
+  "ext-bat_README-25": 1,
+  "ext-fd_README-41": 1,
+  "ext-ripgrep_FAQ-93": 1,
+  "ext-ripgrep_FAQ-91": 2,
+  "ext-ripgrep_GUIDE-123": 2,
+  "ext-ripgrep_FAQ-66": 1,
+  "ext-fd_README-45": 1,
+  "ext-ripgrep_GUIDE-121": 2
  },
  "cq16": {
-  "obs-ab5b59": 1,
-  "obs-a5b6d4": 1,
-  "obs-3a7b80": 2,
-  "obs-8c67e1": 1
+  "ext-fd_README-54": 1,
+  "ext-ripgrep_GUIDE-124": 1,
+  "ext-ripgrep_GUIDE-126": 2,
+  "ext-ripgrep_GUIDE-145": 1
  },
  "cq17": {
-  "obs-62b4bb": 2,
-  "obs-2ff6e1": 1,
-  "obs-4cb752": 1
+  "ext-ripgrep_GUIDE-144": 2,
+  "ext-ripgrep_GUIDE-143": 1,
+  "ext-ripgrep_GUIDE-146": 1
  },
  "cq18": {
-  "obs-0369ca": 2,
-  "obs-ed43e0": 1,
-  "obs-cb798c": 1,
-  "obs-be9107": 1
+  "ext-ripgrep_GUIDE-149": 2,
+  "ext-ripgrep_GUIDE-150": 1,
+  "ext-ripgrep_GUIDE-147": 1,
+  "ext-ripgrep_GUIDE-148": 1
  },
  "cq19": {
-  "obs-35ec8e": 2,
-  "obs-c7405f": 1,
-  "obs-52c9a3": 1,
-  "obs-fa17e6": 1,
-  "obs-65e243": 1
+  "ext-ripgrep_GUIDE-122": 2,
+  "ext-fd_README-40": 1,
+  "ext-ripgrep_GUIDE-129": 1,
+  "ext-ripgrep_GUIDE-137": 1,
+  "ext-fd_README-37": 1
  },
  "cq20": {
-  "obs-0db2fd": 1,
-  "obs-2a5ecc": 2,
-  "obs-108456": 1,
-  "obs-704d82": 1,
-  "obs-062794": 1
+  "ext-ripgrep_GUIDE-162": 1,
+  "ext-ripgrep_GUIDE-163": 2,
+  "ext-ripgrep_GUIDE-161": 1,
+  "ext-ripgrep_GUIDE-165": 1,
+  "ext-ripgrep_GUIDE-157": 1
  },
  "cq21": {
-  "obs-bcf418": 2,
-  "obs-2a5ecc": 1
+  "ext-ripgrep_GUIDE-164": 2,
+  "ext-ripgrep_GUIDE-163": 1
  },
  "cq22": {
-  "obs-f930f0": 2,
-  "obs-271e66": 1,
-  "obs-d9a038": 1
+  "ext-bat_README-11": 2,
+  "ext-ripgrep_FAQ-68": 1,
+  "ext-ripgrep_FAQ-67": 1
  },
  "cq23": {
-  "obs-fc1674": 2
+  "ext-bat_README-14": 2
  },
  "cq24": {
-  "obs-c94385": 2
+  "ext-bat_README-15": 2
  },
  "cq25": {
-  "obs-b026b4": 1,
-  "obs-36fcb1": 2,
-  "obs-0caafe": 1
+  "ext-ripgrep_FAQ-81": 1,
+  "ext-bat_README-24": 2,
+  "ext-ripgrep_FAQ-82": 1
  },
  "cq26": {
-  "obs-c6bfc7": 1,
-  "obs-c641e2": 2,
-  "obs-b1d78b": 1,
-  "obs-cd0c31": 1,
-  "obs-f640b3": 1
+  "ext-bat_README-29": 2,
+  "ext-ripgrep_FAQ-109": 1
  },
  "cq27": {
-  "obs-c9d4cf": 2,
-  "obs-c6bfc7": 1
+  "ext-bat_README-30": 2,
+  "ext-bat_README-25": 1
  },
  "cq28": {
-  "obs-c7405f": 2,
-  "obs-971f91": 2,
-  "obs-52c9a3": 1,
-  "obs-35ec8e": 1
+  "ext-fd_README-40": 2,
+  "ext-fd_README-39": 2,
+  "ext-ripgrep_GUIDE-129": 1,
+  "ext-ripgrep_GUIDE-122": 1
  },
  "cq29": {
-  "obs-1ec999": 1,
-  "obs-f2dec0": 2,
-  "obs-0840f4": 1
+  "ext-fd_README-41": 1,
+  "ext-fd_README-46": 2
  },
  "cq30": {
-  "obs-a5b6d4": 1,
-  "obs-22c831": 1,
-  "obs-5d034f": 1,
-  "obs-068c45": 1,
-  "obs-0840f4": 2
+  "ext-fd_README-55": 2
  },
  "cq31": {
-  "obs-174b5f": 1,
-  "obs-5ac104": 2,
-  "obs-53b9a9": 1,
-  "obs-3620ce": 2
+  "ext-ripgrep_GUIDE-128": 1,
+  "ext-ripgrep_GUIDE-127": 1,
+  "ext-ripgrep_GUIDE-125": 1,
+  "ext-fd_README-35": 2
  },
  "cq32": {
-  "obs-822c8c": 1,
-  "obs-bbec04": 1,
-  "obs-be9107": 1,
-  "obs-cb798c": 1,
-  "obs-65e143": 1,
-  "obs-3d9874": 1,
-  "obs-32cca8": 1,
-  "obs-3b6627": 2
+  "ext-ruff_README-170": 1,
+  "ext-ruff_README-171": 1,
+  "ext-ruff_README-172": 1,
+  "ext-bat_README-22": 1,
+  "ext-ripgrep_GUIDE-148": 1,
+  "ext-ripgrep_GUIDE-147": 1,
+  "ext-ripgrep_GUIDE-153": 1,
+  "ext-bat_README-21": 1,
+  "ext-ripgrep_GUIDE-152": 1,
+  "ext-ruff_README-168": 2
  },
  "cq33": {
-  "obs-822c8c": 1,
-  "obs-c95d71": 2
+  "ext-ruff_README-170": 1,
+  "ext-ruff_README-171": 1,
+  "ext-ruff_README-172": 2
  },
  "cq34": {
-  "obs-bc8517": 2
+  "ext-tokio_README-174": 2
  },
  "cq35": {
-  "obs-598cb0": 1,
-  "obs-b8fb5e": 1,
-  "obs-c04360": 1,
-  "obs-de2644": 1,
-  "obs-a2b837": 2
+  "ext-tokio_README-175": 2,
+  "ext-tokio_README-177": 1
  },
  "cq36": {
-  "obs-598cb0": 2,
-  "obs-de2644": 1,
-  "obs-a2b837": 1
+  "ext-tokio_README-176": 2,
+  "ext-tokio_README-177": 1,
+  "ext-tokio_README-175": 1
  },
  "cq37": {
-  "obs-9b638c": 2,
-  "obs-ac6586": 1,
-  "obs-9a208d": 1
+  "ext-tokio_README-180": 2,
+  "ext-bat_README-33": 1
  },
  "cq38": {
-  "obs-1ec999": 1,
-  "obs-517d9f": 1,
-  "obs-6e1667": 2
+  "ext-fd_README-41": 1,
+  "ext-ripgrep_FAQ-110": 1,
+  "ext-bat_README-0": 2
  },
  "cq39": {
-  "obs-e9b959": 2,
-  "obs-c6bfc7": 1
+  "ext-bat_README-1": 2
  },
  "cq40": {
-  "obs-46e7a1": 1,
-  "obs-753c08": 2,
-  "obs-bc8517": 1,
-  "obs-c95d71": 1
+  "ext-uv_README-181": 1,
+  "ext-ruff_README-172": 1,
+  "ext-esbuild_README-34": 2,
+  "ext-tokio_README-174": 1
  },
  "cq41": {
-  "obs-ba1410": 1,
-  "obs-b1d78b": 1,
-  "obs-108456": 1,
-  "obs-ec813e": 1,
-  "obs-e71f5d": 2
+  "ext-ripgrep_GUIDE-154": 1,
+  "ext-ripgrep_GUIDE-161": 1,
+  "ext-ripgrep_GUIDE-158": 2
  },
  "cq42": {
-  "obs-4fb6a3": 2
+  "ext-ripgrep_FAQ-114": 2
  },
  "cq43": {
-  "obs-b84588": 1,
-  "obs-3ba5d6": 1,
-  "obs-906771": 1,
-  "obs-6ef1e7": 1,
-  "obs-ca1be7": 2,
-  "obs-f640b3": 1
+  "ext-ripgrep_FAQ-74": 1,
+  "ext-ripgrep_FAQ-89": 1,
+  "ext-ripgrep_FAQ-103": 1,
+  "ext-ripgrep_FAQ-100": 1,
+  "ext-ripgrep_FAQ-92": 2,
+  "ext-ripgrep_FAQ-97": 1
  }
 }

@@ -30,7 +30,9 @@ export function setupEvalHome() {
   const store = openStore(EVAL_HOME);
   const idmap = {};
   for (const o of corpus) {
-    const ob = store.addObservation({ text: o.text, project: 'external', tags: [o.source], source: 'manual' });
+    // 決定的 ID（ext-* をそのまま store id に）で .evalhome を再現可能にし、
+    // クロスベンダ qrels(別ビルド)が同じ ID 系列で再実行できるようにする。
+    const ob = store.addObservation({ text: o.text, project: 'external', tags: [o.source], source: 'manual', id: o.id });
     idmap[o.id] = ob.id;
   }
   writeFileSync(join(DIR, 'idmap.json'), JSON.stringify(idmap));

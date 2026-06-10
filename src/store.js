@@ -202,11 +202,16 @@ export class Store {
 
   // ---- observations（追記が基本。訂正は redact=墓石化で表現） ----
 
-  addObservation({ text, project = null, tags = [], source = 'manual', secret = false, meta = {}, pinned = false }) {
+  addObservation({ text, project = null, tags = [], source = 'manual', secret = false, meta = {}, pinned = false, id: fixedId = null }) {
     if (!text || !String(text).trim()) throw new Error('観測テキストが空です');
     const stmt = this.db.prepare(
       'INSERT INTO observations (id, ts, project, text, tags, source, secret, meta, pinned, redacted, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)'
     );
+    // id を明示指定できる（評価の決定的再現用。指定時はリトライしない）。
+    if (fixedId) {
+      stmt.run(fixedId, nowIso(), project, String(text).trim(), JSON.stringify(tags), source, secret ? 1 : 0, JSON.stringify(meta), pinned ? 1 : 0);
+      return this.getObservation(fixedId);
+    }
     for (let i = 0; i < 5; i++) {
       const id = newId('obs');
       try {

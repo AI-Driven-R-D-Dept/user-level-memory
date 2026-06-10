@@ -1,9 +1,10 @@
 {
-  "note": "循環バイアス排除のためクエリ生成・qrels採点を別ベンダに差し替えた全組合せ。各ビルド時点の実測値(決定的コーパス・クエリ上)。",
+  "note": "循環バイアス排除: クエリ生成・qrels採点を別ベンダに差し替えた組合せ。決定的ID(.evalhome)で第三者再現可能。値はLLM判定の非決定性でCI内変動。",
   "K": 10,
   "results": [
-    {"query_gen": "openai", "judge": "openai", "vector_recall": 0.95, "vector_mrr": 0.83, "hybrid_recall": 0.95, "fts_recall": 0.27, "recency_recall": 0.14},
-    {"query_gen": "openai", "judge": "claude-subagent", "vector_recall": 1.00, "vector_mrr": 0.70, "hybrid_recall": 1.00, "fts_recall": 0.29, "recency_recall": 0.10},
-    {"query_gen": "claude-subagent", "judge": "openai", "vector_recall": 1.00, "vector_mrr": 0.88, "hybrid_recall": 0.98, "fts_recall": 0.16, "recency_recall": 0.16}
-  ]
+    {"query_gen": "openai", "judge": "openai", "vector_recall": 0.98, "vector_mrr": 0.83, "hybrid_recall": 0.95, "fts_recall": 0.32, "recency_recall": 0.18, "reproducible": true},
+    {"query_gen": "claude-subagent", "judge": "openai", "vector_recall": 0.98, "vector_mrr": 0.88, "hybrid_recall": 0.95, "fts_recall": 0.16, "recency_recall": 0.20, "reproducible": true},
+    {"query_gen": "openai", "judge": "claude-subagent", "vector_recall": 1.00, "vector_mrr": 0.70, "hybrid_recall": 1.00, "fts_recall": 0.29, "recency_recall": 0.10, "reproducible": "subagent判定は手動工程(pool.jsonは決定的)"}
+  ],
+  "conclusion": "生成・採点どちらを別ベンダにしても意味検索が Recall@10 95-100% で圧勝。循環バイアス否定。"
 }
