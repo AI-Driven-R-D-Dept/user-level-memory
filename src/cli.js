@@ -8,6 +8,7 @@ import { compileGate, detectHighEntropy } from './gate.js';
 import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
+import { capture } from './capture.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget } from './safepath.js';
 import { resolveProject } from './project.js';
@@ -26,8 +27,8 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm obs pin|unpin|secret|archive|redact <id>      訂正・整理（redact=墓石化）
   ulm obs tag <id> +add,-remove
 状態:
-  ulm state set <key> <value> [--ttl 7d] [--scope S|project] [--secret]
-  ulm state get <key> [--scope S]      ulm state list [--all] [--json]      ulm state unset <key>
+  ulm state set <key> <value> [--ttl 7d] [--global|--project|--scope S] [--secret]
+  ulm state get <key> [--global|--project]   ulm state list [--all] [--json]   ulm state unset <key>
 仮説（遊び場 / 採用は人間が決める）:
   ulm cand add <hypothesis> [--conditions C] [--counter X]... [--evidence id,..]
   ulm cand edit <id> [--conditions C] [--note N]
@@ -37,6 +38,7 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|openai] [--dry-run]
+  ulm capture [--transcript F] [--project P] [--dry-run]  作業ログから観測を自動抽出(source=auto)
   ulm ref add <path.md> [--note N] [--project P] | ulm ref list | ulm ref rm <id|path>
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶を BM25 で想起
@@ -286,10 +288,17 @@ async function cmdObs(args) {
 
 function cmdState(args) {
   const sub = args[0];
-  const scopeOf = (values) => (values.scope === 'project' ? resolveProject(process.cwd()) : values.scope || 'global');
+  // scope 解決: --global > --project > --scope > 既定(global)。obs add とフラグ体系を統一。
+  const scopeOf = (values) => {
+    if (values.global) return 'global';
+    if (values.project) return resolveProject(process.cwd());
+    if (values.scope === 'project') return resolveProject(process.cwd());
+    return values.scope || 'global';
+  };
+  const scopeOpts = { scope: { type: 'string' }, global: { type: 'boolean', default: false }, project: { type: 'boolean', default: false } };
   if (sub === 'set') {
     const { values, positionals } = parse(args.slice(1), {
-      scope: { type: 'string' },
+      ...scopeOpts,
       ttl: { type: 'string' },
       secret: { type: 'boolean', default: false },
     }, { positionals: 2 });
@@ -309,13 +318,18 @@ function cmdState(args) {
     });
   }
   if (sub === 'get') {
-    const { values, positionals } = parse(args.slice(1), { scope: { type: 'string' } }, { positionals: 1 });
+    const { values, positionals } = parse(args.slice(1), scopeOpts, { positionals: 1 });
     return withStore((store) => {
       const scope = scopeOf(values);
       // scope 解決順: 指定 scope → global フォールバック
       const r = store.getState(positionals[0], { scope }) || (scope !== 'global' ? store.getState(positionals[0], { scope: 'global' }) : null);
       if (!r) {
         console.error('（未設定または期限切れ）');
+        return 1;
+      }
+      // secret state は非対話では値を出さない（list が *** マスクするのと整合）
+      if (r.secret && !process.stdin.isTTY) {
+        console.error('（secret state。対話実行でのみ値を表示します）');
         return 1;
       }
       console.log(r.value);
@@ -345,7 +359,7 @@ function cmdState(args) {
     });
   }
   if (sub === 'unset') {
-    const { values, positionals } = parse(args.slice(1), { scope: { type: 'string' } }, { positionals: 1 });
+    const { values, positionals } = parse(args.slice(1), scopeOpts, { positionals: 1 });
     return withStore((store) => {
       const n = store.deleteState(positionals[0], { scope: scopeOf(values) });
       console.log(n ? `✓ state を削除: ${positionals[0]}` : `（該当なし: ${positionals[0]}）`);
@@ -663,6 +677,57 @@ async function cmdRecall(args) {
   });
 }
 
+// Stop/SessionEnd hook 用: transcript から再利用可能な観測を自動抽出して source=auto で記録
+async function cmdCapture(args) {
+  const { values } = parse(args, {
+    project: { type: 'string' },
+    transcript: { type: 'string' },
+    provider: { type: 'string' },
+    'dry-run': { type: 'boolean', default: false },
+    hook: { type: 'boolean', default: false },
+    quiet: { type: 'boolean', default: false },
+  });
+
+  if (values.hook) {
+    // hook: 失敗してもセッションを壊さない（exit 0、stdout は出さない）
+    try {
+      const raw = await readStdin();
+      const input = raw.length <= 256 * 1024 ? parseJsonSafe(raw, {}) : {};
+      const transcriptPath = values.transcript || input.transcript_path;
+      if (!transcriptPath) return 0;
+      const project = values.project ?? resolveProject(input.cwd || process.cwd());
+      await withStore((store, config, home) =>
+        capture(store, config, home, { transcriptPath, project, provider: values.provider, log: () => {} })
+      );
+      return 0;
+    } catch (err) {
+      console.error(`ulm capture hook error: ${err.message}`);
+      return 0;
+    }
+  }
+
+  return withStore(async (store, config, home) => {
+    const r = await capture(store, config, home, {
+      transcriptPath: values.transcript,
+      project: values.project ?? resolveProject(process.cwd()),
+      provider: values.provider,
+      dryRun: values['dry-run'],
+      log: (m) => console.error(m),
+    });
+    if (r.disabled) {
+      console.log('自動キャプチャは無効です（config.capture.enabled=false）');
+      return 0;
+    }
+    if (r.dryRun) return 0;
+    if (!values.quiet) {
+      console.log(`✓ 自動キャプチャ: 新規 ${r.captured.length} 件 / 重複 ${r.skippedDup} 件（provider=${r.provider}, 元 ${r.transcriptChars} 字）`);
+      for (const o of r.captured) console.log(`  ${o.id} (auto) ${truncate(o.text, 80)}`);
+      if (r.captured.length) console.log('  source=auto は未レビュー扱い。/ulm:review で確認、不要なら ulm obs redact <id>');
+    }
+    return 0;
+  });
+}
+
 function cmdExport(args) {
   const { values } = parse(args, { quiet: { type: 'boolean', default: false } });
   return withStore((store, config, home) => {
@@ -742,6 +807,7 @@ export async function main(argv) {
       case 'mine': return await cmdMine(rest);
       case 'context': return await cmdContext(rest);
       case 'recall': return await cmdRecall(rest);
+      case 'capture': return await cmdCapture(rest);
       case 'export': return await cmdExport(rest);
       case 'import': return await cmdImport(rest);
       case 'status': return await cmdStatus();

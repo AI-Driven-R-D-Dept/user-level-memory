@@ -18,12 +18,18 @@ const SYSTEM_PROMPT = `あなたは作業ログ（観測事実）から再利用
 /** ゲート通過済みの観測を集める（secret は機械的に除外済み + 念のため再ゲート） */
 export function gatherObservations(store, config, { project, days, limit } = {}) {
   const gate = compileGate(config);
-  const obs = store.listObservations({
-    project: project || undefined,
-    days: days ?? config.miner.days,
-    limit: limit ?? config.miner.max_obs,
-    includeSecret: false, // 生成ゲート①: secret フラグ除外
-  });
+  const d = days ?? config.miner.days;
+  const lim = limit ?? config.miner.max_obs;
+  let obs;
+  if (project) {
+    // project 指定時も global(project IS NULL) 観測を含める（context の注入対象と整合）
+    const proj = store.listObservations({ project, days: d, limit: lim, includeSecret: false });
+    const glob = store.listObservations({ global: true, days: d, limit: lim, includeSecret: false });
+    const seen = new Set();
+    obs = [...proj, ...glob].filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true))).slice(0, lim);
+  } else {
+    obs = store.listObservations({ days: d, limit: lim, includeSecret: false });
+  }
   // 生成ゲート②: 保存後に追加された deny パターンにも一致させない
   return obs.filter((o) => !gate.match(o.text));
 }
@@ -219,6 +225,12 @@ export function resolveProvider(config) {
   if (p === 'codex' || p === 'openai') return p;
   // auto: codex があれば codex（API キー不要）、なければ openai
   return codexAvailable() ? 'codex' : 'openai';
+}
+
+/** 指定プロバイダで {system,user} プロンプトを実行し応答テキストを返す（mine/capture 共用） */
+export async function callProvider(provider, prompt, config, home) {
+  const prov = provider === 'codex' || provider === 'openai' ? provider : resolveProvider(config);
+  return prov === 'codex' ? callCodex(prompt, config, home) : await callOpenAi(prompt, config);
 }
 
 /**

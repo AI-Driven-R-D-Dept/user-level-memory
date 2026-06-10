@@ -40,6 +40,9 @@ export function runDoctor() {
       const s = store.stats();
       if (s.observations >= 5000) warn('volume', `観測 ${s.observations} 件 — archive を検討`);
       if (s.candidates_inbox >= 50) warn('inbox', `未レビュー候補 ${s.candidates_inbox} 件 — review/reject-stale を検討`);
+      // FTS5（関連度想起）の利用可否
+      if (store.hasFts()) ok('recall', 'FTS5(trigram) 有効 — ulm recall で関連度想起');
+      else warn('recall', 'FTS5 が無効（この SQLite ビルドは fts5 非対応）。recall は LIKE にフォールバック');
     } finally {
       store.close();
     }
