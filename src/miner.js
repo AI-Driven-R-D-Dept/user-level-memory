@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compileGate } from './gate.js';
+import { compileGate, detectHighEntropy } from './gate.js';
 
 const SYSTEM_PROMPT = `あなたは作業ログ（観測事実）から再利用可能な経験則の「候補」を抽出するアナリストです。
 ルール:
@@ -30,8 +30,9 @@ export function gatherObservations(store, config, { project, days, limit } = {})
   } else {
     obs = store.listObservations({ days: d, limit: lim, includeSecret: false });
   }
-  // 生成ゲート②: 保存後に追加された deny パターンにも一致させない
-  return obs.filter((o) => !gate.match(o.text));
+  // 生成ゲート②: 保存後に追加された deny パターン + 高エントロピー（未知形式トークン）に一致させない
+  // recall/context/capture/import/reindex と同じ二条件で、多層防御を一様にする。
+  return obs.filter((o) => !gate.match(o.text) && !detectHighEntropy(o.text));
 }
 
 export function buildPrompt(observations, maxCandidates) {

@@ -51,12 +51,14 @@ test('buildPrompt: observations を data として埋め込み命令禁止を明
   assert.ok(p.user.includes('obs-1'));
 });
 
-test('gatherObservations: secret と deny パターン一致を除外（生成ゲート）', () => {
+test('gatherObservations: secret/deny/高エントロピーを除外（生成ゲート・多層一様）', () => {
   withFreshStore((store) => {
     store.addObservation({ text: '普通の観測', project: 'p' });
     store.addObservation({ text: '秘密', project: 'p', secret: true });
-    // secret フラグは付いていないが後から deny に一致するテキスト
+    // secret フラグは付いていないが deny に一致するテキスト
     store.addObservation({ text: 'leaked AKIA1234567890ABCDEF', project: 'p' });
+    // secret=0 だが高エントロピー（未知形式トークン）— mine の LLM に送ってはいけない
+    store.importRows('observations', [{ id: 'obs-ent001', ts: new Date().toISOString(), project: 'p', text: '内部トークン xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0', tags: '[]', source: 'import', secret: 0, meta: '{}', pinned: 0, redacted: 0, archived: 0 }]);
     const obs = gatherObservations(store, testConfig(), { project: 'p' });
     assert.equal(obs.length, 1);
     assert.equal(obs[0].text, '普通の観測');
