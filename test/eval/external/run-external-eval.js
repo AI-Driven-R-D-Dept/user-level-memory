@@ -16,7 +16,9 @@ const EVAL_HOME = join(DIR, '.evalhome', 'ulm');
 const config = loadConfig();
 
 const queries = readFileSync(join(DIR, 'queries.external.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-const qrels = JSON.parse(readFileSync(join(DIR, 'qrels.external.json'), 'utf8'));
+// qrels は環境変数 ULM_QRELS で差し替え可（別ベンダ採点 qrels-claude.json で循環バイアスを検証）
+const qrelsFile = process.env.ULM_QRELS || 'qrels.external.json';
+const qrels = JSON.parse(readFileSync(join(DIR, qrelsFile), 'utf8'));
 const idmap = JSON.parse(readFileSync(join(DIR, 'idmap.json'), 'utf8'));
 
 function dcg(grades) { return grades.reduce((s, g, i) => s + (Math.pow(2, g) - 1) / Math.log2(i + 2), 0); }

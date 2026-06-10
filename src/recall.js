@@ -1,13 +1,14 @@
-// ハイブリッド想起: FTS5(BM25, 字句) と 埋め込み(cosine, 意味) を
-// Reciprocal Rank Fusion で融合する。埋め込みが無い環境では FTS のみ（degrade gracefully）。
+// ハイブリッド想起: FTS5(BM25, 字句) と 埋め込み(cosine, 意味) を融合する。
+// 外部評価(作者非依存)の結果、等重み RRF は強い vector を弱い FTS が引き下げ hybrid<vector に
+// なることが判明したため、融合は「vector の順位を完全保持し、FTS 固有ヒットだけ末尾に救済追加」する
+// vector-primary 方式に変更した（RRF ではない）。埋め込みが無い環境では FTS のみ（degrade gracefully）。
 //
 // 字句一致(trigram)は「vocab_size」のような特異トークンに強いが同義語・言い換えに弱い。
 // 埋め込みは「スタイルが反映されない⇄クラスが効かない」のような意味的近接を拾う。
-// 両者を融合することで、どちらの取りこぼしも補完する。
 import { embedAvailable, embedTexts, cosine } from './embed.js';
 import { compileGate, detectHighEntropy } from './gate.js';
 
-const RRF_K = 60;
+const RRF_K = 60; // FTS 固有ヒットの末尾並べ替えにのみ使用
 
 /** 読み取り時ゲート: secret=0 でも本文が機密パターン/高エントロピーなら注入候補から除外（多層防御） */
 function readSafe(gate, o) {
@@ -29,7 +30,9 @@ export async function recallObservations(store, config, { query, project, scopes
   const q = String(query || '').trim();
   if (!q) return { hits: [], mode: 'none' };
   const scopes = scopesIn || (project ? ['global', project] : null);
-  const minSim = config.context?.recall_min_sim ?? 0.28; // 無関係な vector 候補の足切り（精度制御）
+  // 無関係 vector 候補の足切り。vector-primary 融合では低 sim 項目はもともと末尾に来るため
+  // 高い閾値は不要。むしろ越境(英↔日)等の有効な低 sim ヒット(0.23-0.26)を落とすので低めに。
+  const minSim = config.context?.recall_min_sim ?? 0.1;
   // 読み取り時ゲート: secret=0 でも本文が機密なら除外。import/legacy/別書き込み経路で
   // secret フラグが付かなかった機密が注入チャネルに乗るのを機械的に止める（多層防御）。
   const gate = compileGate(config);
