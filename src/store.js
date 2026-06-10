@@ -286,7 +286,7 @@ export class Store {
           // 本来のヒットが LIMIT で切られる（codex 指摘の取りこぼしバグ）。
           const cond = ['obs_fts MATCH ?', 'o.redacted = 0'];
           const params = [match];
-          if (scopes) {
+          if (scopes && scopes.length) {
             cond.push(`(o.project IS NULL OR o.project IN (${scopes.map(() => '?').join(',')}))`);
             params.push(...scopes);
           } else if (globalOnly) cond.push('o.project IS NULL');
@@ -351,7 +351,7 @@ export class Store {
   vectorSearch(queryVec, { project, global: globalOnly, tags, includeSecret = false, includeArchived = false, scopes = null, limit = 20, cosine } = {}) {
     const cond = ['o.redacted = 0', 'v.obs_id = o.id'];
     const params = [];
-    if (scopes) {
+    if (scopes && scopes.length) {
       cond.push(`(o.project IS NULL OR o.project IN (${scopes.map(() => '?').join(',')}))`);
       params.push(...scopes);
     } else if (globalOnly) cond.push('o.project IS NULL');
