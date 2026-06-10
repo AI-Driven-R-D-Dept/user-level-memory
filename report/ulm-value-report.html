@@ -139,9 +139,10 @@
     <tr><td class="k">外部評価で再構築</td><td>vector Success@10 98% / Recall@10 87%</td><td>作者非依存の実OSS評価。等重みRRFの劣化を発見→修正。スケール最適化</td></tr>
     <tr><td class="k">クロスベンダ＋棄権で仕上げ</td><td>91（自己採点）</td><td>生成・採点を両端別ベンダ化し循環を否定。偽注入を棄権機構で0に</td></tr>
     <tr><td class="k" style="color:var(--bad)">再 fresh-context 敵対監査</td><td style="color:var(--bad)"><b>79 / No 判定</b></td><td><b>(1) ライブ鍵が git 履歴に残存（除去コミットは作業ツリーだけ消していた） (2) safepath の dangling symlink バイパス(PoC) (3) 旧「Recall@10」は実は Success@K で約11pt 過大、を指摘</b></td></tr>
-    <tr><td class="k" style="color:var(--good)">指摘3点を是正</td><td style="color:var(--good)"><b>是正済み</b></td><td><b>(1) git filter-repo で鍵を全履歴から消去（要ローテーション） (2) safepath を lstat 無条件化で修正＋回帰テスト (3) Success@K と古典的 Recall@K を分離し全文書を正直化。全114テスト pass</b></td></tr>
+    <tr><td class="k">指摘3点を是正</td><td>是正済み</td><td>(1) git filter-repo で鍵を全履歴から消去（要ローテーション） (2) safepath を lstat 無条件化で修正＋回帰テスト (3) Success@K と古典的 Recall@K を分離し全文書を正直化。全114テスト pass</td></tr>
+    <tr><td class="k" style="color:var(--good)">是正後の独立再検証</td><td style="color:var(--good)"><b>3点とも解消を確認</b></td><td><b>別の fresh-context レビュアーが (1)全 blob 走査で鍵0件 (2)dangling/既存 symlink を PoC で拒否確認・通常新規は許可（過剰拒否なし） (3)success_at_k と recall_at_k が別値、を実証。回帰テストはミューテーションで有効性確認。新規問題なし</b></td></tr>
   </table>
-  <p style="font-size:13.5px;color:var(--muted)">スコアの上下動そのものが、この記憶レイヤーの売り＝「fresh-context で徹底的に壊しに来る」検証の実演になっている。<b>91 は自己採点</b>で、直後の独立 fresh-context 監査が <b>79/No</b> と容赦なく引き戻した（鍵の履歴残存・safepath バイパス・指標の誤称）。それらは捏造ではなく実欠陥で、<b>3点とも是正済み</b>。鍵は侵害扱いで<b>ローテーション必須</b>（履歴からは消したが平文共有された事実は消えない）。最終的な「真に90超」判定は、是正後の HEAD に対する独立 fresh-context 監査の結果で更新する。</p>
+  <p style="font-size:13.5px;color:var(--muted)">スコアの上下動そのものが、この記憶レイヤーの売り＝「fresh-context で徹底的に壊しに来る」検証の実演になっている。<b>91 は自己採点</b>で、直後の独立 fresh-context 監査が <b>79/No</b> と容赦なく引き戻した（鍵の履歴残存・safepath バイパス・指標の誤称）。それらは捏造ではなく実欠陥で、<b>3点とも是正し、別の fresh-context レビュアーが解消を実証確認</b>した。残る前提は<b>鍵のローテーション（ユーザー操作・履歴からは消したが平文共有の事実は消えない）</b>。この一点を除けば、独立監査が突いた gating 欠陥は解消済み。</p>
 </div>
 
 <nav class="card">
