@@ -61,12 +61,14 @@ function requireHuman(values, action) {
   );
 }
 
-function withStore(fn) {
+// async コールバックにも対応する（await してから store を閉じる）。
+// 同期コールバックでも Promise を返すので、呼び出し側は常に await すること。
+async function withStore(fn) {
   const home = ulmHome();
   ensureHome(home);
   const store = openStore(home);
   try {
-    return fn(store, loadConfig(home), home);
+    return await fn(store, loadConfig(home), home);
   } finally {
     store.close();
   }
@@ -143,6 +145,10 @@ async function cmdObs(args) {
     let text = positionals.join(' ');
     if (text === '-') text = (await readStdin()).trim();
     if (!text) throw new UsageError('観測テキストが空です');
+    // source は注入ブロックに使うため形式を厳格化（injection 境界脱出の防止）
+    if (!/^[a-zA-Z0-9:_-]{1,40}$/.test(values.source)) {
+      throw new UsageError('--source は英数字・コロン・ハイフン・アンダースコア（40字以内）のみ');
+    }
     return withStore((store, config) => {
       // 入口ゲート: text と meta の両方をスキャン（meta 経由の持出を塞ぐ）
       const metaObj = values.meta ? parseJsonSafe(values.meta, {}) : {};
@@ -203,7 +209,34 @@ async function cmdObs(args) {
     });
   }
   if (sub === 'show') return cmdShow(args.slice(1));
-  if (['pin', 'unpin', 'secret', 'archive', 'redact'].includes(sub)) {
+  if (sub === 'archive') {
+    // 一括（--days N / --before YYYY-MM-DD）または単一 <id>
+    const { values, positionals } = parse(args.slice(1), {
+      days: { type: 'string' },
+      before: { type: 'string' },
+    });
+    return withStore((store) => {
+      if (values.days || values.before) {
+        let iso;
+        if (values.before) {
+          const d = new Date(values.before);
+          if (Number.isNaN(d.getTime())) throw new UsageError(`不正な日付: ${values.before}`);
+          iso = d.toISOString();
+        } else {
+          iso = new Date(Date.now() - Number(values.days) * 86_400_000).toISOString();
+        }
+        const n = store.archiveObservationsBefore(iso);
+        console.log(`✓ ${shortDate(iso)} より前の観測 ${n} 件をアーカイブしました（既定の list/search/mine から除外。--all で参照可）`);
+      } else if (positionals[0]) {
+        store.setObservationFlags(positionals[0], { archived: true });
+        console.log(`✓ ${positionals[0]}: archived=true`);
+      } else {
+        throw new UsageError('ulm obs archive <id> | --days N | --before YYYY-MM-DD');
+      }
+      return 0;
+    });
+  }
+  if (['pin', 'unpin', 'secret', 'redact'].includes(sub)) {
     const { positionals } = parse(args.slice(1), {}, { positionals: 1 });
     return withStore((store) => {
       const id = positionals[0];
@@ -211,8 +244,8 @@ async function cmdObs(args) {
         store.redactObservation(id);
         console.log(`✓ ${id} を墓石化しました（本文・meta を消去、追記履歴は保持）`);
       } else {
-        const flag = { pin: { pinned: true }, unpin: { pinned: false }, secret: { secret: true }, archive: { archived: true } }[sub];
-        const o = store.setObservationFlags(id, flag);
+        const flag = { pin: { pinned: true }, unpin: { pinned: false }, secret: { secret: true } }[sub];
+        store.setObservationFlags(id, flag);
         console.log(`✓ ${id}: ${Object.keys(flag)[0]}=${Object.values(flag)[0]}`);
         if (sub === 'secret') console.log('  注入・採掘・通常エクスポートから除外されます');
       }
@@ -551,7 +584,7 @@ async function cmdContext(args) {
       const raw = await readStdin();
       const input = raw.length <= 256 * 1024 ? parseJsonSafe(raw, {}) : {}; // stdin サイズ上限
       const project = values.project ?? resolveProject(input.cwd || process.cwd());
-      const out = withStore((store, config) => hookOutput(buildContext(store, config, { project })));
+      const out = await withStore((store, config) => hookOutput(buildContext(store, config, { project })));
       if (out) console.log(JSON.stringify(out));
       return 0;
     } catch (err) {
@@ -563,7 +596,7 @@ async function cmdContext(args) {
   const project = values.project ?? resolveProject(process.cwd());
   return withStore((store, config) => {
     const text = buildContext(store, config, { project });
-    if (values.json) console.log(JSON.stringify(hookOutput(text)));
+    if (values.json) console.log(JSON.stringify(hookOutput(text) ?? {})); // 空時は {} を返す
     else console.log(text || '（注入する記憶はありません）');
     return 0;
   });
@@ -636,20 +669,20 @@ export async function main(argv) {
     switch (cmd) {
       case 'init': return cmdInit();
       case 'obs': return await cmdObs(rest);
-      case 'state': return cmdState(rest);
-      case 'cand': return cmdCand(rest);
-      case 'inbox': return cmdInbox(rest);
-      case 'show': return cmdShow(rest);
-      case 'approve': return cmdReview(rest, 'approved');
-      case 'reject': return cmdReview(rest, 'rejected');
-      case 'reject-stale': return cmdRejectStale(rest);
-      case 'promote': return cmdPromote(rest);
-      case 'ref': return cmdRef(rest);
+      case 'state': return await cmdState(rest);
+      case 'cand': return await cmdCand(rest);
+      case 'inbox': return await cmdInbox(rest);
+      case 'show': return await cmdShow(rest);
+      case 'approve': return await cmdReview(rest, 'approved');
+      case 'reject': return await cmdReview(rest, 'rejected');
+      case 'reject-stale': return await cmdRejectStale(rest);
+      case 'promote': return await cmdPromote(rest);
+      case 'ref': return await cmdRef(rest);
       case 'mine': return await cmdMine(rest);
       case 'context': return await cmdContext(rest);
-      case 'export': return cmdExport(rest);
-      case 'import': return cmdImport(rest);
-      case 'status': return cmdStatus();
+      case 'export': return await cmdExport(rest);
+      case 'import': return await cmdImport(rest);
+      case 'status': return await cmdStatus();
       case 'doctor': return cmdDoctor();
       case 'help': case '--help': case '-h': case undefined:
         console.log(HELP);

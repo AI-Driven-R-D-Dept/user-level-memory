@@ -40,7 +40,7 @@ export function dbPath(home = ulmHome()) {
 function deepMerge(base, over) {
   if (over === undefined || over === null) return base;
   if (Array.isArray(base) || Array.isArray(over)) return over;
-  if (typeof base === 'object' && typeof over === 'object') {
+  if (base !== null && over !== null && typeof base === 'object' && typeof over === 'object') {
     const out = { ...base };
     for (const k of Object.keys(over)) out[k] = deepMerge(base[k], over[k]);
     return out;

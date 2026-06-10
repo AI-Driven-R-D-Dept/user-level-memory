@@ -16,18 +16,37 @@ const BUILTIN = [
   { name: 'google-api-key', re: /AIza[0-9A-Za-z_-]{30,}/ },
   { name: 'private-key', re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/ },
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
-  { name: 'db-uri', re: /(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^:\s]+:[^@\s]+@/ },
+  { name: 'db-uri', re: /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i }, // user:pass@host（スキーム不問）
   { name: 'bearer', re: /bearer\s+[A-Za-z0-9_\-.=]{20,}/i },
+  { name: 'authorization-header', re: /authorization\s*:\s*\S{8,}/i },
+  { name: 'gcp-service-account', re: /"private_key_id"\s*:|"type"\s*:\s*"service_account"/ },
+  { name: 'azure-key', re: /AccountKey\s*=\s*[A-Za-z0-9+/=]{16,}/i },
+  { name: 'hex-token', re: /\b[0-9a-f]{32,}\b/i }, // 32桁以上の連続 hex（汎用トークン）
+  { name: 'env-secret-assign', re: /[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|APIKEY|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*[:=]\s*['"]?[^\s'"]{5,}/ },
   {
     name: 'credential-assignment',
-    re: /(?:password|passwd|pwd|api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)\s*[:=]\s*['"]?[^\s'"]{6,}/i,
+    re: /(?:password|passwd|pwd|api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)\s*[:=]\s*['"]?[^\s'"]{5,}/i,
   },
 ];
 
 const MAX_PATTERN_LENGTH = 300; // 極端に長い独自パターンを拒否
 const MAX_SCAN_LENGTH = 64 * 1024; // ReDoS/CPU 事故予防: これ以上は先頭のみ走査
-// ネストした量化子など破滅的バックトラックを生みやすい構造を静的に拒否
-const DANGEROUS_PATTERN = /(\([^)]*[+*][^)]*\)[+*])|(\[[^\]]*\][+*]\{?\d*,?\}?[+*])/;
+
+/**
+ * ユーザー由来の deny パターンが ReDoS 安全かを静的に判定する。
+ * 破滅的バックトラックは「グループ/選択肢の曖昧さ × 量化子」で起きる。
+ * 純 Node では正規表現実行に timeout を掛けられないため、危険要素を構造的に禁止する:
+ *  - グループ `(` と選択肢 `|`（曖昧さの源）を一切許可しない
+ *  - 無制限量化子（* + {n,}）は最大2個まで（隣接する複数量化子の多項式爆発を抑える）
+ * これにより指数バックトラックは原理的に不可能になり、多項式も実用上無害な範囲に収まる。
+ * 組込みパターンはこの制約の対象外（人手でレビュー済み）。
+ */
+export function isPatternSafe(src) {
+  if (/[(|]/.test(src)) return false; // グループ・選択肢を禁止
+  const unbounded = (src.match(/\*|\+|\{\s*\d+\s*,\s*\}/g) || []).length;
+  if (unbounded > 2) return false;
+  return true;
+}
 
 /** config.deny_patterns（文字列の正規表現）をコンパイル。危険/不正なものは警告して除外 */
 export function compileGate(config, warn = () => {}) {
@@ -38,8 +57,8 @@ export function compileGate(config, warn = () => {}) {
       warn(`deny_patterns: 長すぎるパターンを無視 (${src.slice(0, 40)}…)`);
       continue;
     }
-    if (DANGEROUS_PATTERN.test(src)) {
-      warn(`deny_patterns: ReDoS の恐れがあるパターンを無視: ${src}`);
+    if (!isPatternSafe(src)) {
+      warn(`deny_patterns: ReDoS の恐れがあるパターンを無視（グループ()・選択肢|・3個以上の量化子は不可）: ${src}`);
       continue;
     }
     try {
@@ -91,24 +110,37 @@ export function detectHighEntropy(text) {
   return null;
 }
 
-const ZERO_WIDTH = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
-const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g; // \r(\x0d) も含む。\t は残し後段で空白化
+const ROLE_WORDS = /(?:^|[\s>\]])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
 
 /**
  * 注入・生成用の無害化。
- * observation/state は「データ」であり命令ではない。注入ブロックの構造を壊させない。
- * - ゼロ幅/制御文字の除去（不可視命令対策）
- * - 偽 system/role タグ、fence ブレイク列の中和
- * - 1行化（リスト/コードブロック構造の偽装防止）
+ * observation/state/id/source は「データ」であり命令ではない。注入ブロックの構造を壊させない。
+ *
+ * 防御の要は「データfence(<user-memory>)の境界を閉じさせないこと」。境界さえ守れれば、
+ * 内部に役割マーカーや同形異字が残ってもモデルには fence 内のデータとして提示される。
+ * - NFKC 正規化（全角 SYSTEM：→ SYSTEM: 等の同形を畳む）
+ * - ゼロ幅/制御文字(\r 含む)の除去（不可視命令・端末操作対策）
+ * - あらゆる山括弧タグを [tag] 化（</user-memory> 等での境界脱出を一律封じる）
+ * - 1行化してから役割マーカー（行頭/語境界）を中和（mid-line も捕捉）
+ * - コードフェンス/水平線の中和
  */
 export function sanitizeForContext(text) {
-  return String(text)
+  let s = String(text);
+  try {
+    s = s.normalize('NFKC');
+  } catch {
+    // 不正なコードポイントは握りつぶす
+  }
+  return s
     .replace(ZERO_WIDTH, '')
     .replace(CONTROL, ' ')
-    .replace(/<\/?(?:user-memory|system|assistant|human|tool_call|function_calls|invoke)\b[^>]*>/gi, '[tag]')
-    .replace(/^\s*(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER)\s*:/gim, 'ロール: ')
-    .replace(/`{3,}/g, '``')
-    .replace(/^[-=]{3,}\s*$/gm, '—')
+    .replace(/<\/?[A-Za-z][^>]*>/g, '[tag]')
     .replace(/[ \t]*\n[ \t]*/g, ' ')
+    .replace(ROLE_WORDS, ' ロール: ')
+    .replace(/`{2,}/g, "'")
+    .replace(/(?:^|\s)[-=]{3,}(?=\s|$)/g, ' — ')
+    .replace(/\s{2,}/g, ' ')
     .trim();
 }

@@ -65,36 +65,29 @@ function columnExists(db, table, col) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 }
 
-/** スキーマを最新版へ。BASE は IF NOT EXISTS なので新規/既存どちらでも安全。 */
+/**
+ * スキーマを最新版へ。BASE_SCHEMA は v1 形（observations に pinned/redacted/archived を含まない）。
+ * 新規 DB・既存 v1 DB のどちらでも、不足カラムを冪等に追加して v2 に揃える。
+ */
 function migrate(db) {
   db.exec(BASE_SCHEMA);
-  const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  let version = row ? Number(row.value) : 0;
 
-  // v1 → v2: 既存 DB に後付けカラムを足す（新規 DB は BASE で既に揃っている）
-  if (version < 2) {
-    if (!columnExists(db, 'states', 'secret')) {
-      db.exec("ALTER TABLE states ADD COLUMN secret INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!columnExists(db, 'observations', 'pinned')) {
-      db.exec("ALTER TABLE observations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!columnExists(db, 'observations', 'redacted')) {
-      db.exec("ALTER TABLE observations ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!columnExists(db, 'observations', 'archived')) {
-      db.exec("ALTER TABLE observations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
-    }
+  // 後付けカラムを冪等に保証（columnExists ガードで二重実行されない）
+  if (!columnExists(db, 'states', 'secret')) {
+    db.exec('ALTER TABLE states ADD COLUMN secret INTEGER NOT NULL DEFAULT 0');
   }
-  // 新規 DB の BASE_SCHEMA は v1 形なので、ここで pinned/redacted/archived を必ず保証
   for (const col of ['pinned', 'redacted', 'archived']) {
     if (!columnExists(db, 'observations', col)) {
       db.exec(`ALTER TABLE observations ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`);
     }
   }
 
-  version = SCHEMA_VERSION;
-  db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(version));
+  db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(SCHEMA_VERSION));
+}
+
+/** LIKE のワイルドカード（% _ \）をエスケープする（ESCAPE '\' と併用） */
+function escapeLike(s) {
+  return String(s).replace(/[\\%_]/g, (c) => '\\' + c);
 }
 
 function rowToObs(r) {
@@ -170,13 +163,21 @@ export class Store {
       cond.push("LOWER(text) LIKE '%' || LOWER(?) || '%'");
       params.push(query);
     }
+    // tags フィルタは LIMIT の前（SQL 側）で適用する。さもないとマッチが LIMIT で切り捨てられる。
+    // tags は JSON 配列テキスト（例 ["a","b"]）なので、各タグを "tag" 形で LIKE 照合する。
+    if (tags && tags.length) {
+      const ors = [];
+      for (const t of tags) {
+        ors.push("tags LIKE ? ESCAPE '\\'");
+        params.push(`%"${escapeLike(t)}"%`);
+      }
+      cond.push(`(${ors.join(' OR ')})`);
+    }
     const where = `WHERE ${cond.join(' AND ')}`;
     const rows = this.db
       .prepare(`SELECT * FROM observations ${where} ORDER BY ts DESC, id LIMIT ?`)
       .all(...params, limit);
-    let out = rows.map(rowToObs);
-    if (tags && tags.length) out = out.filter((o) => o.tags.some((t) => tags.includes(t)));
-    return out;
+    return rows.map(rowToObs);
   }
 
   countObservations() {
@@ -287,7 +288,7 @@ export class Store {
     return this.db.prepare(`SELECT * FROM candidates ${where} ORDER BY ts DESC`).all(...params).map(rowToCand);
   }
 
-  /** 候補の編集（条件を磨く / メモ追記）。inbox か approved のみ */
+  /** 候補の編集（条件を磨く / メモ追記）。promoted（昇格済み）以外なら編集可 */
   editCandidate(id, { conditions, note, counterexamples } = {}) {
     const c = this.getCandidate(id);
     if (!c) throw new Error(`候補が見つかりません: ${id}`);
@@ -383,9 +384,15 @@ export class Store {
       refs: ['id', 'path', 'note', 'project'],
     }[table];
     if (!cols) throw new Error(`unknown table: ${table}`);
+    // id/source の形式を検証する（取込データが注入チャネルに乗る前段の防御）
+    const idRe = { observations: /^obs-[0-9a-z]{4,12}$/, candidates: /^cand-[0-9a-z]{4,12}$/, refs: /^ref-[0-9a-z]{4,12}$/ }[table];
     const placeholders = cols.map(() => '?').join(', ');
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`);
     for (const r of rows) {
+      if (idRe && !idRe.test(String(r.id ?? ''))) continue; // 不正 id の行は捨てる
+      if (table === 'observations' && r.source !== undefined && !/^[a-zA-Z0-9:_-]{1,40}$/.test(String(r.source))) {
+        r.source = 'import'; // 不正 source は固定値に矯正
+      }
       const vals = cols.map((c) => (r[c] === undefined ? null : r[c]));
       try {
         if (stmt.run(...vals).changes) inserted++;

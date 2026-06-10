@@ -36,11 +36,8 @@ export function buildPrompt(observations, maxCandidates) {
   };
 }
 
-/** レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容） */
-export function extractJsonArray(text) {
-  const s = String(text ?? '');
-  const start = s.indexOf('[');
-  if (start === -1) throw new Error('レスポンスに JSON 配列が見つかりません');
+/** ある位置の `[` から対応する `]` までのバランスの取れた部分文字列を返す（なければ null） */
+function balancedArray(s, start) {
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -56,10 +53,35 @@ export function extractJsonArray(text) {
     else if (c === '[') depth++;
     else if (c === ']') {
       depth--;
-      if (depth === 0) return JSON.parse(s.slice(start, i + 1));
+      if (depth === 0) return s.slice(start, i + 1);
     }
   }
-  throw new Error('JSON 配列が閉じていません');
+  return null;
+}
+
+/**
+ * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
+ * 散文中の `[1, 2, 3]` を誤って掴まないよう、「オブジェクトを含む配列」を優先する。
+ * 全 `[` 位置を順に試し、object を含む最初の配列を返す。なければ最初に parse できた配列。
+ */
+export function extractJsonArray(text) {
+  const s = String(text ?? '');
+  let fallback;
+  for (let i = s.indexOf('['); i !== -1; i = s.indexOf('[', i + 1)) {
+    const slice = balancedArray(s, i);
+    if (!slice) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(slice);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    if (parsed.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return parsed; // 候補らしい配列
+    if (fallback === undefined) fallback = parsed;
+  }
+  if (fallback !== undefined) return fallback;
+  throw new Error('レスポンスに JSON 配列が見つかりません');
 }
 
 /** LLM 出力を検証・正規化して候補オブジェクトの配列にする */
@@ -131,8 +153,11 @@ function callCodex(prompt, config, home) {
   }
 }
 
-// 生成時漏えい対策: base_url を allowlist で検証する。
-// config が import/git 同期で書き換えられても、観測を攻撃者エンドポイントへ exfil させない。
+// 生成時漏えい対策: base_url を既知ホストの allowlist で検証する。
+// 既定ホスト以外を使うには config.miner.allowed_hosts への明示追加が必要（誤って未知の
+// エンドポイントへ観測を送らないためのガード）。なお config 自体を書ける攻撃者は
+// allowed_hosts も書けるため、これは「事故防止」であって config 改ざんへの防御ではない。
+// 改ざん耐性が要る環境では allowed_hosts を環境変数経由にするなどの運用を推奨。
 const DEFAULT_ALLOWED_HOSTS = ['api.openai.com', 'api.groq.com', 'openrouter.ai', 'localhost', '127.0.0.1'];
 
 function assertAllowedBaseUrl(config) {

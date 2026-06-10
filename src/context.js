@@ -100,12 +100,13 @@ export function buildContext(store, config, { project } = {}) {
     rendered.push(block);
   }
 
-  // 遊び場は中身を出さない。件数 + 最古滞留日数の通知のみ。
+  // 遊び場は中身を出さない。件数 + 最古滞留日数の通知のみ（予算が残っていれば）。
   const inbox = store.inboxCount();
   if (inbox > 0) {
     const oldest = store.oldestInboxDays();
     const age = oldest != null && oldest >= 1 ? `（最古 ${oldest} 日）` : '';
-    rendered.push(`（未レビューの仮説候補が ${inbox} 件${age}。確認は /ulm:review）`);
+    const notice = `（未レビューの仮説候補が ${inbox} 件${age}。確認は /ulm:review）`;
+    if (used + notice.length <= budget) rendered.push(notice);
   }
 
   if (!rendered.length) return '';
@@ -113,9 +114,13 @@ export function buildContext(store, config, { project } = {}) {
 }
 
 function obsLine(c, o) {
-  const label = SOURCE_LABEL[o.source] ?? ` (${o.source})`;
+  // 注入ブロックに埋め込む全フィールドを無害化する。
+  // source/id も攻撃者制御になりうる（--source は自由文字列、import は任意 id）。
+  // 未知 source は生挿入せず固定ラベルにフォールバック（境界脱出を防ぐ）。
+  const label = SOURCE_LABEL[o.source] ?? ' (取込)';
   const pin = o.pinned ? '📌' : '';
-  return `- ${pin}[${o.id} ${shortDate(o.ts)}]${label} ${sanitizeForContext(truncate(o.text, c.obs_chars))}`;
+  const id = sanitizeForContext(o.id);
+  return `- ${pin}[${id} ${shortDate(o.ts)}]${label} ${sanitizeForContext(truncate(o.text, c.obs_chars))}`;
 }
 
 /** SessionStart hook 用の JSON 出力を組み立てる */

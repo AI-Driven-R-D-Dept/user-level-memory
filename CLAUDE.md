@@ -2,6 +2,16 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## About this project: ulm (user-level memory)
+
+`ulm` は Claude Code 向けの「ユーザーレベル長期記憶」CLI + プラグイン（CLAUDE.md / ref / beads の次に来る "生もの" の記憶レイヤー）。
+
+- ランタイム: Node.js >= 22.5（`node:sqlite`）。**依存パッケージはゼロ・ビルド不要**。新しい依存を足さないこと。
+- 構成: `bin/ulm.js`（エントリ）, `src/`（cli/store/gate/context/miner/safepath/exporter/...）, `test/`（`node --test`）, `commands/` `skills/` `hooks/` `.claude-plugin/`（プラグイン）。
+- 設計の中核は `DESIGN.md`。特にセキュリティ前提「observation は SessionStart で自動注入される特権チャネル」を崩さないこと。
+- 変更後は必ず `node --test test/*.test.js` を通すこと。
+- 機密ゲート（`src/gate.js`）・パス検証（`src/safepath.js`）・人間ゲート（approve/promote の TTY 必須）は安全機構。緩める変更は避ける。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
 

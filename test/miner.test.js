@@ -20,6 +20,15 @@ test('extractJsonArray: 配列がなければ throw', () => {
   assert.throws(() => extractJsonArray('no array here'));
 });
 
+test('extractJsonArray: 散文中の [1,2,3] を誤掴みせず本物を返す（M2 回帰）', () => {
+  const text = '結果は3件 [1, 2, 3] です:\n[{"hypothesis":"real"}]';
+  assert.deepEqual(extractJsonArray(text), [{ hypothesis: 'real' }]);
+});
+
+test('extractJsonArray: object を含む配列を優先', () => {
+  assert.deepEqual(extractJsonArray('options [1,2] then [{"hypothesis":"h"}]'), [{ hypothesis: 'h' }]);
+});
+
 test('validateCandidates: 正常系の正規化', () => {
   const raw = [{ hypothesis: ' h1 ', conditions: 'c', counterexamples: ['x', ''], evidence: ['obs-1', 'obs-unknown'] }];
   const out = validateCandidates(raw, { knownObsIds: new Set(['obs-1']), maxCandidates: 5 });

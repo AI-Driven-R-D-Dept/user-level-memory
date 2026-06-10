@@ -31,10 +31,14 @@ function isInside(child, root) {
  * 許可: refRoot(ULM_HOME/ref) 配下、または allowRoots(作業ツリー)配下の .md ファイルのみ。
  * @returns {{ok: true, path: string} | {ok: false, reason: string}}
  */
+const DANGEROUS_LOWER = new Set([...DANGEROUS_BASENAMES].map((s) => s.toLowerCase()));
+
 export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) {
   const abs = resolve(targetPath);
 
-  if (!abs.endsWith('.md')) {
+  // case-insensitive FS（macOS/Windows 既定）では note.MD と note.md が同一ファイル。
+  // 拡張子・危険ファイル名の判定は小文字化して行う。
+  if (!abs.toLowerCase().endsWith('.md')) {
     return { ok: false, reason: '.md ファイルのみ追記できます' };
   }
   // symlink 追従の悪用を防ぐ（既存ファイルが symlink なら拒否）
@@ -58,7 +62,7 @@ export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) 
   const realAbs = realParent + sep + basename(abs);
   const refReal = refRoot ? realpathish(refRoot) : null;
 
-  if (DANGEROUS_BASENAMES.has(basename(abs))) {
+  if (DANGEROUS_LOWER.has(basename(abs).toLowerCase())) {
     return { ok: false, reason: `自動読込される可能性が高いファイル名 (${basename(abs)}) には追記できません` };
   }
   const segs = realAbs.split(sep);

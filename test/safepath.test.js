@@ -73,6 +73,13 @@ test('safepath: symlink への追記は拒否', () => {
   });
 });
 
+test('safepath: 小文字の claude.md も拒否（M-3 回帰: case-insensitive FS）', () => {
+  sandbox(({ refRoot, work }) => {
+    assert.equal(checkWriteTarget(join(work, 'claude.md'), { refRoot, allowRoots: [work] }).ok, false);
+    assert.equal(checkWriteTarget(join(work, 'Agents.MD'), { refRoot, allowRoots: [work] }).ok, false);
+  });
+});
+
 test('safepath: .git 配下は拒否', () => {
   sandbox(({ refRoot, work }) => {
     mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
