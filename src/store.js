@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { newId, hypothesisHash } from './ids.js';
 import { nowIso, parseJsonSafe } from './util.js';
 import { dbPath } from './config.js';
-import { bufToVec } from './embed.js';
+import { bufToVec, cosineFromBuf, l2norm } from './embed.js';
 
 const SCHEMA_VERSION = 4;
 
@@ -386,13 +386,14 @@ export class Store {
     const rows = this.db
       .prepare(`SELECT o.*, v.vec AS _vec, v.dim AS _dim FROM obs_vec v JOIN observations o ON ${cond.join(' AND ')}`)
       .all(...params);
+    const qNorm = l2norm(queryVec); // クエリのノルムは全行共通なので一度だけ計算
     const scored = [];
     for (const r of rows) {
       // M6: 次元が一致しないベクトル（モデル変更で混在）は cosine を歪めるのでスキップ
       if (r._dim !== queryVec.length) continue;
-      const vec = bufToVec(r._vec); // アライン安全な復元（DataView コピー）
       const { _vec, _dim, ...rest } = r;
-      scored.push({ ...rowToObs(rest), sim: cosine(queryVec, vec) });
+      // 中間配列を作らず Buffer を直接 dot（スケール最適化）
+      scored.push({ ...rowToObs(rest), sim: cosineFromBuf(queryVec, qNorm, _vec) });
     }
     scored.sort((a, b) => b.sim - a.sim);
     return scored.slice(0, limit);

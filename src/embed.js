@@ -55,6 +55,32 @@ export function cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/** ベクトルの L2 ノルム */
+export function l2norm(a) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * a[i];
+  return Math.sqrt(s);
+}
+
+/**
+ * Buffer から Float32 を読み、事前計算済みのクエリ(q, qNorm)との cosine を返す。
+ * 中間 Float32Array を作らず Buffer を直接 dot するスケール最適化版。
+ */
+export function cosineFromBuf(q, qNorm, buf) {
+  const n = Math.min(q.length, Math.floor(buf.byteLength / 4));
+  let dot = 0, nb = 0;
+  // 4 整列なら直接 Float32 ビュー（コピーなし・最速）。非整列時のみ DataView。
+  if (buf.byteOffset % 4 === 0) {
+    const f = new Float32Array(buf.buffer, buf.byteOffset, n);
+    for (let i = 0; i < n; i++) { const v = f[i]; dot += q[i] * v; nb += v * v; }
+  } else {
+    const dv = new DataView(buf.buffer, buf.byteOffset, n * 4);
+    for (let i = 0; i < n; i++) { const v = dv.getFloat32(i * 4, true); dot += q[i] * v; nb += v * v; }
+  }
+  if (qNorm === 0 || nb === 0) return 0;
+  return dot / (qNorm * Math.sqrt(nb));
+}
+
 /** テキスト配列を埋め込む。失敗時は例外。 */
 export async function embedTexts(texts, config) {
   const ec = embedConfig(config);

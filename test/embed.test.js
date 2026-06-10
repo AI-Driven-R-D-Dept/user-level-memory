@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { vecToBuf, bufToVec, cosine, embedAvailable, embedConfig } from '../src/embed.js';
+import { vecToBuf, bufToVec, cosine, cosineFromBuf, l2norm, embedAvailable, embedConfig } from '../src/embed.js';
 import { withFreshStore, testConfig } from './helpers.js';
 
 test('embed: Float32 ⇄ Buffer ラウンドトリップ', () => {
@@ -17,6 +17,19 @@ test('embed: 非4整列バッファでも例外なく復元（SQLite BLOB のア
   const misaligned = padded.subarray(1); // byteOffset=1（4 の倍数でない）
   const back = bufToVec(misaligned);
   for (let i = 0; i < v.length; i++) assert.ok(Math.abs(back[i] - v[i]) < 1e-6);
+});
+
+test('embed: cosineFromBuf は cosine と一致（スケール最適化が結果を変えない）', () => {
+  const a = [0.2, -0.7, 0.5, 0.9, -0.1, 0.33];
+  const b = [0.1, 0.4, -0.6, 0.8, 0.2, -0.5];
+  const buf = vecToBuf(b);
+  const expected = cosine(Float32Array.from(a), Float32Array.from(b));
+  const got = cosineFromBuf(Float32Array.from(a), l2norm(Float32Array.from(a)), buf);
+  assert.ok(Math.abs(expected - got) < 1e-5, `${expected} ≈ ${got}`);
+  // 非整列バッファでも一致
+  const padded = Buffer.alloc(buf.length + 1); buf.copy(padded, 1);
+  const got2 = cosineFromBuf(Float32Array.from(a), l2norm(Float32Array.from(a)), padded.subarray(1));
+  assert.ok(Math.abs(expected - got2) < 1e-5);
 });
 
 test('embed: cosine の基本性質', () => {
