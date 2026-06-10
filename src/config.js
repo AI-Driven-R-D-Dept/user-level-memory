@@ -17,6 +17,8 @@ export const DEFAULT_CONFIG = {
     days: 30, // 観測の参照期間
     obs_chars: 200, // 観測1件あたりの最大文字数
     recall_k: 5, // UserPromptSubmit の関連度想起で出す観測の最大件数
+    recall_inject_min: 0.3, // 最良ヒットの cosine がこれ未満なら recall は全棄権（無関係プロンプトへのノイズ注入防止）
+    recall_min_sim: 0.22, // 棄権しない場合に候補として残す cosine の下限（近傍バンドの床）
   },
   capture: {
     enabled: true, // Stop hook での観測自動抽出

@@ -30,9 +30,12 @@ export async function recallObservations(store, config, { query, project, scopes
   const q = String(query || '').trim();
   if (!q) return { hits: [], mode: 'none' };
   const scopes = scopesIn || (project ? ['global', project] : null);
-  // 無関係 vector 候補の足切り。vector-primary 融合では低 sim 項目はもともと末尾に来るため
-  // 高い閾値は不要。むしろ越境(英↔日)等の有効な低 sim ヒット(0.23-0.26)を落とすので低めに。
-  const minSim = config.context?.recall_min_sim ?? 0.1;
+  // 二段の精度ガード（外部評価で minSim を下げると無関係クエリにノイズ注入される問題への対策）:
+  //  - injectMin: 最良ヒットの sim がこれ未満なら「関連記憶なし」として全棄権（無関係プロンプトに注入しない）
+  //  - minSim: 棄権しない場合に、候補として残す下限（最良ヒットからの相対バンドの床）
+  // これで「強い一致があるときだけ、その近傍も含めて注入」「弱いだけのときは何も出さない」を両立。
+  const injectMin = config.context?.recall_inject_min ?? 0.3;
+  const minSim = config.context?.recall_min_sim ?? 0.22;
   // 読み取り時ゲート: secret=0 でも本文が機密なら除外。import/legacy/別書き込み経路で
   // secret フラグが付かなかった機密が注入チャネルに乗るのを機械的に止める（多層防御）。
   const gate = compileGate(config);
@@ -51,8 +54,10 @@ export async function recallObservations(store, config, { query, project, scopes
       const [qv] = await embedTexts([q], config);
       const qvec = Float32Array.from(qv);
       vecHits = store.vectorSearch(qvec, { scopes, includeSecret: false, includeArchived: false, limit: candidateK, cosine });
-      // 類似度が閾値未満／読み取りゲート不通過の候補は落とす
-      vecHits = vecHits.filter((o) => o.sim >= minSim && readSafe(gate, o));
+      vecHits = vecHits.filter((o) => readSafe(gate, o));
+      // 棄権: 最良 sim が injectMin 未満なら vector は「確信ある一致なし」として捨てる（ノイズ注入を防ぐ）
+      if (!vecHits.length || vecHits[0].sim < injectMin) vecHits = [];
+      else vecHits = vecHits.filter((o) => o.sim >= minSim); // 確信ありなら近傍バンドを残す
     } catch {
       vecHits = []; // 埋め込み失敗時は FTS のみ
     }

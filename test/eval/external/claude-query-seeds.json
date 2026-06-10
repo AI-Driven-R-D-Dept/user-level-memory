@@ -1,0 +1,222 @@
+[
+ {
+  "id": "ext-ripgrep_GUIDE-154",
+  "source": "ripgrep_GUIDE",
+  "text": "By default, ripgrep will not require its input be valid UTF-8. That is, ripgrep can and will search arbitrary bytes. The key here is that if you're searching content that isn't UTF-8, then the usefulness of your pattern will degrade. If you're searching bytes that aren't ASCII compatible, then it's likely the pattern won't find anything. With all that said, this mode of operation is important, because it lets you find ASCII or UTF-8 *within* files that are otherwise arbitrary bytes."
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-166",
+  "source": "ripgrep_GUIDE",
+  "text": "There is one more problem with the above approach: it requires running a preprocessor for every single file that ripgrep searches. If every file needs a preprocessor, then this is OK. But if most don't, then this can substantially slow down searches because of the overhead of launching new processors. You can avoid this by telling ripgrep to only invoke the preprocessor when the file path matches a glob. For example, consider the performance difference even when searching a repository as small as ripgrep's:"
+ },
+ {
+  "id": "ext-ripgrep_FAQ-78",
+  "source": "ripgrep_FAQ",
+  "text": "Secondly, coloring on Windows is a bit complicated. If you're using a terminal like Cygwin, then it's likely true color support already works out of the box. However, if you are using a normal Windows console (`cmd` or `PowerShell`) and a version of Windows prior to 10, then there is no known way to get true color support. If you are on Windows 10 and using a Windows console, then true colors should work out of the box with one caveat: you might need to clear ripgrep's default color settings first. That is, instead of this:"
+ },
+ {
+  "id": "ext-ripgrep_FAQ-87",
+  "source": "ripgrep_FAQ",
+  "text": "If this pattern file gets too big, then it is possible ripgrep will slow down dramatically. *Typically* this is because an internal cache is too small, and will cause ripgrep to spill over to a slower but more robust regular expression engine. If this is indeed the problem, then it is possible to increase this cache and regain speed. The cache can be controlled via the `--dfa-size-limit` flag. For example, using `--dfa-size-limit 1G` will set the cache size to 1GB. (Note that this doesn't mean ripgrep will use 1GB of memory automatically, but it will allow the regex engine to if it needs to.)"
+ },
+ {
+  "id": "ext-ripgrep_FAQ-89",
+  "source": "ripgrep_FAQ",
+  "text": "When you use the `--pcre2` (`-P` for short) flag, ripgrep will use the PCRE2 regex engine instead of the default. Both regex engines are quite fast, but PCRE2 provides a number of additional features such as look-around and backreferences that many enjoy using. This is largely because PCRE2 uses a backtracking implementation where as the default regex engine uses a finite automaton based implementation. The former provides the ability to add lots of bells and whistles over the latter, but the latter executes with worst case linear time complexity."
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-157",
+  "source": "ripgrep_GUIDE",
+  "text": "In addition to skipping hidden files and files in your `.gitignore` by default, ripgrep also attempts to skip binary files. ripgrep does this by default because binary files (like PDFs or images) are typically not things you want to search when searching for regex matches. Moreover, if content in a binary file did match, then it's possible for undesirable binary data to be printed to your terminal and wreak havoc."
+ },
+ {
+  "id": "ext-bat_README-20",
+  "source": "bat_README",
+  "text": "If you make use of the dark mode feature in **macOS**, you might want to configure `bat` to use a different theme based on the OS theme. The following snippet uses the `default` theme when in the _dark mode_ and the `GitHub` theme when in the _light mode_."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-92",
+  "source": "ripgrep_FAQ",
+  "text": "So what does this have to do with PCRE2? Well, ripgrep's default regex engine exposes APIs for doing syntactic analysis on the pattern in a way that makes it quite easy to strip `\\n` from the pattern (or otherwise detect it and report an error if stripping isn't possible). PCRE2 seemingly does not provide a similar API, so ripgrep does not do any stripping when PCRE2 is enabled. This forces ripgrep to use the \"slow\" search strategy of searching each line individually."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-114",
+  "source": "ripgrep_FAQ",
+  "text": "Note: the above command assumes that you are using GNU sed. If you are using BSD sed (the default on macOS and FreeBSD) then you must modify the above command to be the following:"
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-158",
+  "source": "ripgrep_GUIDE",
+  "text": "Unfortunately, unlike skipping hidden files and respecting your `.gitignore` rules, a file cannot as easily be classified as binary. In order to figure out whether a file is binary, the most effective heuristic that balances correctness with performance is to simply look for `NUL` bytes. At that point, the determination is simple: a file is considered \"binary\" if and only if it contains a `NUL` byte somewhere in its contents."
+ },
+ {
+  "id": "ext-bat_README-19",
+  "source": "bat_README",
+  "text": "The `-F`/`--quit-if-one-screen` option instructs `less` to exit immediately if the output size is smaller than the vertical size of the terminal. This is convenient for small files because you do not have to press `q` to quit the pager."
+ },
+ {
+  "id": "ext-bat_README-31",
+  "source": "bat_README",
+  "text": "If you want to build an application that uses `bat`'s pretty-printing features as a library, check out the [the API documentation](https://docs.rs/bat/). Note that you have to use either `regex-onig` or `regex-fancy` as a feature when you depend on `bat` as a library."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-70",
+  "source": "ripgrep_FAQ",
+  "text": "And then add `. _rg.ps1` to your PowerShell [profile](https://technet.microsoft.com/en-us/library/bb613488(v=vs.85).aspx) (note the leading period). If the `_rg.ps1` file is not on your `PATH`, do `. /path/to/_rg.ps1` instead."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-74",
+  "source": "ripgrep_FAQ",
+  "text": "ripgrep's default regex engine does not support lookaround or backreferences. This is primarily because the default regex engine is implemented using finite state machines in order to guarantee a linear worst case time complexity on all inputs. Backreferences are not possible to implement in this paradigm, and lookaround appears difficult to do efficiently."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-79",
+  "source": "ripgrep_FAQ",
+  "text": "This is because ripgrep might set the default style for `match` to `bold`, and it seems like Windows 10's VT100 support doesn't permit bold and true color ANSI escapes to be used simultaneously. The work-around above will clear ripgrep's default styling, allowing you to craft it exactly as desired."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-81",
+  "source": "ripgrep_FAQ",
+  "text": "If you're using cygwin on Windows and try to search for a pattern beginning with a `/`, then it's possible that cygwin is mangling that pattern without your knowledge. For example, if you tried running `rg /foo` in a cygwin shell on Windows, then cygwin might mistakenly perform path translation on `/foo`, which would result in `rg C:/msys64/foo` being searched instead."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-101",
+  "source": "ripgrep_FAQ",
+  "text": "However, for PCRE2, things are much worse. Namely, since Unicode mode is still enabled, ripgrep is still going to decode UTF-8 to ensure that it hands only valid UTF-8 to PCRE2. Unfortunately, one key downside of multiline search is that ripgrep cannot do it incrementally. Since matches can be arbitrarily long, ripgrep actually needs the entire file in memory at once. Normally, we can use a memory map for this, but because we need to UTF-8 decode the file before searching it, ripgrep winds up reading the entire contents of the file on to the heap before executing a search. Owch."
+ },
+ {
+  "id": "ext-ripgrep_FAQ-103",
+  "source": "ripgrep_FAQ",
+  "text": "For the most part, ripgrep's default regex engine performs about the same. PCRE2 does improve a little bit, and is now almost as fast as the default regex engine. If you look at the output of `--trace`, you'll see that ripgrep will no longer perform UTF-8 decoding, but it does still use the slow line-by-line searcher."
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-121",
+  "source": "ripgrep_GUIDE",
+  "text": "ripgrep is a command line tool that searches your files for patterns that you give it. ripgrep behaves as if reading each file line by line. If a line matches the pattern provided to ripgrep, then that line will be printed. If a line does not match the pattern, then the line is not printed."
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-126",
+  "source": "ripgrep_GUIDE",
+  "text": "(**Note:** We escape the `(` here because `(` has special significance inside regular expressions. You could also use `rg -F 'fn write('` to achieve the same thing, where `-F` interprets your pattern as a literal string instead of a regular expression.)"
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-144",
+  "source": "ripgrep_GUIDE",
+  "text": "In essence, the `--replace` flag applies *only* to the matching portion of text in the output. If you instead wanted to replace an entire line of text, then you need to include the entire line in your match. For example:"
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-149",
+  "source": "ripgrep_GUIDE",
+  "text": "When we use a flag that has a value, we either put the flag and the value on the same line but delimited by an `=` sign (e.g., `--max-columns=150`), or we put the flag and the value on two different lines. This is because ripgrep's argument parser knows to treat the single argument `--max-columns=150` as a flag with a value, but if we had written `--max-columns 150` in our configuration file, then ripgrep's argument parser wouldn't know what to do with it."
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-163",
+  "source": "ripgrep_GUIDE",
+  "text": "But having to explicitly convert every file can be a pain, especially when you have a directory full of PDF files. Instead, we can use ripgrep's preprocessor feature to search the PDF. ripgrep's `--pre` flag works by taking a single command name and then executing that command for every file that it searches. ripgrep passes the file path as the first and only argument to the command and also sends the contents of the file to stdin. So let's write a simple shell script that wraps `pdftotext` in a way that conforms to this interface:"
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-164",
+  "source": "ripgrep_GUIDE",
+  "text": "Note that `preprocess` must be resolvable to a command that ripgrep can read. The simplest way to do this is to put your preprocessor command in a directory that is in your `PATH` (or equivalent), or otherwise use an absolute path."
+ },
+ {
+  "id": "ext-bat_README-11",
+  "source": "bat_README",
+  "text": "Note that additional files like the man page or shell completion files can not be installed automatically in both these ways. If installing from a local source, they will be generated by `cargo` and should be available in the cargo target folder under `build`."
+ },
+ {
+  "id": "ext-bat_README-14",
+  "source": "bat_README",
+  "text": "There is also the `--force-colorization` option, which is an alias for `--decorations=always --color=always`. This is useful if you want to keep colorization and decorations when piping `bat`'s output to another program."
+ },
+ {
+  "id": "ext-bat_README-15",
+  "source": "bat_README",
+  "text": "4. If you think that a specific syntax should be included in `bat` by default, please consider opening a \"syntax request\" ticket after reading the policies and instructions [here](doc/assets.md): [Open Syntax Request](https://github.com/sharkdp/bat/issues/new?labels=syntax-request&template=syntax_request.md)."
+ },
+ {
+  "id": "ext-bat_README-24",
+  "source": "bat_README",
+  "text": "`bat` on Windows does not natively support Cygwin's unix-style paths (`/cygdrive/*`). When passed an absolute cygwin path as an argument, `bat` will encounter the following error: `The system cannot find the path specified. (os error 3)`"
+ },
+ {
+  "id": "ext-bat_README-29",
+  "source": "bat_README",
+  "text": "`bat` natively supports UTF-8 as well as UTF-16. For every other file encoding, you may need to convert to UTF-8 first because the encodings can typically not be auto-detected. You can `iconv` to do so. Example: if you have a PHP file in Latin-1 (ISO-8859-1) encoding, you can call:"
+ },
+ {
+  "id": "ext-bat_README-30",
+  "source": "bat_README",
+  "text": "Note: you might have to use the `-l`/`--language` option if the syntax can not be auto-detected by `bat`."
+ },
+ {
+  "id": "ext-fd_README-39",
+  "source": "fd_README",
+  "text": "If we work in a directory that is a Git repository (or includes Git repositories), *fd* does not search folders (and does not show files) that match one of the `.gitignore` patterns. To disable this behavior, we can use the `-I` (or `--no-ignore`) option:"
+ },
+ {
+  "id": "ext-fd_README-46",
+  "source": "fd_README",
+  "text": "The `-x` and `-X` options take a *command template* as a series of arguments (instead of a single string). If you want to add additional options to `fd` after the command template, you can terminate it with a `\\;`."
+ },
+ {
+  "id": "ext-fd_README-55",
+  "source": "fd_README",
+  "text": "If your pattern starts with a dash, you have to add `--` to signal the end of command line options. Otherwise, the pattern will be interpreted as a command-line option. Alternatively, use a character class with a single hyphen character:"
+ },
+ {
+  "id": "ext-ripgrep_GUIDE-122",
+  "source": "ripgrep_GUIDE",
+  "text": "(**Note:** If you see an error message from ripgrep saying that it didn't search any files, then re-run ripgrep with the `--debug` flag. One likely cause of this is that you have a `*` rule in a `$HOME/.gitignore` file.)"
+ },
+ {
+  "id": "ext-ruff_README-168",
+  "source": "ruff_README",
+  "text": "If left unspecified, Ruff's default configuration is equivalent to the following `ruff.toml` file:"
+ },
+ {
+  "id": "ext-ruff_README-172",
+  "source": "ruff_README",
+  "text": "If you're just getting started with Ruff, **the default rule set is a great place to start**: it catches a wide variety of common errors (like unused imports) with zero configuration."
+ },
+ {
+  "id": "ext-tokio_README-174",
+  "source": "tokio_README",
+  "text": "First, see if the answer to your question can be found in the [Guides] or the [API documentation]. If the answer is not there, there is an active community in the [Tokio Discord server][chat]. We would be happy to try to answer your question. You can also ask your question on [the discussions page][discussions]."
+ },
+ {
+  "id": "ext-tokio_README-175",
+  "source": "tokio_README",
+  "text": "Tokio will keep a rolling MSRV (minimum supported rust version) policy of **at least** 6 months. When increasing the MSRV, the new Rust version must have been released at least six months ago. The current MSRV is 1.71."
+ },
+ {
+  "id": "ext-tokio_README-176",
+  "source": "tokio_README",
+  "text": "Note that the MSRV is not increased automatically, and only as part of a minor release. The MSRV history for past minor releases can be found below:"
+ },
+ {
+  "id": "ext-tokio_README-180",
+  "source": "tokio_README",
+  "text": "Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Tokio by you shall be licensed as MIT, without any additional terms or conditions."
+ },
+ {
+  "id": "ext-bat_README-0",
+  "source": "bat_README",
+  "text": "If you happen to use [`fd`](https://github.com/sharkdp/fd), you can use the `-X`/`--exec-batch` option to do the same:"
+ },
+ {
+  "id": "ext-bat_README-1",
+  "source": "bat_README",
+  "text": "Note that we have to switch off paging in order for this to work. We have also specified the syntax explicitly (`-l log`), as it can not be auto-detected in this case."
+ },
+ {
+  "id": "ext-esbuild_README-34",
+  "source": "esbuild_README",
+  "text": "Check out the [getting started](https://esbuild.github.io/getting-started/) instructions if you want to give esbuild a try."
+ },
+ {
+  "id": "ext-fd_README-35",
+  "source": "fd_README",
+  "text": "If called with just a single argument like this, *fd* searches the current directory recursively for any entries that *contain* the pattern `netfl`."
+ }
+]
