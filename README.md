@@ -66,6 +66,19 @@ ulm status / ulm doctor                           # 統計 / 環境診断
 
 全コマンドは `ulm help` を参照。
 
+## 想起の質（外部評価・作者非依存）
+
+「自作コーパスで有利では」という批判に答えるため、**作者が本文もクエリも正解も書かない**外部評価を用意した（`test/eval/external/`）：実OSS docs(ripgrep/fd/bat/uv/ruff/tokio 等)を観測化 → 別LLMが症状ベースのクエリを生成（原文の語彙を使わない）→ 第3のLLMが TREC スタイルで関連度採点。本番コードをそのまま通し、95%信頼区間つき。
+
+| route | Recall@10 [95%CI] | nDCG@10 | MRR |
+|---|---|---|---|
+| recency | 16% [7-27] | 5% | 8% |
+| FTS のみ（キー無し） | 32% [18-43] | 14% | 24% |
+| vector（意味） | **95%** [89-100] | 66% | 83% |
+| hybrid（最終） | **95%** [89-100] | 66% | 82% |
+
+意味検索(vector)が圧倒。症状ベースのクエリ（語彙が違う）ゆえ FTS は 32% に留まり、意味検索が無いと拾えないことが独立に裏づけられた。この外部評価は**等重みRRFが hybrid を vector 未満に劣化させる実欠陥**も暴き、融合を「vector 順位保持＋FTS固有のみ救済」に修正した。
+
 ## 想起の質（ハイブリッド: FTS5/BM25 + 埋め込み）
 
 SessionStart の「最近分の詰め込み」だけでなく、**プロンプトに関連する記憶を取り出す**のが ulm の中核。
@@ -126,5 +139,6 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 ## 開発
 
 ```bash
-node --test test/*.test.js      # ユニットテスト（58 件）
+node --test test/*.test.js          # ユニットテスト（111件）
+node test/eval/external/run-external-eval.js 10   # 外部評価（要 OPENAI_API_KEY）
 ```

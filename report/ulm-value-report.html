@@ -135,7 +135,8 @@
     <tr><td class="k">埋め込みハイブリッド</td><td>90 / 89</td><td>意味的想起（FTS+embedding RRF）</td></tr>
     <tr><td class="k">機密ゲート修正</td><td>92 / 91</td><td>hf_ 漏洩・read-path 漏洩を修正</td></tr>
     <tr><td class="k" style="color:var(--bad)">敵対監査（Fable）</td><td style="color:var(--bad)"><b>70-75 判定</b></td><td><b>評価バイアス露見・5実バグ(PoC)発見</b></td></tr>
-    <tr><td class="k">最終是正</td><td><b>—</b></td><td>5バグ修正・正直な4-way評価・誇大表現を是正</td></tr>
+    <tr><td class="k">最終是正</td><td>—</td><td>5バグ修正・正直な4-way評価・誇大表現を是正</td></tr>
+    <tr><td class="k" style="color:var(--good)">外部評価で再構築</td><td style="color:var(--good)"><b>vector 95%/MRR83</b></td><td><b>作者非依存の実OSS評価。等重みRRFの劣化を発見→修正。スケール最適化</b></td></tr>
   </table>
   <p style="font-size:13.5px;color:var(--muted)">「90」は一度実測で出たが、それは<b>評価者に都合のよい土俵での値</b>だった。敵対監査がそれを暴き（数値の捏造はなく、設計バイアス）、実バグも見つけた。最終版は<b>その指摘を全部呑んで正直に引き戻した</b>もの。これ自体が「fresh-context で徹底的に見る」ことの実演になっている。</p>
 </div>
@@ -148,7 +149,8 @@
     <a href="#reviews">3. 2系統レビューの評定</a><br>
     <a href="#sim">4. 実リポジトリ・シミュレーション</a><br>
     <a href="#ab">5. A/B：記憶が答えを変えた</a><br>
-    <a href="#recall">5.5 想起品質の進化（90点への改善）</a><br>
+    <a href="#external">5.4 真にgameできない外部評価</a><br>
+    <a href="#recall">5.5 想起品質の内訳（4-way）</a><br>
     <a href="#metrics">6. 測定値</a><br>
     <a href="#limits">7. 正直な限界</a><br>
     <a href="#conclusion">8. 結論</a>
@@ -327,8 +329,29 @@
 <div class="callout">これが ulm の<b>クリーンな勝ち筋</b>。「latent_dim は <i>codec 側</i> と突き合わせる」「v2 VoiceDesign は <code>use_caption_condition</code> で speaker が消える」はモデルの事前知識に<b>無い</b>リポ固有の事実。記憶なしは一般論や別手段へ流れ、記憶ありは config レベルの正解を即答する。</div>
 </section>
 
+<section id="external">
+<h2><span class="num">05.4</span>真に game できない外部評価（実OSS docs・独立クエリ・第3者LLM採点）</h2>
+<p>「自作コーパスで有利」という批判に正面から答えるため、<b>作者が本文もクエリも正解も書かない</b>評価を組んだ：</p>
+<ul style="font-size:14.5px">
+  <li><b>コーパス</b>：実OSS（ripgrep / fd / bat / uv / ruff / tokio 等）の生ドキュメントを取得し、179段落を観測化（作者は1文字も書かない・出典URL付き）。</li>
+  <li><b>クエリ</b>：別LLM(openai)が各観測から「それを必要とする開発者の<b>症状ベースの質問</b>」を44件生成。<b>原文の語彙を使わない</b>よう制約（字句一致で当たるのを防ぐ）。</li>
+  <li><b>正解(qrels)</b>：第3のLLMが、各クエリ×プール候補（4経路の上位を集約）を関連度0/1/2で採点。TRECスタイル。作者は採点に介在しない。</li>
+  <li><b>指標</b>：Recall@10 / nDCG@10 / MRR、クエリbootstrapで95%信頼区間。本番コードをそのまま通す。</li>
+</ul>
+<table>
+  <tr><th>route</th><th>Recall@10 [95%CI]</th><th>nDCG@10</th><th>MRR</th></tr>
+  <tr><td class="k">recency</td><td><span class="bad-mark">16%</span> [7-27]</td><td>5%</td><td>8%</td></tr>
+  <tr><td class="k">FTS のみ（キー無しの実力）</td><td>32% [18-43]</td><td>14%</td><td>24%</td></tr>
+  <tr><td class="k">vector（意味）</td><td><span class="good-mark">95%</span> [89-100]</td><td>66%</td><td>83%</td></tr>
+  <tr><td class="k">hybrid（最終）</td><td><span class="good-mark">95%</span> [89-100]</td><td>66%</td><td>82%</td></tr>
+</table>
+<div class="callout"><b>これが最も信頼できる数字。</b> 作者非依存のテストで、意味的想起(vector)は <b>Recall@10 95% / MRR 83%</b>。症状ベース（語彙が違う）クエリゆえ FTS は 32% に留まり、<b>意味検索が無いと拾えない</b>ことが独立に裏づけられた。recency は 16%（古い記憶を拾えない構造的限界）。</div>
+<div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector と同等(nDCG 66)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
+<p class="src">再現: <code>test/eval/external/</code>（fetch→gen-queries→build-qrels→run-external-eval、生データ・URL・qrels を snapshot）。</p>
+</section>
+
 <section id="recall">
-<h2><span class="num">05.5</span>想起品質の進化 — recency → FTS → ハイブリッド（自己監査で割り引いた正直版）</h2>
+<h2><span class="num">05.5</span>想起品質の内訳 — recency / FTS / 埋め込み（自作だが現実寄りの4-way）</h2>
 <p>初回レビューの最大弱点は「SessionStart が<b>関連度でなく recency（最近順）で詰め込む</b>」「検索が <code>LIKE</code> 部分一致のみ」だった。これを2層で作り直した：<b>FTS5(BM25, 字句)</b> と <b>埋め込み(cosine, 意味)</b> を Reciprocal Rank Fusion で融合し、依存ゼロを保つため<b>埋め込みは任意</b>（API キーが無ければ FTS のみに自動 degrade）。</p>
 
 <p><b>この数字は割り引いて読む必要がある。</b>敵対的な「評価公正性監査」を別エージェントに依頼したところ、初版コーパスに3つのバイアス（recency を構造的に 0% にする年齢分離、FTS が K=5 で実質貢献ゼロ、最難の cross カテゴリ未実装）が見つかった。それを是正した<b>正直な4-way 評価</b>（混在recency + cross/hard-negative + 重いタイポ）の結果がこちら：</p>
