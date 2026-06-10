@@ -1,0 +1,177 @@
+{
+  "fts_enabled": true,
+  "n_queries": 10,
+  "K": 5,
+  "bm25": {
+    "recall_at_k": 1,
+    "mrr": 1,
+    "secret_leaks": 0
+  },
+  "recency": {
+    "recall_at_k": 0.2,
+    "mrr": 0.163,
+    "secret_leaks": 0
+  },
+  "perQuery": [
+    {
+      "q": "VoiceDesign で参照音声を渡しても声が似ない、話者がコピーされない",
+      "relevant": [
+        "r1"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.07142857142857142,
+        "leak": 0
+      }
+    },
+    {
+      "q": "推論を起動したら vocab_size 関連の ValueError が出た",
+      "relevant": [
+        "r2"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.07692307692307693,
+        "leak": 0
+      }
+    },
+    {
+      "q": "latent_dim の次元 mismatch で推論が始まらない",
+      "relevant": [
+        "r3"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.08333333333333333,
+        "leak": 0
+      }
+    },
+    {
+      "q": "LoRA の adapter に duration predictor が入るのか、modules_to_save の挙動",
+      "relevant": [
+        "r4"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.09090909090909091,
+        "leak": 0
+      }
+    },
+    {
+      "q": "古い v1 の checkpoint を最新コードで読みたい",
+      "relevant": [
+        "r5"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.1,
+        "leak": 0
+      }
+    },
+    {
+      "q": "caption_tokenizer が無いと synthesize で RuntimeError になる件",
+      "relevant": [
+        "r6"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.1111111111111111,
+        "leak": 0
+      }
+    },
+    {
+      "q": "reference audio の normalize_db を設定したら audiotools が無くて落ちた",
+      "relevant": [
+        "r7"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.125,
+        "leak": 0
+      }
+    },
+    {
+      "q": "speaker_inversion の embedding 初期化で次元が合わず ValueError",
+      "relevant": [
+        "r8"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 0,
+        "rr": 0.14285714285714285,
+        "leak": 0
+      }
+    },
+    {
+      "q": "tailwind のクラスが効かない、JIT の content 設定",
+      "relevant": [
+        "n1"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 1,
+        "rr": 0.5,
+        "leak": 0
+      }
+    },
+    {
+      "q": "postgres の接続プールがサーバーレスで枯渇する",
+      "relevant": [
+        "n3"
+      ],
+      "bm25": {
+        "recall": 1,
+        "rr": 1,
+        "leak": 0
+      },
+      "recency": {
+        "recall": 1,
+        "rr": 0.3333333333333333,
+        "leak": 0
+      }
+    }
+  ]
+}

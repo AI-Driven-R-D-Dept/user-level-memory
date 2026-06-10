@@ -5,7 +5,7 @@ import { join, resolve, dirname } from 'node:path';
 import { ulmHome, ensureHome, loadConfig } from './config.js';
 import { openStore } from './store.js';
 import { compileGate, detectHighEntropy } from './gate.js';
-import { buildContext, hookOutput } from './context.js';
+import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
 import { runDoctor } from './doctor.js';
@@ -38,7 +38,8 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|openai] [--dry-run]
   ulm ref add <path.md> [--note N] [--project P] | ulm ref list | ulm ref rm <id|path>
-  ulm context [--project P] [--hook] [--json]
+  ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
+  ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶を BM25 で想起
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
@@ -187,22 +188,34 @@ async function cmdObs(args) {
       } else includeSecret = true;
     }
     return withStore((store) => {
-      const list = store.listObservations({
-        project: values.project,
-        days: values.all ? undefined : values.days ? Number(values.days) : sub === 'list' ? 30 : undefined,
-        tags: splitCsv(values.tags),
-        includeSecret,
-        includeArchived: values.all || values.archived,
-        pinnedOnly: values.pinned,
-        limit: Number(values.limit),
-        query: sub === 'search' ? positionals.join(' ') : undefined,
-      });
+      // search は FTS5 BM25 の関連度順、list は recency 順
+      const list = sub === 'search'
+        ? store.searchObservations({
+            query: positionals.join(' '),
+            project: values.project,
+            tags: splitCsv(values.tags),
+            includeSecret,
+            includeArchived: values.all || values.archived,
+            limit: Number(values.limit),
+          })
+        : store.listObservations({
+            project: values.project,
+            days: values.all ? undefined : values.days ? Number(values.days) : 30,
+            tags: splitCsv(values.tags),
+            includeSecret,
+            includeArchived: values.all || values.archived,
+            pinnedOnly: values.pinned,
+            limit: Number(values.limit),
+          });
       if (values.json) {
         console.log(JSON.stringify(list, null, 2));
         return 0;
       }
       if (!list.length) console.log('（観測なし）');
-      else for (const o of list) printObs(o);
+      else for (const o of list) {
+        if (sub === 'search' && o.rank != null) process.stdout.write(`[rank ${o.rank.toFixed(2)}] `);
+        printObs(o);
+      }
       const hidden = store.stats().secret_observations;
       if (!includeSecret && hidden) console.log(`（secret ${hidden} 件を非表示）`);
       return 0;
@@ -602,6 +615,54 @@ async function cmdContext(args) {
   });
 }
 
+// UserPromptSubmit 用: プロンプトに関連する記憶を BM25 で動的注入する
+async function cmdRecall(args) {
+  const { values, positionals } = parse(args, {
+    project: { type: 'string' },
+    hook: { type: 'boolean', default: false },
+    limit: { type: 'string' },
+    explain: { type: 'boolean', default: false },
+    json: { type: 'boolean', default: false },
+  });
+
+  if (values.hook) {
+    // UserPromptSubmit hook: stdin の JSON から prompt と cwd を取り、関連記憶を additionalContext に
+    try {
+      const raw = await readStdin();
+      const input = raw.length <= 256 * 1024 ? parseJsonSafe(raw, {}) : {};
+      const query = String(input.prompt || input.user_prompt || '').slice(0, 4000);
+      const project = values.project ?? resolveProject(input.cwd || process.cwd());
+      if (!query.trim()) return 0;
+      const out = await withStore((store, config) => {
+        const { text } = buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
+        return hookOutput(text, 'UserPromptSubmit');
+      });
+      if (out) console.log(JSON.stringify(out));
+      return 0;
+    } catch (err) {
+      console.error(`ulm recall hook error: ${err.message}`);
+      return 0;
+    }
+  }
+
+  const query = positionals.join(' ');
+  if (!query.trim()) throw new UsageError('ulm recall <query>');
+  const project = values.project ?? resolveProject(process.cwd());
+  return withStore((store, config) => {
+    const { text, hits } = buildRecall(store, config, { project, query, limit: values.limit ? Number(values.limit) : undefined });
+    if (values.json) {
+      console.log(JSON.stringify({ hits, text }, null, 2));
+      return 0;
+    }
+    if (values.explain) {
+      console.error(`query="${query}" project=${project} fts=${store.hasFts()} hits=${hits.length}`);
+      for (const h of hits) console.error(`  rank=${h.rank == null ? 'LIKE' : h.rank.toFixed(2)} ${h.id} ${truncate(h.text, 60)}`);
+    }
+    console.log(text || '（関連する記憶なし）');
+    return 0;
+  });
+}
+
 function cmdExport(args) {
   const { values } = parse(args, { quiet: { type: 'boolean', default: false } });
   return withStore((store, config, home) => {
@@ -680,6 +741,7 @@ export async function main(argv) {
       case 'ref': return await cmdRef(rest);
       case 'mine': return await cmdMine(rest);
       case 'context': return await cmdContext(rest);
+      case 'recall': return await cmdRecall(rest);
       case 'export': return await cmdExport(rest);
       case 'import': return await cmdImport(rest);
       case 'status': return await cmdStatus();

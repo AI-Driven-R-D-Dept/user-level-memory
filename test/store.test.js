@@ -195,9 +195,10 @@ test('export/import: ラウンドトリップ', () => {
   });
 });
 
-test('schema version は 2', () => {
+test('schema version は 3（FTS5 込み）', () => {
   withFreshStore((store) => {
-    assert.equal(store.schemaVersion(), 2);
+    assert.equal(store.schemaVersion(), 3);
+    assert.equal(store.hasFts(), true);
   });
 });
 
@@ -265,15 +266,18 @@ test('migration: v1 形の DB を開くと v2 カラムが揃う', () => {
     INSERT INTO states (key, value, updated_at) VALUES ('k', 'v', '2026-01-01T00:00:00Z');
   `);
   db.close();
-  // openStore で migrate が走り v2 に
+  // openStore で migrate が走り v3 に（FTS バックフィル込み）
   const store = openStore(home);
   try {
-    assert.equal(store.schemaVersion(), 2);
+    assert.equal(store.schemaVersion(), 3);
     const o = store.getObservation('obs-old001');
     assert.equal(o.text, 'legacy');
     assert.equal(o.pinned, false); // 後付けカラムが既定値で読める
     assert.equal(o.archived, false);
     assert.equal(store.getState('k').secret, false); // states.secret も追加済み
+    // 既存行が FTS にバックフィルされ検索できる
+    assert.equal(store.hasFts(), true);
+    assert.ok(store.searchObservations({ query: 'legacy' }).some((x) => x.id === 'obs-old001'));
   } finally {
     store.close();
     rmSync(home, { recursive: true, force: true });

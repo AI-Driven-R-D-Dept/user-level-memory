@@ -4,7 +4,7 @@ import { newId, hypothesisHash } from './ids.js';
 import { nowIso, parseJsonSafe } from './util.js';
 import { dbPath } from './config.js';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -82,12 +82,94 @@ function migrate(db) {
     }
   }
 
+  // v3: FTS5(trigram) による関連度想起。fts5 が無い環境では握りつぶして LIKE にフォールバック。
+  ensureFts(db);
+
   db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(SCHEMA_VERSION));
+}
+
+/** FTS5 仮想テーブルとトリガを冪等に用意。未対応ビルドでは false を返し LIKE 検索に退避。 */
+export function ftsAvailable(db) {
+  try {
+    return db.prepare("SELECT 1 FROM meta WHERE key='fts_ready'").get()?.['1'] === 1
+      ? true
+      : !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='obs_fts'").get();
+  } catch {
+    return false;
+  }
+}
+
+function ensureFts(db) {
+  const exists = db.prepare("SELECT name FROM sqlite_master WHERE name='obs_fts'").get();
+  if (exists) return true;
+  try {
+    db.exec(`CREATE VIRTUAL TABLE obs_fts USING fts5(obs_id UNINDEXED, text, tags, tokenize='trigram');`);
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS obs_fts_ai AFTER INSERT ON observations BEGIN
+        INSERT INTO obs_fts(obs_id, text, tags) VALUES (new.id, new.text, new.tags);
+      END;
+      CREATE TRIGGER IF NOT EXISTS obs_fts_ad AFTER DELETE ON observations BEGIN
+        DELETE FROM obs_fts WHERE obs_id = old.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS obs_fts_au AFTER UPDATE ON observations BEGIN
+        DELETE FROM obs_fts WHERE obs_id = old.id;
+        INSERT INTO obs_fts(obs_id, text, tags) VALUES (new.id, new.text, new.tags);
+      END;`);
+    // 既存行をバックフィル
+    db.exec(`INSERT INTO obs_fts(obs_id, text, tags) SELECT id, text, tags FROM observations;`);
+    return true;
+  } catch {
+    return false; // fts5 非対応ビルド: LIKE 検索のまま
+  }
 }
 
 /** LIKE のワイルドカード（% _ \）をエスケープする（ESCAPE '\' と併用） */
 function escapeLike(s) {
   return String(s).replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
+/** trigram は3文字以上の連なりが必要。クエリが検索可能か。 */
+function hasTrigramTerm(q) {
+  return q.replace(/\s+/g, '').length >= 3;
+}
+
+/**
+ * FTS5(trigram) の MATCH 文字列を作る。
+ * trigram は「3文字の連続部分一致」なので、自然文クエリ（特に日本語=分かち書きなし）は
+ * 重複トライグラムに分解して OR 連結する。BM25 が希少なトライグラムを高く重み付けるので、
+ * 共通語（"します"等）でのノイズは順位で沈む。Latin の語(>=3)はフレーズとしても加える。
+ */
+function buildFtsMatch(q) {
+  const norm = String(q).normalize('NFKC');
+  const segs = norm.split(/\s+/).filter(Boolean);
+  const phrases = new Set();
+  const MAX = 50;
+  for (const seg of segs) {
+    const clean = seg.replace(/"/g, '');
+    if (/^[\x20-\x7E]+$/.test(clean) && clean.replace(/[^\p{L}\p{N}]/gu, '').length >= 3) {
+      phrases.add('"' + clean + '"'); // 英数語はそのままフレーズ化（より特異）
+    }
+    const chars = [...clean];
+    for (let i = 0; i + 3 <= chars.length && phrases.size < MAX; i++) {
+      const tri = chars.slice(i, i + 3).join('');
+      if (/[\s"]/.test(tri)) continue;
+      phrases.add('"' + tri + '"');
+    }
+    if (phrases.size >= MAX) break;
+  }
+  return phrases.size ? [...phrases].join(' OR ') : null;
+}
+
+/** FTS 検索結果に project/tags/secret/archived フィルタを JS 側で適用 */
+function applyObsFilters(rows, { project, globalOnly, tags, includeSecret, includeArchived, scopes }) {
+  let out = rows;
+  if (scopes) out = out.filter((o) => o.project == null || scopes.includes(o.project));
+  else if (globalOnly) out = out.filter((o) => o.project == null);
+  else if (project) out = out.filter((o) => o.project === project);
+  if (!includeSecret) out = out.filter((o) => !o.secret);
+  if (!includeArchived) out = out.filter((o) => !o.archived);
+  if (tags && tags.length) out = out.filter((o) => o.tags.some((t) => tags.includes(t)));
+  return out;
 }
 
 function rowToObs(r) {
@@ -182,6 +264,44 @@ export class Store {
 
   countObservations() {
     return this.db.prepare('SELECT COUNT(*) AS n FROM observations WHERE redacted = 0').get().n;
+  }
+
+  hasFts() {
+    return !!this.db.prepare("SELECT name FROM sqlite_master WHERE name='obs_fts'").get();
+  }
+
+  /**
+   * 関連度（BM25）順の観測検索。FTS5(trigram) を使い、未対応なら LIKE にフォールバック。
+   * クエリからトリグラム化できる語（>=3文字の連なり）を抽出して OR 検索する。
+   * 返り値は listObservations と同形 + rank（小さいほど関連度高、LIKE 時は null）。
+   */
+  searchObservations({ query, project, global: globalOnly = false, tags, includeSecret = false, includeArchived = false, scopes = null, limit = 20 } = {}) {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const useFts = this.hasFts() && hasTrigramTerm(q);
+    if (useFts) {
+      const match = buildFtsMatch(q);
+      if (match) {
+        try {
+          const rows = this.db
+            .prepare(
+              `SELECT o.*, bm25(obs_fts) AS rank
+               FROM obs_fts JOIN observations o ON o.id = obs_fts.obs_id
+               WHERE obs_fts MATCH ? AND o.redacted = 0
+               ORDER BY rank LIMIT ?`
+            )
+            .all(match, limit * 4);
+          let out = rows.map((r) => ({ ...rowToObs(r), rank: r.rank }));
+          out = applyObsFilters(out, { project, globalOnly, tags, includeSecret, includeArchived, scopes });
+          return out.slice(0, limit);
+        } catch {
+          // FTS クエリ構文エラー時は LIKE へ
+        }
+      }
+    }
+    // フォールバック: LIKE 部分一致（関連度なし、recency 順）
+    const out = this.listObservations({ project: globalOnly ? undefined : project, global: globalOnly, tags, includeSecret, includeArchived, query: q, limit });
+    return out.map((o) => ({ ...o, rank: null }));
   }
 
   /** 墓石化（追記専用を保ちつつ訂正・機密の事後消去を可能にする） */

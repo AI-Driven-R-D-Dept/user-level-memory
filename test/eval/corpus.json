@@ -1,0 +1,32 @@
+{
+  "_comment": "想起品質の評価用コーパス。irodori 実観測(relevant)＋他プロジェクトのノイズ(distractor)。days_ago で recency を制御し、relevant を古く・ノイズを新しくして recency baseline の弱点を露わにする。",
+  "observations": [
+    {"id":"r1","project":"irodori","days_ago":40,"tags":["voicedesign"],"text":"irodori: v2 VoiceDesign は use_caption_condition が true だと speaker 条件が無効化され reference audio が無視される。話者模倣には speaker 条件が有効な v2 base を使う。"},
+    {"id":"r2","project":"irodori","days_ago":38,"tags":["inference","tokenizer"],"text":"irodori: 推論起動時に tokenizer の vocab_size が checkpoint の text_vocab_size と不一致だと ValueError。text_tokenizer_repo の vocab と checkpoint を一致させる。"},
+    {"id":"r3","project":"irodori","days_ago":36,"tags":["inference","codec"],"text":"irodori: checkpoint の latent_dim と codec の latent_dim が不一致だと推論開始時に ValueError。学習時と同じ DACVAE/codec repo を指定する。"},
+    {"id":"r4","project":"irodori","days_ago":34,"tags":["lora","duration"],"text":"irodori: LoRA v3 で lora_modules_to_save が auto かつ use_duration_predictor が true だと duration_predictor が modules_to_save に自動追加され adapter に含まれる。"},
+    {"id":"r5","project":"irodori","days_ago":32,"tags":["version-incompat"],"text":"irodori: v1 checkpoint と preprocessing は v2/v3 コードでは使用不可。v1 を使うなら v1 タグのコードに戻す。"},
+    {"id":"r6","project":"irodori","days_ago":30,"tags":["inference","caption"],"text":"irodori: use_caption_condition が true の checkpoint は caption_tokenizer のロードが必須で、未ロードのまま synthesize すると RuntimeError。"},
+    {"id":"r7","project":"irodori","days_ago":28,"tags":["inference","preprocessing"],"text":"irodori: reference audio に normalize_db を指定すると audiotools ライブラリが必須で import 失敗時に RuntimeError。normalize_db を None にすると ref_ensure_max で peak scaling される。"},
+    {"id":"r8","project":"irodori","days_ago":26,"tags":["training","speaker-inversion"],"text":"irodori: speaker_inversion 学習で speaker_inversion_init_embedding を使う場合、embedding のトークン数と speaker_dim が config と厳密一致しないと ValueError。"},
+    {"id":"n1","project":"webapp","days_ago":1,"tags":["css"],"text":"webapp: tailwind の JIT は content 設定漏れでクラスが効かない。purge 対象に全テンプレートを含める。"},
+    {"id":"n2","project":"webapp","days_ago":2,"tags":["react"],"text":"webapp: useEffect の依存配列を空にすると初回マウント時のみ実行される。"},
+    {"id":"n3","project":"api","days_ago":1,"tags":["db"],"text":"api: postgres の接続プールはサーバーレスで枯渇しやすい。pgbouncer を挟む。"},
+    {"id":"n4","project":"api","days_ago":3,"tags":["perf"],"text":"api: N+1 クエリは include で eager load して潰す。"},
+    {"id":"n5","project":"webapp","days_ago":2,"tags":["build"],"text":"webapp: vite のビルドは大きな画像で OOM する。public 配下に逃がす。"},
+    {"id":"n6","project":"irodori","days_ago":1,"tags":["misc"],"text":"irodori: README のバッジ URL を更新した。デモ Space へのリンクを差し替え。"},
+    {"id":"s1","project":"irodori","days_ago":35,"tags":["secret"],"secret":true,"text":"irodori: HuggingFace のトークンは hf_SHOULDNOTLEAK1234567890 を使用（機密・注入禁止）。"}
+  ],
+  "queries": [
+    {"q":"VoiceDesign で参照音声を渡しても声が似ない、話者がコピーされない","relevant":["r1"]},
+    {"q":"推論を起動したら vocab_size 関連の ValueError が出た","relevant":["r2"]},
+    {"q":"latent_dim の次元 mismatch で推論が始まらない","relevant":["r3"]},
+    {"q":"LoRA の adapter に duration predictor が入るのか、modules_to_save の挙動","relevant":["r4"]},
+    {"q":"古い v1 の checkpoint を最新コードで読みたい","relevant":["r5"]},
+    {"q":"caption_tokenizer が無いと synthesize で RuntimeError になる件","relevant":["r6"]},
+    {"q":"reference audio の normalize_db を設定したら audiotools が無くて落ちた","relevant":["r7"]},
+    {"q":"speaker_inversion の embedding 初期化で次元が合わず ValueError","relevant":["r8"]},
+    {"q":"tailwind のクラスが効かない、JIT の content 設定","relevant":["n1"]},
+    {"q":"postgres の接続プールがサーバーレスで枯渇する","relevant":["n3"]}
+  ]
+}
