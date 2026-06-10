@@ -6,6 +6,11 @@ import { join } from 'node:path';
 export const DEFAULT_CONFIG = {
   // 機械的機密ゲート: 組込みパターンに追加する正規表現（文字列）
   deny_patterns: [],
+  gate: {
+    // 高エントロピー文字列（未知形式トークンの兆候）を検出したら安全側に secret 化する（fail-closed）。
+    // false にすると警告のみ（取りこぼし漏洩のリスクを受け入れる）。
+    entropy_secret: true,
+  },
   context: {
     max_obs: 10, // SessionStart で注入する観測の最大件数
     max_chars: 4000, // 注入ブロック全体の文字数予算

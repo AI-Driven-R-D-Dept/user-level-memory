@@ -23,6 +23,7 @@ export async function recallObservations(store, config, { query, project, scopes
   const q = String(query || '').trim();
   if (!q) return { hits: [], mode: 'none' };
   const scopes = scopesIn || (project ? ['global', project] : null);
+  const minSim = config.context?.recall_min_sim ?? 0.28; // 無関係な vector 候補の足切り（精度制御）
   const ftsOpts = { query: q, scopes, includeSecret: false, includeArchived: false, limit: candidateK };
 
   const ftsHits = store.searchObservations(ftsOpts);
@@ -35,6 +36,8 @@ export async function recallObservations(store, config, { query, project, scopes
       const [qv] = await embedTexts([q], config);
       const qvec = Float32Array.from(qv);
       vecHits = store.vectorSearch(qvec, { scopes, includeSecret: false, includeArchived: false, limit: candidateK, cosine });
+      // 類似度が閾値未満の候補は落とす（cosine が低いものは無関係。tail のノイズ注入を防ぐ）
+      vecHits = vecHits.filter((o) => o.sim >= minSim);
     } catch {
       vecHits = []; // 埋め込み失敗時は FTS のみ
     }

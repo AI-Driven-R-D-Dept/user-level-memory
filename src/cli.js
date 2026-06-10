@@ -78,7 +78,13 @@ async function withStore(fn) {
   }
 }
 
-/** 書き込み時の機密ゲート。一致したら secret 強制 + 警告。エントロピーは警告のみ。 */
+/**
+ * 書き込み時の機密ゲート。
+ * - 既知パターン一致 → secret 強制。
+ * - 高エントロピー文字列（未知形式トークンの兆候）→ 既定で fail-closed（secret 化）。
+ *   memory は注入・埋め込みに乗る特権チャネルなので、取りこぼし漏洩より誤 secret を選ぶ。
+ *   config.gate.entropy_secret=false で警告のみに緩められる。
+ */
 function gateWrite(config, text, { explicitSecret = false } = {}) {
   const gate = compileGate(config, (m) => console.error(`⚠ ${m}`));
   const hit = gate.match(text);
@@ -90,7 +96,14 @@ function gateWrite(config, text, { explicitSecret = false } = {}) {
   }
   if (!secret) {
     const ent = detectHighEntropy(text);
-    if (ent) notes.push(`高エントロピー文字列 (${ent}) を検出。機密なら --secret を付けてください。`);
+    if (ent) {
+      if (config.gate?.entropy_secret !== false) {
+        secret = true;
+        notes.push(`高エントロピー文字列 (${ent}) を検出したため安全側に secret 化しました（公開したい場合は config.gate.entropy_secret=false）。`);
+      } else {
+        notes.push(`高エントロピー文字列 (${ent}) を検出。機密なら --secret を付けてください。`);
+      }
+    }
   }
   return { secret, notes };
 }
@@ -686,7 +699,12 @@ async function cmdReindex(args) {
       console.log('埋め込みは無効です（API キー未設定）。FTS5 のみで動作します。');
       return 0;
     }
-    const pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
+    let pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
+    // 多層防御: secret=0 で残った機密/高エントロピーは外部 embeddings に送らない
+    const gate = compileGate(config);
+    const skipped = pending.filter((p) => gate.match(p.text) || detectHighEntropy(p.text));
+    pending = pending.filter((p) => !gate.match(p.text) && !detectHighEntropy(p.text));
+    if (skipped.length) console.error(`⚠ ${skipped.length} 件を機密の疑いで埋め込みから除外しました`);
     if (!pending.length) {
       console.log(`埋め込み済み: ${store.embeddingCount()} 件、新規なし`);
       return 0;

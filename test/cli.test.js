@@ -55,6 +55,34 @@ test('CLI: 機密パターンの観測は secret として保存される', () =
   }
 });
 
+test('CLI: ゲートが hf_ トークンを自動 secret 化する（手動フラグ不要・漏洩バグ回帰）', () => {
+  const home = freshHome();
+  try {
+    run(home, ['init']);
+    const r = run(home, ['obs', 'add', 'token は hf_SHOULDNOTLEAK1234567890ABCD']);
+    assert.match(r.stdout, /secret/); // 明示フラグ無しで自動 secret
+    // 既定 list / search に出ない
+    assert.match(run(home, ['obs', 'list']).stdout, /secret 1 件を非表示/);
+    assert.ok(!run(home, ['obs', 'search', 'hf_SHOULDNOTLEAK']).stdout.includes('hf_SHOULDNOTLEAK'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('CLI: 未知形式の高エントロピートークンを fail-closed で secret 化', () => {
+  const home = freshHome();
+  try {
+    run(home, ['init']);
+    const r = run(home, ['obs', 'add', '内部トークンは xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0 だ']);
+    assert.match(r.stdout, /secret/);
+    // 普通の観測は誤検知しない
+    const ok = run(home, ['obs', 'add', 'これは普通の日本語の観測テキストです']);
+    assert.ok(!/secret/.test(ok.stdout));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('CLI: 不正な --source は拒否（C-1 防御）', () => {
   const home = freshHome();
   try {

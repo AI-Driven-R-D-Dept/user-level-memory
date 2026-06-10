@@ -8,7 +8,7 @@
 //  - source=auto・低信頼ラベル・meta に出自/モデル/抽出元を記録
 //  - 重複排除、1セッション上限、dry-run / 無効化対応
 import { readFileSync } from 'node:fs';
-import { compileGate } from './gate.js';
+import { compileGate, detectHighEntropy } from './gate.js';
 import { hypothesisHash } from './ids.js';
 import { buildPrompt, extractJsonArray, resolveProvider, callProvider } from './miner.js';
 
@@ -64,6 +64,7 @@ export function validateAutoObs(raw, gate, max) {
     const text = String(item.text ?? '').trim();
     if (!text || text.length < 8) continue;
     if (gate.match(text)) continue; // 抽出結果の機密は破棄
+    if (detectHighEntropy(text)) continue; // 高エントロピー（未知形式トークンの兆候）の自動観測は破棄
     const tags = (Array.isArray(item.tags) ? item.tags : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 5);
     out.push({ text, tags });
   }

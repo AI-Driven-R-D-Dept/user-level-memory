@@ -187,12 +187,33 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
 5. **fresh-context subagent レビュー**: 設計・コード（正確性/セキュリティ）・UX/ドキュメントを
    それぞれ独立コンテキストの subagent が批判的にレビュー → 指摘を修正。
 
+## 9.5. 想起（recall）— 字句 + 意味のハイブリッド
+
+SessionStart の recency 詰め込みだけでは「古いが関連する記憶」を取りこぼす。想起品質を上げるため2層を持つ。
+
+- **字句層（FTS5 trigram / BM25）**: `node:sqlite` の FTS5。日本語クエリはトライグラム分解して OR 検索。
+  `vocab_size` のような特異トークンに強い。`obs_fts` 仮想テーブル + トリガで観測に同期。
+- **意味層（埋め込み・任意）**: OpenAI 互換 embeddings を `obs_vec` に貯め、クエリベクトルと cosine。
+  「スタイルが反映されない ⇄ クラスが効かない」のような**字面ゼロ一致の同義語**を拾う。キーが無ければ自動で無効化し字句層のみで動く（依存ゼロを崩さない）。
+- **融合（RRF）**: 両層のランクを Reciprocal Rank Fusion で統合し、どちらの取りこぼしも補完する。
+- **動的注入**: `UserPromptSubmit` hook で「いま聞かれたこと」に関連する観測だけを注入（`ulm recall --hook`）。
+  SessionStart の無条件注入とは別経路で、source=auto（未レビュー）は SessionStart に出さず recall（関連時のみ）に委ねる。
+
+評価: `test/eval/recall-eval-large.js`（2000件ノイズ・4カテゴリ）で recency 0% / FTS 73% / hybrid 97%、同義語 20%→87% を実測。回帰テストで固定。
+
+## 9.6. 自動キャプチャ — 記録を「お願い」でなく「仕組み」に
+
+`Stop` hook で、その回の作業 transcript から再利用可能な観測を LLM で抽出し `source=auto` で記録する。
+機密ゲートを2段（LLM 入力行の除去 + 抽出結果の破棄）かけ、dedup・1セッション上限・dry-run・無効化を備える。
+抽出物は未レビュー扱いで、無条件注入はせず recall の関連時のみ。人間は redact/promote で取捨。
+LLM が無い環境では静かに no-op（degrade gracefully）。
+
 ## 10. 非スコープ（MVP では作らない）
 
-- 埋め込み/ベクトル検索（まずは tags + project + FTS的 LIKE 検索で十分）
 - 自動統合・自動要約・セマンティック減衰（「重い自動整理」はしない設計）
 - チーム同期・リモートストレージ（ローカル第一。export を git 管理すれば足りる）
 - bd 本体との双方向連携（meta に bd issue id を書ける、までに留める）
+- ローカル完結の埋め込み（量子化モデル同梱）。現状は外部 embeddings API が任意で要る（無くても字句層で動く）。
 
 ## 11. 技術選定
 
