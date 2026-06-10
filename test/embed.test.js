@@ -9,6 +9,16 @@ test('embed: Float32 ⇄ Buffer ラウンドトリップ', () => {
   for (let i = 0; i < v.length; i++) assert.ok(Math.abs(back[i] - v[i]) < 1e-6);
 });
 
+test('embed: 非4整列バッファでも例外なく復元（SQLite BLOB のアラインメント耐性）', () => {
+  const v = [0.1, -0.5, 1.0, 0.333, -0.999];
+  const src = vecToBuf(v);
+  const padded = Buffer.alloc(src.length + 1);
+  src.copy(padded, 1);
+  const misaligned = padded.subarray(1); // byteOffset=1（4 の倍数でない）
+  const back = bufToVec(misaligned);
+  for (let i = 0; i < v.length; i++) assert.ok(Math.abs(back[i] - v[i]) < 1e-6);
+});
+
 test('embed: cosine の基本性質', () => {
   assert.ok(Math.abs(cosine([1, 0], [1, 0]) - 1) < 1e-9);
   assert.ok(Math.abs(cosine([1, 0], [0, 1])) < 1e-9);

@@ -30,8 +30,17 @@ export function embedAvailable(config) {
 export function vecToBuf(arr) {
   return Buffer.from(Float32Array.from(arr).buffer);
 }
+/**
+ * Buffer/Uint8Array → 独立した Float32Array。
+ * SQLite が返す BLOB は byteOffset が 4 整列とは限らず、またプールされた ArrayBuffer の
+ * ビューになりうる。常にアライン済みのコピーを作り、例外と参照共有の両方を防ぐ。
+ */
 export function bufToVec(buf) {
-  return new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+  const n = Math.floor(buf.byteLength / 4);
+  const out = new Float32Array(n);
+  const view = new DataView(buf.buffer, buf.byteOffset, n * 4);
+  for (let i = 0; i < n; i++) out[i] = view.getFloat32(i * 4, true); // little-endian で復元
+  return out;
 }
 
 export function cosine(a, b) {

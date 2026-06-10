@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { newId, hypothesisHash } from './ids.js';
 import { nowIso, parseJsonSafe } from './util.js';
 import { dbPath } from './config.js';
+import { bufToVec } from './embed.js';
 
 const SCHEMA_VERSION = 4;
 
@@ -365,8 +366,7 @@ export class Store {
       .prepare(`SELECT o.*, v.vec AS _vec FROM obs_vec v JOIN observations o ON ${cond.join(' AND ')}`)
       .all(...params);
     const scored = rows.map((r) => {
-      const buf = r._vec;
-      const vec = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+      const vec = bufToVec(r._vec); // アライン安全な復元（DataView コピー）
       const { _vec, ...rest } = r;
       return { ...rowToObs(rest), sim: cosine(queryVec, vec) };
     });
