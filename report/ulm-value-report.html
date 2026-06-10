@@ -120,9 +120,22 @@
   <h3>3行まとめ</h3>
   <ol>
     <li><b>価値は数値で出た</b>。同一モデル・隔離環境・盲検2ジャッジの対照 A/B（4タスク×3試行）で、記憶ありの<b>正答率は 17% → 83〜100%</b>、誤誘導は <b>42% → 0〜8%</b>。とりわけモデルが推測できない<b>リポジトリ固有の事実</b>で差が決定的だった。</li>
-    <li><b>設計とセキュリティは2人の評価者とも高評価</b>（機密ゲート・注入無害化・人間ゲートは実走で「主張通り」と確認）。一方で<b>想起が関連度検索でなく recency 詰め込み</b>、<b>記録の習慣化</b>が弱い、という限界も両者一致で指摘。</li>
-    <li>総合評価は <b>codex 62 / subagent 72（100点満点）</b>。「作りの良い MVP。効く人には強く刺さるが、記録が貯まる仕組みを足さないとマジョリティには根付かない」が共通見解。</li>
+    <li><b>想起品質を本質改善した</b>。2人の評価者が一致して突いた弱点「recency 詰め込み・字句一致止まり」を、FTS5(BM25) + 埋め込みの<b>ハイブリッド想起</b>で解消。2000件ノイズの拡張評価で <b>recency 0% → FTS 73% → hybrid 97%</b>、同義語は <b>20% → 87%</b>（Recall@5）。</li>
+    <li>評価は反復レビューで <b>62/72 → 89〜91/100</b> まで上昇。FTS/埋め込み/評価ハーネス/自動キャプチャ、そして指摘された<b>機密ゲートの漏洩穴2件を実バグとして修正</b>して到達した。</li>
   </ol>
+</div>
+
+<div class="card" style="border-color:#bfdcc4;background:#f3f9f4">
+  <h3 style="margin-top:0;color:var(--good)">追記：90点までの改善（fresh-context 反復レビュー駆動）</h3>
+  <p style="font-size:14.5px">初回 62/72 のレビューが突いた2大弱点（<b>想起品質</b>・<b>記録の習慣化</b>）を、外部 LLM(codex) と独立 subagent に<b>実際に動かして再評価</b>させながら反復改善した。</p>
+  <table style="margin:8px 0">
+    <tr><th>段階</th><th>codex</th><th>subagent</th><th>主な手</th></tr>
+    <tr><td class="k">初回</td><td>62</td><td>72</td><td>MVP（recency 注入・LIKE 検索）</td></tr>
+    <tr><td class="k">FTS+自動キャプチャ</td><td>82</td><td>82</td><td>BM25 想起・UserPromptSubmit・Stop 自動記録・評価ハーネス</td></tr>
+    <tr><td class="k">埋め込みハイブリッド</td><td>90</td><td>89</td><td>意味的想起（FTS+embedding RRF）で同義語 20→87%</td></tr>
+    <tr><td class="k">機密ゲート修正</td><td><b>—</b></td><td><b>91</b></td><td>hf_ 等の漏洩バグ + fail-closed + 読み取り時ゲート</td></tr>
+  </table>
+  <p style="font-size:13.5px;color:var(--muted)">各段階で「実測して再採点」させ、指摘された実バグ（HuggingFace トークンの未検出、read-path の secret=0 漏洩）を都度修正。スコアは主張でなく、評価者が手を動かした実測値。</p>
 </div>
 
 <nav class="card">
@@ -309,6 +322,23 @@
   </div>
 </div>
 <div class="callout">これが ulm の<b>クリーンな勝ち筋</b>。「latent_dim は <i>codec 側</i> と突き合わせる」「v2 VoiceDesign は <code>use_caption_condition</code> で speaker が消える」はモデルの事前知識に<b>無い</b>リポ固有の事実。記憶なしは一般論や別手段へ流れ、記憶ありは config レベルの正解を即答する。</div>
+</section>
+
+<section id="recall">
+<h2><span class="num">05.5</span>想起品質の進化 — recency → FTS → ハイブリッド</h2>
+<p>初回レビューの最大弱点は「SessionStart が<b>関連度でなく recency（最近順）で詰め込む</b>」「検索が <code>LIKE</code> 部分一致のみ」だった。ここを2層で作り直した：<b>FTS5(BM25, 字句)</b> と <b>埋め込み(cosine, 意味)</b> を Reciprocal Rank Fusion で融合し、依存ゼロを保つため<b>埋め込みは任意</b>（API キーが無ければ FTS のみに自動 degrade）。</p>
+<p>有利設計を避けるため、評価コーパスを現実寄りにした：<b>2000件のノイズ観測を「新しい」</b>＝recency が上位を独占、<b>関連する15観測を「古い」</b>＝recency では埋もれる罠。クエリは4カテゴリ（完全一致 / 言い換え / 同義語 / タイプミス）×15。</p>
+<table>
+  <tr><th>クエリの種類</th><th>recency</th><th>FTSのみ</th><th>ハイブリッド</th></tr>
+  <tr><td class="k">完全一致（exact）</td><td><span class="bad-mark">0%</span></td><td>100%</td><td class="">100%</td></tr>
+  <tr><td class="k">言い換え（paraphrase）</td><td><span class="bad-mark">0%</span></td><td>73%</td><td><span class="good-mark">100%</span></td></tr>
+  <tr><td class="k">同義語・字面ゼロ一致（synonym）</td><td><span class="bad-mark">0%</span></td><td><span class="bad-mark">20%</span></td><td><span class="good-mark">87%</span></td></tr>
+  <tr><td class="k">タイプミス（typo）</td><td><span class="bad-mark">0%</span></td><td>100%</td><td>100%</td></tr>
+  <tr><td class="k"><b>全体 Recall@5</b></td><td><b>0%</b></td><td><b>73%</b></td><td><b>97%</b></td></tr>
+  <tr><td class="k"><b>全体 MRR</b></td><td>0.000</td><td>0.725</td><td><b>0.931</b></td></tr>
+</table>
+<div class="callout"><b>各層が異なる弱点を埋める。</b> recency は現実的ノイズ下で<b>完全に無力（0%）</b>。FTS(字句)は完全一致/タイプミスに強いが<b>同義語で頭打ち（20%）</b>。埋め込み(意味)がその同義語を <b>20%→87%</b> に引き上げる。「スタイルが反映されない ⇄ tailwind のクラスが効かない」「DBコネクションが足りない ⇄ 接続プールが枯渇」のような<b>字面ゼロ一致</b>を、実際に拾えることを実機(`claude` ヘッドレス)でも確認した。</div>
+<p class="src">再現: <code>node test/eval/recall-eval-large.js 5 2000</code>（要 OPENAI_API_KEY）。回帰テスト <code>test/recall_quality.test.js</code> / <code>recall_large.test.js</code> が FTS≫recency と同義語の天井を固定。secret 観測は全リトリーバで top-5 に漏れない（0件）。</p>
 </section>
 
 <section id="metrics">

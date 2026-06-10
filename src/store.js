@@ -337,6 +337,15 @@ export class Store {
     return this.db.prepare('SELECT COUNT(*) AS n FROM obs_vec').get().n;
   }
 
+  /** secret=0・非 redacted の全観測（id, text）。reindex の機密スキャン（修復）用。 */
+  allNonSecretObs({ limit = 100000 } = {}) {
+    return this.db.prepare('SELECT id, text FROM observations WHERE secret = 0 AND redacted = 0 LIMIT ?').all(limit);
+  }
+
+  deleteEmbedding(obsId) {
+    return this.db.prepare('DELETE FROM obs_vec WHERE obs_id = ?').run(obsId).changes;
+  }
+
   /** 全ベクトルを読み、cosine 上位を返す。フィルタは observations と JOIN して適用。 */
   vectorSearch(queryVec, { project, global: globalOnly, tags, includeSecret = false, includeArchived = false, scopes = null, limit = 20, cosine } = {}) {
     const cond = ['o.redacted = 0', 'v.obs_id = o.id'];

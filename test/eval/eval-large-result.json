@@ -1,7 +1,7 @@
 {
   "K": 5,
-  "noise": 500,
-  "embedded": 515,
+  "noise": 2000,
+  "embedded": 2015,
   "cats": [
     "exact",
     "paraphrase",

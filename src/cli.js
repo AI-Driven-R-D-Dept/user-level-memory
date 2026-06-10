@@ -699,13 +699,19 @@ async function cmdReindex(args) {
       console.log('埋め込みは無効です（API キー未設定）。FTS5 のみで動作します。');
       return 0;
     }
-    let pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
-    // 多層防御: secret=0 で残った機密/高エントロピーは外部 embeddings に送らず、secret=1 に昇格して修復する
+    // 修復スキャン: secret=0 の「全」観測を機械チェックし、機密疑いを secret=1 へ昇格。
+    // 既に埋め込み済みの行も対象にし、昇格したらそのベクトルを削除する（codex 指摘の漏れを塞ぐ）。
     const gate = compileGate(config);
-    const skipped = pending.filter((p) => gate.match(p.text) || detectHighEntropy(p.text));
-    for (const p of skipped) store.setObservationFlags(p.id, { secret: true }); // legacy/import の取りこぼしを修復
-    pending = pending.filter((p) => !gate.match(p.text) && !detectHighEntropy(p.text));
-    if (skipped.length) console.error(`⚠ ${skipped.length} 件を機密の疑いで secret 化し、埋め込みから除外しました`);
+    let repaired = 0;
+    for (const o of store.allNonSecretObs()) {
+      if (gate.match(o.text) || detectHighEntropy(o.text)) {
+        store.setObservationFlags(o.id, { secret: true });
+        store.deleteEmbedding(o.id);
+        repaired++;
+      }
+    }
+    if (repaired) console.error(`⚠ ${repaired} 件を機密の疑いで secret 化し、埋め込みから除外/削除しました`);
+    const pending = store.observationsNeedingEmbedding({ limit: values.limit ? Number(values.limit) : 1000 });
     if (!pending.length) {
       console.log(`埋め込み済み: ${store.embeddingCount()} 件、新規なし`);
       return 0;
