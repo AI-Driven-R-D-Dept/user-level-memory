@@ -136,7 +136,7 @@
     <tr><td class="k">機密ゲート修正</td><td>92 / 91</td><td>hf_ 漏洩・read-path 漏洩を修正</td></tr>
     <tr><td class="k" style="color:var(--bad)">敵対監査（Fable）</td><td style="color:var(--bad)"><b>70-75 判定</b></td><td><b>評価バイアス露見・5実バグ(PoC)発見</b></td></tr>
     <tr><td class="k">最終是正</td><td>—</td><td>5バグ修正・正直な4-way評価・誇大表現を是正</td></tr>
-    <tr><td class="k">外部評価で再構築</td><td>vector 95-100%</td><td>作者非依存の実OSS評価。等重みRRFの劣化を発見→修正。スケール最適化</td></tr>
+    <tr><td class="k">外部評価で再構築</td><td>vector Success@10 98% / Recall@10 87%</td><td>作者非依存の実OSS評価。等重みRRFの劣化を発見→修正。スケール最適化</td></tr>
     <tr><td class="k" style="color:var(--good)">クロスベンダ＋棄権で仕上げ</td><td style="color:var(--good)"><b>91 / 真に90超 Yes</b></td><td><b>生成・採点を両端別ベンダ化し循環を否定。偽注入を棄権機構で0に。独立検証が「真に90を超えた」と判定</b></td></tr>
   </table>
   <p style="font-size:13.5px;color:var(--muted)">「90」は一度実測で出たが、それは<b>評価者に都合のよい土俵での値</b>だった。敵対監査がそれを暴き（数値の捏造はなく、設計バイアス）、実バグも見つけた。最終版は<b>その指摘を全部呑んで正直に引き戻した</b>もの。これ自体が「fresh-context で徹底的に見る」ことの実演になっている。</p>
@@ -337,25 +337,25 @@
   <li><b>コーパス</b>：実OSS（ripgrep / fd / bat / uv / ruff / tokio 等）の生ドキュメントを取得し、179段落を観測化（作者は1文字も書かない・出典URL付き）。</li>
   <li><b>クエリ</b>：別LLM(openai)が各観測から「それを必要とする開発者の<b>症状ベースの質問</b>」を44件生成。<b>原文の語彙を使わない</b>よう制約（字句一致で当たるのを防ぐ）。</li>
   <li><b>正解(qrels)</b>：第3のLLMが、各クエリ×プール候補（4経路の上位を集約）を関連度0/1/2で採点。TRECスタイル。作者は採点に介在しない。</li>
-  <li><b>指標</b>：Recall@10 / nDCG@10 / MRR、クエリbootstrapで95%信頼区間。本番コードをそのまま通す。</li>
+  <li><b>指標</b>：<b>Success@10</b>（top-10 に関連が1件でも出れば成功＝メモリ注入の運用指標）と<b>古典的 Recall@10</b>（取得関連数÷全関連数）を併記、nDCG@10 / MRR も。クエリbootstrapで95%信頼区間。本番コードをそのまま通す。</li>
 </ul>
 <table>
-  <tr><th>route</th><th>Recall@10 [95%CI]</th><th>nDCG@10</th><th>MRR</th></tr>
-  <tr><td class="k">recency</td><td><span class="bad-mark">16%</span> [7-27]</td><td>5%</td><td>8%</td></tr>
-  <tr><td class="k">FTS のみ（キー無しの実力）</td><td>32% [18-43]</td><td>14%</td><td>24%</td></tr>
-  <tr><td class="k">vector（意味）</td><td><span class="good-mark">95%</span> [89-100]</td><td>66%</td><td>83%</td></tr>
-  <tr><td class="k">hybrid（最終）</td><td><span class="good-mark">95%</span> [89-100]</td><td>66%</td><td>82%</td></tr>
+  <tr><th>route</th><th>Success@10 [95%CI]</th><th>Recall@10 [95%CI]</th><th>nDCG@10</th><th>MRR</th></tr>
+  <tr><td class="k">recency</td><td><span class="bad-mark">9%</span> [2-18]</td><td><span class="bad-mark">7%</span> [1-14]</td><td>5%</td><td>7%</td></tr>
+  <tr><td class="k">FTS のみ（キー無しの実力）</td><td>32% [18-43]</td><td>17% [10-25]</td><td>15%</td><td>24%</td></tr>
+  <tr><td class="k">vector（意味）</td><td><span class="good-mark">98%</span> [93-100]</td><td><span class="good-mark">87%</span> [80-93]</td><td>66%</td><td>83%</td></tr>
+  <tr><td class="k">hybrid（最終）</td><td><span class="good-mark">95%</span> [89-100]</td><td><span class="good-mark">86%</span> [78-92]</td><td>65%</td><td>82%</td></tr>
 </table>
-<div class="callout"><b>これが最も信頼できる数字。</b> 作者非依存のテストで、意味的想起(vector)は <b>Recall@10 95% / MRR 83%</b>。症状ベース（語彙が違う）クエリゆえ FTS は 32% に留まり、<b>意味検索が無いと拾えない</b>ことが独立に裏づけられた。recency は 16%（古い記憶を拾えない構造的限界）。</div>
-<div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector と同等(95/66/83)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
+<div class="callout"><b>これが最も信頼できる数字。</b> 作者非依存のテストで、意味的想起(vector)は <b>Success@10 98% / 古典的 Recall@10 87% / MRR 83%</b>。Success と Recall を分けて出すのは、当初 Success@K を「Recall@10」と誤ラベルし約11ポイント過大に見せていた指摘（context-fresh 検証）を受けての是正。症状ベース（語彙が違う）クエリゆえ FTS は Success@10 32% に留まり、<b>意味検索が無いと拾えない</b>ことが独立に裏づけられた。recency は Success@10 9%（古い記憶を拾えない構造的限界）。</div>
+<div class="callout"><b>この外部評価が実欠陥を1つ暴いた（→修正済み）：</b> 当初の<b>等重み RRF は hybrid を vector 未満</b>に劣化させていた（nDCG 60 &lt; 66）。弱い FTS が強い vector の順位を引き下げていた。融合を<b>「vector 順位を保持し FTS 固有ヒットだけ末尾救済」</b>に変更し、hybrid は vector とほぼ同等(Success 95 / Recall 86 / nDCG 65 / MRR 82)＋タイポ等の救済を両立。<b>「徹底的に見る」評価が設計を直した実例</b>。</div>
 <div class="callout"><b>循環バイアスを「クエリ生成」「採点」の両方で潰した：</b> 当初はクエリ生成も採点も OpenAI で「自分の土俵」疑いが残った。そこで<b>生成器と採点器をそれぞれ別ベンダ(Claude/Fable)に差し替えた全組み合わせ</b>で測り直した：</p>
 <table>
-  <tr><th>クエリ生成 × qrels採点</th><th>vector Recall@10</th><th>MRR</th></tr>
-  <tr><td class="k">OpenAI × OpenAI（初版）</td><td>95%</td><td>83%</td></tr>
+  <tr><th>クエリ生成 × qrels採点</th><th>vector Success@10</th><th>MRR</th></tr>
+  <tr><td class="k">OpenAI × OpenAI（初版）</td><td>98%</td><td>83%</td></tr>
   <tr><td class="k">OpenAI × <b>Claude</b>（採点を別ベンダ）</td><td><b>100%</b></td><td>70%</td></tr>
   <tr><td class="k"><b>Claude</b> × OpenAI（生成を別ベンダ）</td><td><b>100%</b></td><td>88%</td></tr>
 </table>
-<div class="callout"><b>どの組み合わせでも意味検索が圧勝（Recall@10 95-100%）。</b> 「OpenAI が OpenAI 埋め込みに有利」という循環は、生成・採点の両端を別ベンダ化しても結論が変わらないことで否定された。FTS は Claude 生成クエリ（語彙をさらに回避）では 16% まで落ち、<b>意味検索なしでは拾えない</b>ことがいっそう明確に。</div>
+<div class="callout"><b>どの組み合わせでも意味検索が圧勝（Success@10 98-100%／古典的 Recall@10 は既定構成で 87%）。</b> 上表は Success@10（top-10 に関連が1件でも出れば成功）。「OpenAI が OpenAI 埋め込みに有利」という循環は、生成・採点の両端を別ベンダ化しても結論が変わらないことで否定された。FTS は Claude 生成クエリ（語彙をさらに回避）では Success@10 16% まで落ち、<b>意味検索なしでは拾えない</b>ことがいっそう明確に。</div>
 <div class="callout limit"><b>正直なトレードオフ開示：</b> 本番の recall は無関係プロンプトへのノイズ注入を防ぐため<b>棄権機構</b>（最良 cosine が 0.3 未満なら何も注入しない）を持つ。これにより無関係クエリ（天気/猫等）への偽注入は <b>0 件</b>だが、その代償として<b>ごく弱い一致（cos≈0.28-0.30）の関連記憶を保守的に見送る</b>ことがある（Claude生成クエリで hybrid は 98%、vector 100% の差はこの1件）。精度（誤注入ゼロ）を recall より優先した設計判断。</p>
 <p class="src">再現: <code>test/eval/external/</code>。`ULM_QRELS` / `QUERIES_FILE` で採点者・生成器を切替検証可。各 build はコーパスを都度埋め込むため、上表は実行時点の値（決定的なクエリ・コーパス上）。</p>
 </section>

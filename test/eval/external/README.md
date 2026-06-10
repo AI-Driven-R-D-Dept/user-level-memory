@@ -17,13 +17,15 @@ node chunk.js && node gen-queries.js 44 && node build-qrels.js && node run-exter
 ## 循環バイアスの排除（クロスベンダ検証）
 クエリ生成・qrels採点が同じ LLM ファミリだと共バイアスの疑いが残るため、両端を別ベンダに差し替えて測った：
 
-| クエリ生成 × qrels採点 | vector Recall@10 | MRR |
+下表の Recall は **Success@10**（top-10 に関連が1件でも出れば成功）。古典的 Recall@10（取得関連数/全関連数）は既定構成で vector 87% / hybrid 86%（`run-external-eval.js` が両方を出力する）。
+
+| クエリ生成 × qrels採点 | vector Success@10 | MRR |
 |---|---|---|
-| OpenAI × OpenAI（既定） | 95-98% | 83% |
+| OpenAI × OpenAI（既定） | 98% | 83% |
 | OpenAI × Claude(subagent) | 100% | 70% |
 | Claude(subagent) × OpenAI | 100% | 88% |
 
-どの組み合わせでも意味検索が圧勝。FTS は症状ベースクエリ（語彙回避）で16-32%に留まる。
+どの組み合わせでも意味検索が圧勝。FTS は症状ベースクエリ（語彙回避）で Success@10 16-32%に留まる。
 
 - 別採点で評価: `ULM_QRELS=qrels-claude.json node run-external-eval.js 10`
 - 別生成で評価: `QUERIES_FILE=queries-claude.jsonl node build-qrels.js && QUERIES_FILE=queries-claude.jsonl node run-external-eval.js 10`

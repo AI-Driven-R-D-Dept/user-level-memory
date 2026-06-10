@@ -123,7 +123,9 @@ export function detectHighEntropy(text) {
 
 const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g; // \r(\x0d) も含む。\t は残し後段で空白化
-const ROLE_WORDS = /(?:^|[\s>\]])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
+// 前置は「英数字以外」（語境界）の否定後読み。これで `。SYSTEM:` / `．USER:` など
+// 記号直後の役割マーカーも捕捉しつつ、`ABUSER:` のような語中一致は除外する。
+const ROLE_WORDS = /(?<![A-Za-z0-9])(?:SYSTEM|ASSISTANT|USER|HUMAN|DEVELOPER|ROLE|TOOL)\s*[:：]/gi;
 
 /**
  * 注入・生成用の無害化。

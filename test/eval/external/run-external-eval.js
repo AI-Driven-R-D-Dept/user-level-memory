@@ -29,15 +29,17 @@ function metricsFor(rankedIds, rel, k) {
   const nRel = relIds.length;
   if (!nRel) return null; // relevant が無いクエリは評価対象外
   const hitCount = top.filter((id) => rel[id] >= 1).length;
-  const recall = hitCount / Math.min(nRel, k) ? top.some((id) => rel[id] >= 1) ? 1 : 0 : 0; // Recall@K(>=1件ヒット)
-  const recallBin = top.some((id) => rel[id] >= 1) ? 1 : 0;
+  // success@K: top-K に関連が1件でもあれば1（メモリ注入で「役立つ記憶が1件出れば成功」の運用指標）
+  const success = top.some((id) => rel[id] >= 1) ? 1 : 0;
+  // 真の recall@K: 取得した関連数 / 全関連数（古典的定義）
+  const recall = hitCount / nRel;
   const precision = hitCount / k;
   let rr = 0;
   for (let i = 0; i < rankedIds.length; i++) if (rel[rankedIds[i]] >= 1) { rr = 1 / (i + 1); break; }
   const gains = top.map((id) => rel[id] || 0);
   const ideal = Object.values(rel).sort((a, b) => b - a).slice(0, k);
   const ndcg = dcg(ideal) ? dcg(gains) / dcg(ideal) : 0;
-  return { recall: recallBin, precision, rr, ndcg };
+  return { success, recall, precision, rr, ndcg };
 }
 
 function recencyIds(store, limit) {
@@ -64,7 +66,7 @@ async function main() {
   if (!existsSync(join(EVAL_HOME, 'memory.db'))) { console.error('先に build-qrels.js を実行（.evalhome が必要）'); process.exit(1); }
   const store = openStore(EVAL_HOME);
   const routes = ['recency', 'fts', 'vector', 'hybrid'];
-  const per = Object.fromEntries(routes.map((r) => [r, { recall: [], precision: [], rr: [], ndcg: [] }]));
+  const per = Object.fromEntries(routes.map((r) => [r, { success: [], recall: [], precision: [], rr: [], ndcg: [] }]));
   let evaluated = 0;
   const hasEmbed = embedAvailable(config) && store.embeddingCount() > 0;
   for (const { qid, query } of queries) {
@@ -84,13 +86,14 @@ async function main() {
     }
     for (const r of routes) {
       const m = metricsFor(got[r], rel, K);
-      if (m) for (const key of ['recall', 'precision', 'rr', 'ndcg']) per[r][key].push(m[key]);
+      if (m) for (const key of ['success', 'recall', 'precision', 'rr', 'ndcg']) per[r][key].push(m[key]);
     }
   }
   store.close();
   const summary = { K, evaluated, embed: hasEmbed, routes: {} };
   for (const r of routes) {
     summary.routes[r] = {
+      success_at_k: bootstrapCI(per[r].success),
       recall_at_k: bootstrapCI(per[r].recall),
       precision_at_k: bootstrapCI(per[r].precision),
       mrr: bootstrapCI(per[r].rr),
@@ -100,10 +103,11 @@ async function main() {
   writeFileSync(join(DIR, 'eval-external-result.json'), JSON.stringify(summary, null, 2));
   const f = (c) => `${(c.mean * 100).toFixed(0)}% [${(c.lo * 100).toFixed(0)}-${(c.hi * 100).toFixed(0)}]`;
   console.log(`外部評価: K=${K} 評価クエリ=${evaluated} 埋め込み=${hasEmbed}\n`);
-  console.log('route     Recall@K           nDCG@K             MRR');
+  // Success@K = top-K に関連が1件でも出れば成功（運用指標）。Recall@K = 古典的定義（取得関連数/全関連数）。
+  console.log('route     Success@K          Recall@K           nDCG@K             MRR');
   for (const r of routes) {
     const s = summary.routes[r];
-    console.log(`${r.padEnd(8)}  ${f(s.recall_at_k).padEnd(18)} ${f(s.ndcg_at_k).padEnd(18)} ${f(s.mrr)}`);
+    console.log(`${r.padEnd(8)}  ${f(s.success_at_k).padEnd(18)} ${f(s.recall_at_k).padEnd(18)} ${f(s.ndcg_at_k).padEnd(18)} ${f(s.mrr)}`);
   }
 }
 main();
