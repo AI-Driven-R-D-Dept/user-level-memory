@@ -218,13 +218,18 @@ export function sanitizeForContext(text) {
     .replace(CONTROL, ' ')
     .replace(ANGLE_OPEN, '<')
     .replace(ANGLE_CLOSE, '>')
-    .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化（線形。残りの空白は末尾の \s{2,} で畳む）
+    .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化
+    // 空白畳みを tag/role 中和の「前」に行う。これをしないと `<`〜`/word>` の間に
+    // TAG_LIKE の上限(\s{0,40})を超える空白(41字以上)を詰めて TAG_LIKE を外し、後段の
+    // 畳みで `< /user-memory>`（実 `>` 保持）が復元される fence 脱出が成立した（HIGH-1）。
+    // 先に全空白ランを1つに畳めば、tag/role の有界量化子が常に届く。
+    .replace(/\s{2,}/g, ' ')
     .replace(TAG_LIKE, '[tag]')
     .replace(/<\s{0,8}\/\s{0,8}[A-Za-z][\w-]{0,64}>?/g, '[tag]') // 閉じ `>` 欠落の `</word` も中和
     .replace(BRACKET_ROLE, '[ロール]')
     .replace(ROLE_WORDS, ' ロール: ')
     .replace(/`{2,}/g, "'")
     .replace(/(?:^|\s)[-=]{3,}(?=\s|$)/g, ' — ')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\s{2,}/g, ' ') // 置換で生じた連続空白の最終整形
     .trim();
 }
