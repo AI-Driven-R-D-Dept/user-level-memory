@@ -191,9 +191,12 @@ const MAX_SANITIZE = 64 * 1024; // 注入表示用の入力上限（DoS backstop
  * 防御の要は「データfence(<user-memory>)の境界を閉じさせないこと」。境界さえ守れれば、
  * 内部に役割マーカーや同形異字が残ってもモデルには fence 内のデータとして提示される。
  * - NFKC 正規化（全角 SYSTEM：→ SYSTEM: 等の同形を畳む）
+ * - NFD 分解＋結合ダイアクリティカル除去（合成済みアクセント ŚYSTEM→SYSTEM の偽装対策。
+ *   除去対象は Latin 用結合域 U+0300-036F のみで、日本語の濁点(U+3099)等は触らない）
  * - cross-script 同形異字(キリル/ギリシャ)を Latin に畳む（NFKC では畳まれない偽装対策）
  * - ゼロ幅/制御文字(\r 含む)の除去（不可視命令・端末操作対策）
  * - 角括弧変種(〈〉⟨⟩)を ASCII 化し、タグ様の山括弧 `</word>` を [tag] 化（fence 境界の閉じを封じる）
+ *   閉じ `>` を欠いた `</word` も中和（寛容な LLM の fence 誤読を防ぐ）
  * - 1行化してから役割マーカー（行頭/語境界・角括弧形）を中和（mid-line も捕捉）
  * - コードフェンス/水平線の中和
  */
@@ -203,7 +206,9 @@ export function sanitizeForContext(text) {
   // 二重防御）。元データは DB に保持され、ここで切るのは context へ出す見え方だけ。
   if (s.length > MAX_SANITIZE) s = s.slice(0, MAX_SANITIZE);
   try {
-    s = s.normalize('NFKC');
+    // NFKC で全角等を畳み、NFD 分解→Latin 結合域除去で合成済みアクセントを ASCII 字母に畳む。
+    // \u6700\u5f8c\u306b NFC \u3067\u518d\u5408\u6210\uff08\u65e5\u672c\u8a9e\u306e\u6fc1\u70b9/\u534a\u6fc1\u70b9\u306a\u3069 Latin \u57df\u5916\u306e\u7d50\u5408\u6587\u5b57\u3092\u5143\u306e\u5408\u6210\u5f62\u306b\u623b\u3059\uff09\u3002
+    s = s.normalize('NFKC').normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC');
   } catch {
     // 不正なコードポイントは握りつぶす
   }
@@ -215,6 +220,7 @@ export function sanitizeForContext(text) {
     .replace(ANGLE_CLOSE, '>')
     .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化（線形。残りの空白は末尾の \s{2,} で畳む）
     .replace(TAG_LIKE, '[tag]')
+    .replace(/<\s{0,8}\/\s{0,8}[A-Za-z][\w-]{0,64}>?/g, '[tag]') // 閉じ `>` 欠落の `</word` も中和
     .replace(BRACKET_ROLE, '[ロール]')
     .replace(ROLE_WORDS, ' ロール: ')
     .replace(/`{2,}/g, "'")

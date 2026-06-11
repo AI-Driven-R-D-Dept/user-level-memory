@@ -612,8 +612,6 @@ export class Store {
     if (!cols) throw new Error(`unknown table: ${table}`);
     // id/source の形式を検証する（取込データが注入チャネルに乗る前段の防御）
     const idRe = { observations: /^obs-[0-9a-z]{4,12}$/, candidates: /^cand-[0-9a-z]{4,12}$/, refs: /^ref-[0-9a-z]{4,12}$/ }[table];
-    const placeholders = cols.map(() => '?').join(', ');
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`);
     let skipped = 0;
     for (const r of rows) {
       if (idRe && !idRe.test(String(r.id ?? ''))) { skipped++; continue; } // 不正 id の行は捨てる
@@ -623,20 +621,25 @@ export class Store {
           r.source = 'import'; // 不正 source は固定値に矯正
         }
       }
-      // 配列/オブジェクト型は JSON 文字列に正規化してからバインドする。
-      // 人手/外部ツールが書く {"tags":[]} 形（JSON値）は SQLite に直接バインドできず、
-      // 以前は bind 例外→無言スキップで行ごと取りこぼしていた（LOW-1 回帰）。
-      const vals = cols.map((c) => {
+      // 「存在するカラムだけ」をバインドする。欠落カラムを一律 null にすると
+      // NOT NULL DEFAULT カラム(pinned/redacted/archived/secret/status)が制約違反になり、
+      // しかも INSERT OR IGNORE は例外を投げず changes:0 で握り潰すため、部分行が完全に
+      // 無言脱落していた（MEDIUM-1）。present のみ INSERT し DEFAULT を効かせる。
+      // 配列/オブジェクト型は JSON 文字列に正規化（{"tags":[]} 形の取りこぼし防止）。
+      const present = cols.filter((c) => r[c] !== undefined);
+      if (!present.length) { skipped++; continue; }
+      const vals = present.map((c) => {
         const v = r[c];
-        if (v === undefined) return null;
         if (v !== null && typeof v === 'object') return JSON.stringify(v);
         return v;
       });
+      const sql = `INSERT INTO ${table} (${present.join(', ')}) VALUES (${present.map(() => '?').join(', ')})`;
       try {
-        if (stmt.run(...vals).changes) inserted++;
-        // changes===0 は INSERT OR IGNORE による重複（正常）。skipped には数えない。
-      } catch {
-        skipped++; // バインド/制約エラーは可視化のため計上（無言脱落の解消）
+        this.db.prepare(sql).run(...vals);
+        inserted++;
+      } catch (err) {
+        if (/UNIQUE/i.test(String(err))) continue; // 既存 ID は正常スキップ（重複・数えない）
+        skipped++; // NOT NULL 等の制約違反は可視化のため計上（無言脱落の解消）
       }
     }
     return { inserted, skipped };

@@ -259,6 +259,25 @@ test('importRows: JSON配列/オブジェクト型のフィールドも取り込
   });
 });
 
+test('importRows: カラム欠落の部分行も DEFAULT で取り込む（MEDIUM-1 回帰: 無言脱落の解消）', () => {
+  withFreshStore((store) => {
+    // pinned/redacted/archived を欠く手書き行。旧実装は明示 null→NOT NULL 違反を
+    // INSERT OR IGNORE が changes:0 で握り潰し、inserted:0/skipped:0 で完全に無言脱落した。
+    const res = store.importRows('observations', [
+      { id: 'obs-part01', ts: '2026-06-11T00:00:00Z', project: 'p', text: 'partial', tags: [], source: 'import' },
+    ]);
+    assert.equal(res.inserted, 1);
+    assert.equal(res.skipped, 0);
+    assert.equal(store.getObservation('obs-part01').text, 'partial');
+    // state も secret 欠落で取り込める
+    assert.equal(store.importRows('states', [{ key: 'pk', scope: 'global', value: 'v', updated_at: '2026-06-11T00:00:00Z' }]).inserted, 1);
+    // 必須カラム(text)を欠く真の破損行は skipped で可視化
+    const broke = store.importRows('observations', [{ id: 'obs-notxt0', ts: '2026-06-11T00:00:00Z', source: 'import' }]);
+    assert.equal(broke.inserted, 0);
+    assert.equal(broke.skipped, 1);
+  });
+});
+
 test('importRows: 長すぎる観測本文はスキップして可視化（MEDIUM-1 回帰）', () => {
   withFreshStore((store) => {
     const res = store.importRows('observations', [
