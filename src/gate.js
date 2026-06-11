@@ -56,20 +56,26 @@ const MAX_TOTAL_SCAN = 1024 * 1024; // 総走査量のバックストップ（1M
 // CPU 増幅（`x\n`×N の大量短行）を総量に算入してバックストップを確実に発火させる。
 const MIN_LINE_COST = 64;
 
-/** リテラルを表すエスケープ（\xHH \uHHHH \u{H} \cX \NNN(8進) \n 等）を実際の1文字へデコード。
- *  これで `\x47` と `G` を同一リテラルとして重なり判定できる（多文字エスケープ貫通対策）。 */
+/** リテラルを表すエスケープ（\xHH \uHHHH \cX \NNN(8進) \n 等）を実際の1文字へデコード。
+ *  これで `\x47` と `G` を同一リテラルとして重なり判定できる（多文字エスケープ貫通対策）。
+ *  compileGate は u フラグなしの new RegExp なので、16進が揃わない \x \u は JS Annex B に従い
+ *  恒等エスケープ（`\u`→'u', `\x`→'x'）になる。NaN を '\x00' と誤デコードして別クラス扱い→
+ *  degree 検出をすり抜ける穴があったため、パース不能時は恒等文字へフォールバックする。 */
 function literalOfEscape(a) {
   const body = a.slice(1); // 先頭の \ を除く
+  const ident = body[0] || ''; // パース不能時の恒等文字（\u→u, \x→x 等）
   try {
-    if (body[0] === 'x') return String.fromCharCode(parseInt(body.slice(1), 16));
-    if (body[0] === 'u') return body[1] === '{' ? String.fromCodePoint(parseInt(body.slice(2, -1), 16)) : String.fromCharCode(parseInt(body.slice(1), 16));
-    if (body[0] === 'c') return String.fromCharCode(body.charCodeAt(1) % 32);
+    if (body[0] === 'x' || body[0] === 'u') {
+      const n = parseInt(body.slice(1), 16);
+      return Number.isNaN(n) ? ident : String.fromCharCode(n);
+    }
+    if (body[0] === 'c' && /[A-Za-z]/.test(body[1] || '')) return String.fromCharCode(body.charCodeAt(1) % 32);
     if (/^[0-7]/.test(body)) return String.fromCharCode(parseInt(body, 8) & 0xff);
   } catch {
-    return body;
+    return ident;
   }
   const map = { n: '\n', t: '\t', r: '\r', f: '\f', v: '\v', 0: '\0' };
-  return map[body] !== undefined ? map[body] : body; // \. \+ \\ 等 → 後ろの文字
+  return map[body] !== undefined ? map[body] : ident; // \. \+ \\ 等 → 後ろの文字
 }
 /** アトムの文字クラスを正規化したタグ（重なり判定用）。`.`=any、ショートハンド=d/D/w/W/s/S、
  *  クラス=cls、リテラル（エスケープはデコード）=l:.. */
@@ -132,7 +138,9 @@ export function isPatternSafe(src) {
   // その集合のどれかと重なれば拒否する。必須(1文字以上消費)アトムは再分配を遮断し集合を区切る。
   // エスケープは多文字形式（\xHH \uHHHH \u{H} \cX \NNN(8進)）を「単一アトム」として切る。
   // `\\.`（1文字）だけだと `\x47{0,N}` を `\x`→`4`→`7{0,N}` に分割し degree を誤判定する貫通があった。
-  const atomRe = /(\\[dDwWsSbB]|\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\u[0-9a-fA-F]{4}|\\c[A-Za-z]|\\[0-7]{1,3}|\\.|\[(?:\\.|[^\]])*\]|\.|[^\\[\]^$])(\{\s*\d+(?:\s*,\s*\d*)?\s*\}|[*+?])?/g;
+  // u フラグなし(compileGate)では \u{H} はコードポイント escape ではない（`\u`+`{H}`）。
+  // よって \u{...} は特別扱いせず、`\u`+4hex か恒等エスケープとして扱う。
+  const atomRe = /(\\[dDwWsSbB]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\c[A-Za-z]|\\[0-7]{1,3}|\\.|\[(?:\\.|[^\]])*\]|\.|[^\\[\]^$])(\{\s*\d+(?:\s*,\s*\d*)?\s*\}|[*+?])?/g;
   const minZero = (q) => q === '?' || q === '*' || /^\{\s*0\s*[,}]/.test(q || ''); // 空マッチしうる量化子
   let active = []; // 直近の必須アトム以降に現れた量化子付きアトムのクラス群
   let m;
