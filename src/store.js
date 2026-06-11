@@ -621,6 +621,11 @@ export class Store {
           r.source = 'import'; // 不正 source は固定値に矯正
         }
       }
+      // 候補の status は既知値のみ許可（不正値は 0 件集計に紛れ込む無言取込を防ぐ）
+      if (table === 'candidates' && r.status !== undefined && !['inbox', 'approved', 'rejected', 'promoted'].includes(r.status)) {
+        skipped++;
+        continue;
+      }
       // 「存在するカラムだけ」をバインドする。欠落カラムを一律 null にすると
       // NOT NULL DEFAULT カラム(pinned/redacted/archived/secret/status)が制約違反になり、
       // しかも INSERT OR IGNORE は例外を投げず changes:0 で握り潰すため、部分行が完全に
@@ -631,8 +636,12 @@ export class Store {
       // （nullable カラムは元々 NULL 既定なので結果は同じ）。LOW-1 回帰。
       const present = cols.filter((c) => r[c] !== undefined && r[c] !== null);
       if (!present.length) { skipped++; continue; }
+      const FLAG_COLS = new Set(['secret', 'pinned', 'redacted', 'archived']);
       const vals = present.map((c) => {
         const v = r[c];
+        // 整数フラグ列は厳格に 0/1 へ正規化（"false"/"x" 等の文字列が TEXT 保存され
+        // secret=0/=1 双方に当たらず統計・クエリから消える無言不可視化を防ぐ。MEDIUM-1）。
+        if (FLAG_COLS.has(c)) return v === 1 || v === true || v === '1' || v === 'true' ? 1 : 0;
         if (typeof v === 'boolean') return v ? 1 : 0; // JSON boolean は SQLite に bind 不可→整数化
         if (v !== null && typeof v === 'object') return JSON.stringify(v);
         return v;

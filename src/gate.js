@@ -56,13 +56,28 @@ const MAX_TOTAL_SCAN = 1024 * 1024; // 総走査量のバックストップ（1M
 // CPU 増幅（`x\n`×N の大量短行）を総量に算入してバックストップを確実に発火させる。
 const MIN_LINE_COST = 64;
 
+/** リテラルを表すエスケープ（\xHH \uHHHH \u{H} \cX \NNN(8進) \n 等）を実際の1文字へデコード。
+ *  これで `\x47` と `G` を同一リテラルとして重なり判定できる（多文字エスケープ貫通対策）。 */
+function literalOfEscape(a) {
+  const body = a.slice(1); // 先頭の \ を除く
+  try {
+    if (body[0] === 'x') return String.fromCharCode(parseInt(body.slice(1), 16));
+    if (body[0] === 'u') return body[1] === '{' ? String.fromCodePoint(parseInt(body.slice(2, -1), 16)) : String.fromCharCode(parseInt(body.slice(1), 16));
+    if (body[0] === 'c') return String.fromCharCode(body.charCodeAt(1) % 32);
+    if (/^[0-7]/.test(body)) return String.fromCharCode(parseInt(body, 8) & 0xff);
+  } catch {
+    return body;
+  }
+  const map = { n: '\n', t: '\t', r: '\r', f: '\f', v: '\v', 0: '\0' };
+  return map[body] !== undefined ? map[body] : body; // \. \+ \\ 等 → 後ろの文字
+}
 /** アトムの文字クラスを正規化したタグ（重なり判定用）。`.`=any、ショートハンド=d/D/w/W/s/S、
- *  クラス=cls、エスケープ/リテラル=e:.. / l:.. */
+ *  クラス=cls、リテラル（エスケープはデコード）=l:.. */
 function atomClass(a) {
   if (a === '.') return 'any';
-  if (/^\\[dDwWsS]$/.test(a)) return a[1].toLowerCase() === a[1] ? a[1] : a[1]; // \d->d \D->D
+  if (/^\\[dDwWsS]$/.test(a)) return a[1]; // \d->d \D->D \w->w ...
   if (a[0] === '[') return 'cls';
-  if (a[0] === '\\') return 'e:' + a;
+  if (a[0] === '\\') return 'l:' + literalOfEscape(a); // 多文字エスケープを実文字へ
   return 'l:' + a;
 }
 /** 隣接した量化子付きアトムのクラスが「重なりうる」か（重なると再分配でバックトラック爆発）。
@@ -105,7 +120,9 @@ export function isPatternSafe(src) {
   // なら、実行時に Ai/Aj が同じ文字を再分配でき O(n²) になる。
   // そこで「直近の必須アトム以降に出た量化子クラスの集合」を持ち、新しい量化子付きアトムが
   // その集合のどれかと重なれば拒否する。必須(1文字以上消費)アトムは再分配を遮断し集合を区切る。
-  const atomRe = /(\\[dDwWsSbBnrtfv0]|\\.|\[(?:\\.|[^\]])*\]|\.|[^\\[\]^$])(\{\s*\d+(?:\s*,\s*\d*)?\s*\}|[*+?])?/g;
+  // エスケープは多文字形式（\xHH \uHHHH \u{H} \cX \NNN(8進)）を「単一アトム」として切る。
+  // `\\.`（1文字）だけだと `\x47{0,N}` を `\x`→`4`→`7{0,N}` に分割し degree を誤判定する貫通があった。
+  const atomRe = /(\\[dDwWsSbB]|\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\u[0-9a-fA-F]{4}|\\c[A-Za-z]|\\[0-7]{1,3}|\\.|\[(?:\\.|[^\]])*\]|\.|[^\\[\]^$])(\{\s*\d+(?:\s*,\s*\d*)?\s*\}|[*+?])?/g;
   const minZero = (q) => q === '?' || q === '*' || /^\{\s*0\s*[,}]/.test(q || ''); // 空マッチしうる量化子
   let active = []; // 直近の必須アトム以降に現れた量化子付きアトムのクラス群
   let m;

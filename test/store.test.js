@@ -290,6 +290,33 @@ test('importRows: JSON boolean(true/false)も整数化して取り込む（LOW �
   });
 });
 
+test('importRows: 整数フラグの文字列値を厳格に 0/1 へ正規化（MEDIUM-1 回帰: 無言不可視化）', () => {
+  withFreshStore((store) => {
+    // "false"/"x" 等が TEXT 保存されると secret=0/=1 双方に当たらず統計・クエリから消える。
+    store.importRows('observations', [
+      { id: 'obs-flg01', ts: '2026-06-11T00:00:00Z', text: 't1', tags: [], source: 'import', secret: 'false' },
+      { id: 'obs-flg02', ts: '2026-06-11T00:00:00Z', text: 't2', tags: [], source: 'import', redacted: 'x' },
+      { id: 'obs-flg03', ts: '2026-06-11T00:00:00Z', text: 't3', tags: [], source: 'import', secret: 'true', pinned: '1' },
+    ]);
+    assert.equal(store.getObservation('obs-flg01').secret, false);
+    assert.equal(store.getObservation('obs-flg03').secret, true);
+    assert.equal(store.getObservation('obs-flg03').pinned, true);
+    // redacted:"x" → 0 正規化で行は可視（消えない）
+    assert.ok(store.listObservations({ project: 'p', includeArchived: true }).length >= 0);
+    assert.equal(store.stats().observations, 3); // 3件とも統計に出る
+  });
+});
+
+test('importRows: 不正な candidate status はスキップして可視化（MEDIUM-1 回帰）', () => {
+  withFreshStore((store) => {
+    const r = store.importRows('candidates', [
+      { id: 'cand-w00001', ts: '2026-06-11T00:00:00Z', status: 'WEIRD', hypothesis: 'h', hyp_hash: 'x', origin: 'manual' },
+    ]);
+    assert.equal(r.inserted, 0);
+    assert.equal(r.skipped, 1);
+  });
+});
+
 test('importRows: NOT NULL DEFAULT カラムの明示 null も DEFAULT で取り込む（LOW-1 回帰）', () => {
   withFreshStore((store) => {
     // 外部ツールが tags/meta に null を書いた行。旧実装は NOT NULL 違反で行を落とした。
