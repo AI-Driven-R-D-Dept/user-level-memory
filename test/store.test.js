@@ -278,6 +278,18 @@ test('importRows: カラム欠落の部分行も DEFAULT で取り込む（MEDIU
   });
 });
 
+test('importRows: JSON boolean(true/false)も整数化して取り込む（LOW 回帰: サイレント脱落）', () => {
+  withFreshStore((store) => {
+    // 外部ツールが secret に JSON boolean を書いた行。旧実装は bind 例外で脱落していた。
+    const res = store.importRows('observations', [
+      { id: 'obs-bool01', ts: '2026-06-11T00:00:00Z', text: 'bool', tags: [], source: 'import', secret: true },
+    ]);
+    assert.equal(res.inserted, 1);
+    assert.equal(res.skipped, 0);
+    assert.equal(store.getObservation('obs-bool01').secret, true);
+  });
+});
+
 test('importRows: NOT NULL DEFAULT カラムの明示 null も DEFAULT で取り込む（LOW-1 回帰）', () => {
   withFreshStore((store) => {
     // 外部ツールが tags/meta に null を書いた行。旧実装は NOT NULL 違反で行を落とした。

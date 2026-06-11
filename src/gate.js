@@ -88,7 +88,7 @@ export function isPatternSafe(src) {
     else if (m[2] === undefined && !/,/.test(m[0])) factor = 1; // {n} 完全固定
     else factor = (m[2] ? Number(m[2]) : 64) + 1; // {n,m}=m+1, {n,}=無制限扱い
     product *= factor;
-    if (product > 1000) return false; // 多項式爆発の閾値
+    if (product >= 1000) return false; // 多項式爆発の閾値（安全マージン: 1000 ちょうども拒否）
   }
   return true;
 }
@@ -176,7 +176,7 @@ export function detectHighEntropy(text) {
 }
 
 const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
-const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g; // \r(\x0d) も含む。\t は残し後段で空白化
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]/g; // \r(\x0d)・行/段落区切り(U+2028/2029)も含む。\t は残し後段で空白化
 
 // cross-script 同形異字（キリル/ギリシャ）を Latin に畳む。NFKC では畳まれないため、
 // `ЅYSTEM:`(キリル Ѕ) のような非Latin 偽装で役割マーカー中和を回避されるのを塞ぐ。

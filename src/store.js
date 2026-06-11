@@ -633,6 +633,7 @@ export class Store {
       if (!present.length) { skipped++; continue; }
       const vals = present.map((c) => {
         const v = r[c];
+        if (typeof v === 'boolean') return v ? 1 : 0; // JSON boolean は SQLite に bind 不可→整数化
         if (v !== null && typeof v === 'object') return JSON.stringify(v);
         return v;
       });
