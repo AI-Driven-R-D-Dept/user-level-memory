@@ -824,8 +824,9 @@ function cmdImport(args) {
           }
         }
       }
-      const n = store.importRows(table, rows);
+      const { inserted: n, skipped } = store.importRows(table, rows);
       if (n) console.log(`  ${file}: ${n} 行を取込`);
+      if (skipped) console.log(`  ⚠ ${file}: ${skipped} 行をスキップ（不正 id/長すぎる本文/バインド不可）`);
       total += n;
     }
     console.log(`✓ import 完了: 合計 ${total} 行（既存 ID は INSERT OR IGNORE でスキップ）`);

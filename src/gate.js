@@ -52,6 +52,9 @@ const MAX_PATTERN_LENGTH = 300; // 極端に長い独自パターンを拒否
 const MAX_LINE_SCAN = 8 * 1024; // 1行(または1窓)あたりの走査長
 const WINDOW_OVERLAP = 1024; // 窓境界をまたぐトークンの取りこぼし防止の重なり（想定トークン長より大）
 const MAX_TOTAL_SCAN = 1024 * 1024; // 総走査量のバックストップ（1MB。極端な入力での CPU 事故予防）
+// 1行あたりの最小計上コスト。短行でも全パターンの .test() が走るため、行数による
+// CPU 増幅（`x\n`×N の大量短行）を総量に算入してバックストップを確実に発火させる。
+const MIN_LINE_COST = 64;
 
 /**
  * ユーザー由来の deny パターンが ReDoS 安全かを静的に判定する。
@@ -100,7 +103,7 @@ export function compileGate(config, warn = () => {}) {
         for (const line of full.split('\n')) {
           if (scanned > MAX_TOTAL_SCAN) break;
           if (line.length <= MAX_LINE_SCAN) {
-            scanned += line.length;
+            scanned += Math.max(line.length, MIN_LINE_COST); // 行数による増幅も総量に算入
             for (const p of patterns) if (p.re.test(line)) return p.name;
             continue;
           }

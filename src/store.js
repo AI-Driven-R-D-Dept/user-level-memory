@@ -6,6 +6,7 @@ import { dbPath } from './config.js';
 import { bufToVec, cosineFromBuf, l2norm } from './embed.js';
 
 const SCHEMA_VERSION = 4;
+const MAX_OBS_TEXT = 256 * 1024; // 観測本文の長さ上限（暴走入力対策。実際の観測は簡潔）
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -204,6 +205,8 @@ export class Store {
 
   addObservation({ text, project = null, tags = [], source = 'manual', secret = false, meta = {}, pinned = false, id: fixedId = null }) {
     if (!text || !String(text).trim()) throw new Error('観測テキストが空です');
+    // 長さ上限（暴走入力・大量短行による gate/sanitize の CPU 増幅予防。観測は本来簡潔）
+    if (String(text).length > MAX_OBS_TEXT) throw new Error(`観測テキストが長すぎます（最大${MAX_OBS_TEXT}文字）`);
     const stmt = this.db.prepare(
       'INSERT INTO observations (id, ts, project, text, tags, source, secret, meta, pinned, redacted, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)'
     );
@@ -611,19 +614,32 @@ export class Store {
     const idRe = { observations: /^obs-[0-9a-z]{4,12}$/, candidates: /^cand-[0-9a-z]{4,12}$/, refs: /^ref-[0-9a-z]{4,12}$/ }[table];
     const placeholders = cols.map(() => '?').join(', ');
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`);
+    let skipped = 0;
     for (const r of rows) {
-      if (idRe && !idRe.test(String(r.id ?? ''))) continue; // 不正 id の行は捨てる
-      if (table === 'observations' && r.source !== undefined && !/^[a-zA-Z0-9:_-]{1,40}$/.test(String(r.source))) {
-        r.source = 'import'; // 不正 source は固定値に矯正
+      if (idRe && !idRe.test(String(r.id ?? ''))) { skipped++; continue; } // 不正 id の行は捨てる
+      if (table === 'observations') {
+        if (r.text !== undefined && String(r.text).length > MAX_OBS_TEXT) { skipped++; continue; } // 暴走長を排除
+        if (r.source !== undefined && !/^[a-zA-Z0-9:_-]{1,40}$/.test(String(r.source))) {
+          r.source = 'import'; // 不正 source は固定値に矯正
+        }
       }
-      const vals = cols.map((c) => (r[c] === undefined ? null : r[c]));
+      // 配列/オブジェクト型は JSON 文字列に正規化してからバインドする。
+      // 人手/外部ツールが書く {"tags":[]} 形（JSON値）は SQLite に直接バインドできず、
+      // 以前は bind 例外→無言スキップで行ごと取りこぼしていた（LOW-1 回帰）。
+      const vals = cols.map((c) => {
+        const v = r[c];
+        if (v === undefined) return null;
+        if (v !== null && typeof v === 'object') return JSON.stringify(v);
+        return v;
+      });
       try {
         if (stmt.run(...vals).changes) inserted++;
+        // changes===0 は INSERT OR IGNORE による重複（正常）。skipped には数えない。
       } catch {
-        // 壊れた行はスキップ
+        skipped++; // バインド/制約エラーは可視化のため計上（無言脱落の解消）
       }
     }
-    return inserted;
+    return { inserted, skipped };
   }
 
   stats() {
