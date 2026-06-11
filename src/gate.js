@@ -108,12 +108,22 @@ function classesOverlap(a, b) {
  */
 export function isPatternSafe(src) {
   if (/[(|]/.test(src)) return false; // グループ・選択肢を禁止
-  const unbounded = (src.match(/\*|\+|\{\s*\d+\s*,\s*\}/g) || []).length;
-  if (unbounded > 1) return false; // 無制限量化子は1個まで
-  if (unbounded === 1) {
-    // その1個は末尾でなければならない（末尾アンカー $ \b \B は除いて判定）。
+  // 「実質無制限」量化子 = * + {n,} に加え、上限が大きい {n,N}（N>LARGE_QUANT）。
+  // 窓長(8KB)を超える {0,大N} は窓内で実質 * と同じく O(n²) になる（`.{0,20000}z` ≈ `.*z`）。
+  const LARGE_QUANT = 100;
+  const isEffUnbounded = (q) => {
+    if (q === '*' || q === '+') return true;
+    const mm = /^\{\s*\d+\s*,\s*(\d*)\s*\}$/.exec(q);
+    return !!mm && (mm[1] === '' || Number(mm[1]) > LARGE_QUANT); // {n,} か {n,大N}
+  };
+  const quants = src.match(/\*|\+|\{\s*\d+\s*(?:,\s*\d*\s*)?\}/g) || [];
+  const effUnb = quants.filter(isEffUnbounded);
+  if (effUnb.length > 1) return false; // 実質無制限は1個まで
+  if (effUnb.length === 1) {
+    // その1個は末尾でなければならない（後ろに必須アトムが続くと不一致時 O(n²)。`.*z` `.{0,N}z`）。
     const tail = src.replace(/(?:\$|\\b|\\B)+$/, '');
-    if (!/(?:\*|\+|\{\s*\d+\s*,\s*\})$/.test(tail)) return false;
+    const endQ = /(\*|\+|\{\s*\d+\s*(?:,\s*\d*\s*)?\})$/.exec(tail);
+    if (!endQ || !isEffUnbounded(endQ[1])) return false;
   }
   // 多項式バックトラック（degree≥2）の検出。原理: 量化子付きアトム Ai, Aj(i<j) の文字クラスが
   // 重なり、かつ間のアトムが全て「空文字列にマッチしうる」(ゼロ幅 \b\B / 省略可能量化子 ?*{0,n}{0})
@@ -224,12 +234,15 @@ export function detectHighEntropy(text) {
 const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]/g; // \r(\x0d)・行/段落区切り(U+2028/2029)も含む。\t は残し後段で空白化
 
-// cross-script 同形異字（キリル/ギリシャ）を Latin に畳む。NFKC では畳まれないため、
-// `ЅYSTEM:`(キリル Ѕ) のような非Latin 偽装で役割マーカー中和を回避されるのを塞ぐ。
+// cross-script 同形異字（キリル/ギリシャ/スモールキャップ）を Latin に畳む。NFKC では畳まれない
+// ため、`ЅYSTEM:`(キリル Ѕ) や `</ᴜser-memory>`(スモールキャップ ᴜ) のような偽装で役割マーカー/
+// fence 中和を回避されるのを塞ぐ。
 const CONFUSABLES = {
   А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', Ѕ: 'S', І: 'I', Ј: 'J', Ү: 'Y',
   а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', ѕ: 's', і: 'i', ј: 'j',
   Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X', Ϲ: 'C', ο: 'o', ϲ: 'c',
+  // スモールキャップ/修飾文字の同形異字（Phonetic Extensions U+1D00- と IPA Extensions）
+  ᴀ: 'A', ʙ: 'B', ᴄ: 'C', ᴅ: 'D', ᴇ: 'E', ꜰ: 'F', ɢ: 'G', ʜ: 'H', ɪ: 'I', ᴊ: 'J', ᴋ: 'K', ʟ: 'L', ᴍ: 'M', ɴ: 'N', ᴏ: 'O', ᴘ: 'P', ꞯ: 'Q', ʀ: 'R', ꜱ: 'S', ᴛ: 'T', ᴜ: 'U', ᴠ: 'V', ᴡ: 'W', ʏ: 'Y', ᴢ: 'Z',
 };
 const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join('')}]`, 'g');
 // NFKC で畳まれない角括弧変種（〈〉⟨⟩）を ASCII 山括弧に正規化し、後段の [tag] 化に乗せる。
