@@ -15,6 +15,7 @@
     "commands/",
     "skills/",
     "hooks/",
+    "scripts/",
     ".claude-plugin/",
     "DESIGN.md"
   ],

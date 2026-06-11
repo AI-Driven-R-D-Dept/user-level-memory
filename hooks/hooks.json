@@ -7,8 +7,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\"",
-            "timeout": 10,
-            "statusMessage": "ulm: 長期記憶を読み込み中"
+            "timeout": 10
           }
         ]
       }

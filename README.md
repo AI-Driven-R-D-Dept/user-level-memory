@@ -44,7 +44,7 @@ ln -s "$PWD/bin/ulm.js" /usr/local/bin/ulm
 
 # Claude Code プラグインとして（ローカル）
 claude --plugin-dir /path/to/user-level-memory
-# または marketplace 経由
+# または marketplace 経由（ローカルパス / GitHub の owner/repo どちらも可）
 claude plugin marketplace add /path/to/user-level-memory
 claude plugin install ulm@ulm-marketplace
 ```
@@ -118,6 +118,11 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 | command | `/ulm:status` | 統計と診断 |
 | skill | `memory-recorder` | 再利用できる勘所を観測として残す習慣づけ |
 | skill | `memory-recall` | タスク開始時に関連する過去の勘所を検索して引き出す |
+| skill | `memory-export` | JSONL 控えのエクスポート/復元（バックアップ・別環境への移行） |
+
+「覚えておいて」と頼まれた生の事実・経験則の置き場は ulm です（`memory-recorder` が受ける）。
+CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きません — ulm の観測は**昇格の餌**であり、
+`mine` → 人間レビュー → `promote` を通ったものだけが ref に正式化されます。
 
 ## セキュリティ
 
