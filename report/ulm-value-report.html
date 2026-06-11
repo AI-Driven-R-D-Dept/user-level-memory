@@ -356,10 +356,10 @@
   <tr><th>クエリ生成 × qrels採点</th><th>vector Success@10</th><th>MRR</th></tr>
   <tr><td class="k">OpenAI × OpenAI（初版）</td><td>98%</td><td>83%</td></tr>
   <tr><td class="k">OpenAI × <b>Claude</b>（採点を別ベンダ）</td><td><b>100%</b></td><td>70%</td></tr>
-  <tr><td class="k"><b>Claude</b> × OpenAI（生成を別ベンダ）</td><td><b>100%</b></td><td>88%</td></tr>
+  <tr><td class="k"><b>Claude</b> × OpenAI（生成を別ベンダ）</td><td><b>98%</b></td><td>88%</td></tr>
 </table>
 <div class="callout"><b>どの組み合わせでも意味検索が圧勝（Success@10 98-100%／古典的 Recall@10 は既定構成で 87%）。</b> 上表は Success@10（top-10 に関連が1件でも出れば成功）。「OpenAI が OpenAI 埋め込みに有利」という循環は、生成・採点の両端を別ベンダ化しても結論が変わらないことで否定された。FTS は Claude 生成クエリ（語彙をさらに回避）では Success@10 16% まで落ち、<b>意味検索なしでは拾えない</b>ことがいっそう明確に。</div>
-<div class="callout limit"><b>正直なトレードオフ開示：</b> 本番の recall は無関係プロンプトへのノイズ注入を防ぐため<b>棄権機構</b>（最良 cosine が 0.3 未満なら何も注入しない）を持つ。これにより無関係クエリ（天気/猫等）への偽注入は <b>0 件</b>だが、その代償として<b>ごく弱い一致（cos≈0.28-0.30）の関連記憶を保守的に見送る</b>ことがある（Claude生成クエリで hybrid は 98%、vector 100% の差はこの1件）。精度（誤注入ゼロ）を recall より優先した設計判断。</p>
+<div class="callout limit"><b>正直なトレードオフ開示：</b> 本番の recall は無関係プロンプトへのノイズ注入を防ぐため<b>棄権機構</b>（最良 cosine が 0.3 未満なら何も注入しない）を持つ。これにより無関係クエリ（天気/猫等）への偽注入は <b>0 件</b>だが、その代償として<b>ごく弱い一致（cos≈0.28-0.30）の関連記憶を保守的に見送る</b>ことがある（既定構成で hybrid 95% &lt; vector 98% の差はこの棄権による）。精度（誤注入ゼロ）を recall より優先した設計判断。</p>
 <p class="src">再現: <code>test/eval/external/</code>。`ULM_QRELS` / `QUERIES_FILE` で採点者・生成器を切替検証可。各 build はコーパスを都度埋め込むため、上表は実行時点の値（決定的なクエリ・コーパス上）。</p>
 </section>
 

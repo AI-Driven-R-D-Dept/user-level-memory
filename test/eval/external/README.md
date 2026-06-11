@@ -23,7 +23,9 @@ node chunk.js && node gen-queries.js 44 && node build-qrels.js && node run-exter
 |---|---|---|
 | OpenAI × OpenAI（既定） | 98% | 83% |
 | OpenAI × Claude(subagent) | 100% | 70% |
-| Claude(subagent) × OpenAI | 100% | 88% |
+| Claude(subagent) × OpenAI | 98% | 88% |
+
+（数値は `cross-vendor-results.json` の記録。LLM 判定の非決定性で CI 内変動あり。）
 
 どの組み合わせでも意味検索が圧勝。FTS は症状ベースクエリ（語彙回避）で Success@10 16-32%に留まる。
 

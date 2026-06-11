@@ -77,6 +77,19 @@ export function isPatternSafe(src) {
     const tail = src.replace(/(?:\$|\\b|\\B)+$/, '');
     if (!/(?:\*|\+|\{\s*\d+\s*,\s*\})$/.test(tail)) return false;
   }
+  // 有界量化子も「最悪バックトラック係数」の積で評価し、多項式爆発を静的に排除する。
+  // `x{0,40}x{0,40}x{0,40}x{0,40}y` のような隣接有界量化子は無制限を含まないが O(n^k)
+  // になる（実測で数秒）。{n}(完全固定)=係数1、{n,m}=m+1、*/+/{n,}=64 として全量化子の積を取り、
+  // 閾値を超えたら拒否（非隣接も掛かるため過剰拒否寄りだが安全側。実用パターンは単純）。
+  let product = 1;
+  for (const m of src.matchAll(/(?:\*|\+)|\{\s*(\d+)\s*(?:,\s*(\d*)\s*)?\}/g)) {
+    let factor;
+    if (m[0] === '*' || m[0] === '+') factor = 64;
+    else if (m[2] === undefined && !/,/.test(m[0])) factor = 1; // {n} 完全固定
+    else factor = (m[2] ? Number(m[2]) : 64) + 1; // {n,m}=m+1, {n,}=無制限扱い
+    product *= factor;
+    if (product > 1000) return false; // 多項式爆発の閾値
+  }
   return true;
 }
 
@@ -234,16 +247,16 @@ export function sanitizeForContext(text) {
     .replace(CONTROL, ' ')
     .replace(ANGLE_OPEN, '<')
     .replace(ANGLE_CLOSE, '>')
-    // fence タグ名 user-memory を無条件中和（`<`〜`/`間に可視ジャンク文字を挟む変種も含め、
-    // データ内に fence 境界トークンを一切出さない最終防壁）。sanitize はデータにのみ適用され、
-    // 実 fence タグは context 側が囲うので安全。
-    .replace(/user[\s_-]{0,4}memory/gi, '[tag]')
     .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化
-    // 空白畳みを tag/role 中和の「前」に行う。これをしないと `<`〜`/word>` の間に
+    // 空白畳みを tag/role/fence語 中和の「前」に行う。これをしないと `<`〜`/word>` の間に
     // TAG_LIKE の上限(\s{0,40})を超える空白(41字以上)を詰めて TAG_LIKE を外し、後段の
     // 畳みで `< /user-memory>`（実 `>` 保持）が復元される fence 脱出が成立した（HIGH-1）。
-    // 先に全空白ランを1つに畳めば、tag/role の有界量化子が常に届く。
+    // 先に全空白ランを1つに畳めば、tag/role/fence語 の有界量化子が常に届く。
     .replace(/\s{2,}/g, ' ')
+    // fence タグ名 user-memory を無条件中和（畳み後なので分離空白は最大1。`<`〜`/`間に可視
+    // ジャンク文字を挟む変種も含め、データ内に fence 境界トークンを一切出さない最終防壁）。
+    // sanitize はデータにのみ適用され、実 fence タグは context 側が囲うので安全。
+    .replace(/user[\s_-]{0,4}memory/gi, '[tag]')
     .replace(TAG_LIKE, '[tag]')
     .replace(/<\s{0,8}\/\s{0,8}[A-Za-z][\w-]{0,64}>?/g, '[tag]') // 閉じ `>` 欠落の `</word` も中和
     .replace(BRACKET_ROLE, '[ロール]')
