@@ -8,6 +8,11 @@
 node_modules/
 .DS_Store
 *.log
+# 機密の二重防御: 鍵ファイル類はリポジトリに入れない（ULM_HOME は既定でリポ外）
+.env
+.env.*
+*.pem
+*.key
 .review/codex-run.log
 .review/sim/ab2/harness.log
 .review/sim/ab2/score.log

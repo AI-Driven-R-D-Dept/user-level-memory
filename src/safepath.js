@@ -20,6 +20,26 @@ function realpathish(p) {
   }
 }
 
+// 最近接の「存在する」祖先を realpath 解決し、未存在の末尾セグメントを繋ぎ直す。
+// 親が未存在のとき素の path を使うと、macOS の /var→/private/var 等のシンボリック差で
+// allow-root(解決済み)と isInside 不一致になり正当な書込みを過剰拒否する問題を防ぐ。
+function realpathNearest(p) {
+  let cur = resolve(p);
+  let suffix = '';
+  while (cur && cur !== dirname(cur)) {
+    if (existsSync(cur)) {
+      try {
+        return realpathSync(cur) + suffix;
+      } catch {
+        return cur + suffix;
+      }
+    }
+    suffix = sep + basename(cur) + suffix;
+    cur = dirname(cur);
+  }
+  return resolve(p);
+}
+
 function isInside(child, root) {
   if (!root) return false;
   const r = root.endsWith(sep) ? root : root + sep;
@@ -58,7 +78,8 @@ export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) 
   const parent = dirname(abs);
   let realParent;
   try {
-    realParent = existsSync(parent) ? realpathSync(parent) : parent;
+    // 最近接の存在する祖先で解決（未存在の中間ディレクトリでも allow-root と正しく比較できる）
+    realParent = realpathNearest(parent);
   } catch {
     return { ok: false, reason: '親ディレクトリを評価できません' };
   }

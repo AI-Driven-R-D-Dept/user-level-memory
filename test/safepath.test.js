@@ -32,6 +32,15 @@ test('safepath: 作業ツリー配下の .md は許可', () => {
   });
 });
 
+test('safepath: allow-root 内で中間ディレクトリ未存在でも許可（LOW-2 回帰: /var→/private/var）', () => {
+  sandbox(({ refRoot, work }) => {
+    // work/newsub はまだ存在しない。macOS では mkdtemp が /var/...(→/private/var) を返すため、
+    // 親未存在時に素の path を使うと allow-root(解決済み)と不一致で過剰拒否していた。
+    const r = checkWriteTarget(join(work, 'newsub', 'note.md'), { refRoot, allowRoots: [work] });
+    assert.equal(r.ok, true);
+  });
+});
+
 test('safepath: .md 以外は拒否', () => {
   sandbox(({ refRoot }) => {
     const r = checkWriteTarget(join(refRoot, 'evil.sh'), { refRoot });

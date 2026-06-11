@@ -103,7 +103,10 @@ export function isPatternSafe(src) {
   let run = 1;
   let m;
   while ((m = atomRe.exec(src))) {
-    if (!m[2]) { prev = null; run = 1; continue; } // 量化子なし→ランが途切れる
+    // ゼロ幅アサーション \b \B は実行時に文字を消費せず、量化子付きアトムの「隣接」を
+    // 分断しない（`g{0,5000}\Bg{0,5000}` は実質 `g{0,5000}g{0,5000}` で O(n²)）。透明に扱う。
+    if (/^\\[bB]$/.test(m[1]) && !m[2]) continue;
+    if (!m[2]) { prev = null; run = 1; continue; } // 量化子なしアトム→ランが途切れる
     const cls = atomClass(m[1]);
     if (prev && classesOverlap(prev, cls)) {
       run++;

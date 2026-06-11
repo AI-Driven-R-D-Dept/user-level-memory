@@ -812,7 +812,10 @@ function cmdImport(args) {
     ]) {
       const path = join(dir, file);
       if (!existsSync(path)) continue;
-      let rows = readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => parseJsonSafe(l, null)).filter(Boolean);
+      const rawLines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+      let rows = rawLines.map((l) => parseJsonSafe(l, null)).filter(Boolean);
+      const parseFail = rawLines.length - rows.length; // 不正 JSON 行の脱落を可視化（無言にしない）
+      if (parseFail) console.log(`  ⚠ ${file}: ${parseFail} 行を JSON parse 失敗でスキップ`);
       // 取込時ゲート: 外部由来の行が gateWrite を通っていないので、ここで機密を secret 化する。
       // states は value だけでなく key も検査する（M4）。
       if (table === 'observations' || table === 'states') {
