@@ -86,14 +86,32 @@ function atomClass(a) {
   if (a[0] === '\\') return 'l:' + literalOfEscape(a); // 多文字エスケープを実文字へ
   return 'l:' + a;
 }
+/** 1文字 ch がショートハンド tag(d/D/w/W/s/S) に属するか。 */
+function shorthandHas(tag, ch) {
+  const d = /[0-9]/.test(ch);
+  const w = /[A-Za-z0-9_]/.test(ch);
+  const s = /\s/.test(ch);
+  return { d, D: !d, w, W: !w, s, S: !s }[tag];
+}
+// ショートハンド同士の交差は代表文字で判定（digit/letter/_/space/punct/改行を網羅）。
+const SHORTHAND_REPS = ['0', 'a', '_', ' ', '!', '\n'];
+
 /** 隣接した量化子付きアトムのクラスが「重なりうる」か（重なると再分配でバックトラック爆発）。
- *  相補ショートハンド(\s/\S 等)と相異なるリテラルだけ disjoint=安全と判定し、他は保守的に重なり扱い。 */
+ *  ショートハンド⇄リテラルの所属判定まで精緻化し、`\d` と `-`、`\s` と `\S` 等を正しく
+ *  disjoint と判定する（`\d{4}-\d{4}` の過剰拒否を防ぐ）。クラス[..]は中身を見ず保守的に重なり扱い。 */
 function classesOverlap(a, b) {
   if (a === 'any' || b === 'any') return true;
-  const comp = { d: 'D', D: 'd', w: 'W', W: 'w', s: 'S', S: 's' };
-  if (comp[a] === b) return false; // 相補ショートハンドは交わらない
-  if ((a[0] === 'l' || a[0] === 'e') && (b[0] === 'l' || b[0] === 'e') && a !== b) return false; // 別リテラル
-  return true; // 同一・クラス含み・ショートハンド混在は保守的に重なり扱い
+  const aSh = /^[dDwWsS]$/.test(a);
+  const bSh = /^[dDwWsS]$/.test(b);
+  if (aSh && bSh) return SHORTHAND_REPS.some((ch) => shorthandHas(a, ch) && shorthandHas(b, ch));
+  if (aSh || bSh) {
+    const sh = aSh ? a : b;
+    const other = aSh ? b : a;
+    if (other[0] !== 'l') return true; // クラス('cls')やエスケープ等は保守的に重なり
+    return shorthandHas(sh, other.slice(2)[0] || ''); // リテラル先頭文字が shorthand に属するか
+  }
+  if (a[0] === 'l' && b[0] === 'l') return a === b; // 別リテラルは disjoint、同一は重なり
+  return true; // クラス[..]含みは保守的に重なり扱い
 }
 
 /**
@@ -109,7 +127,9 @@ function classesOverlap(a, b) {
  *    `a{0,9}b{0,9}c{0,9}d`（相異なるリテラル）や `\s?\S{6,}`（相補）、必須アトムで区切られた
  *    `\d{4}-\d{4}` は再分配が起きず線形なので許可する。
  * 既知の指数/多項式(degree≥2)構造を静的に排除する best-effort 判定（数学的証明ではない）。
- * 万一すり抜けても gate.match 側の MAX_TOTAL_SCAN/MIN_LINE_COST で総 CPU は有界化される。
+ * 注: gate.match の MAX_TOTAL_SCAN/MIN_LINE_COST は「行数・総量」を有界化するが、単一の長行
+ *   (≤8KB の1窓=1回の .test()) に対する超線形パターンの CPU は縛れない。よって本関数の静的判定が
+ *   最後の砦であり、ここで多項式構造を漏らさないことが重要（best-effort だが既知クラスは網羅）。
  * 組込みパターンはこの制約の対象外（人手レビュー済み）。
  */
 export function isPatternSafe(src) {
@@ -148,7 +168,14 @@ export function isPatternSafe(src) {
     const atom = m[1];
     const q = m[2];
     if (/^\\[bB]$/.test(atom)) continue; // ゼロ幅アサーションは透明（集合を維持）
-    if (!q) { active = []; continue; } // 量化子なし＝必須アトム→再分配を遮断（集合クリア）
+    if (!q) {
+      // 量化子なし＝必須アトム。手前の量化子クラスと「証明可能に disjoint」なときだけ再分配を
+      // 遮断して集合をクリアする。重なる場合（`z{0,100}\wz+` の \w は z と重なる）は再分配が
+      // 通り抜けるので集合を保持し、後続の同クラス量化子で degree≥2 を検出する。
+      const cls = atomClass(atom);
+      if (!active.some((c) => classesOverlap(c, cls))) active = [];
+      continue;
+    }
     const cls = atomClass(atom);
     if (active.some((c) => classesOverlap(c, cls))) return false; // degree≥2
     if (minZero(q)) active.push(cls); // 空マッチ可能→以降のアトムと再分配しうるので集合に追加
