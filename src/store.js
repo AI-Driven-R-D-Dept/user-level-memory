@@ -626,7 +626,10 @@ export class Store {
       // しかも INSERT OR IGNORE は例外を投げず changes:0 で握り潰すため、部分行が完全に
       // 無言脱落していた（MEDIUM-1）。present のみ INSERT し DEFAULT を効かせる。
       // 配列/オブジェクト型は JSON 文字列に正規化（{"tags":[]} 形の取りこぼし防止）。
-      const present = cols.filter((c) => r[c] !== undefined);
+      // undefined だけでなく明示 null も「欠落」扱いにして present から除く。これで
+      // NOT NULL DEFAULT カラム(tags/meta 等)に null を持つ外部行も DEFAULT で取り込める
+      // （nullable カラムは元々 NULL 既定なので結果は同じ）。LOW-1 回帰。
+      const present = cols.filter((c) => r[c] !== undefined && r[c] !== null);
       if (!present.length) { skipped++; continue; }
       const vals = present.map((c) => {
         const v = r[c];

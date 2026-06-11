@@ -278,6 +278,18 @@ test('importRows: カラム欠落の部分行も DEFAULT で取り込む（MEDIU
   });
 });
 
+test('importRows: NOT NULL DEFAULT カラムの明示 null も DEFAULT で取り込む（LOW-1 回帰）', () => {
+  withFreshStore((store) => {
+    // 外部ツールが tags/meta に null を書いた行。旧実装は NOT NULL 違反で行を落とした。
+    const res = store.importRows('observations', [
+      { id: 'obs-null01', ts: '2026-06-11T00:00:00Z', project: null, text: 'null fields', tags: null, source: 'import', meta: null },
+    ]);
+    assert.equal(res.inserted, 1);
+    assert.equal(res.skipped, 0);
+    assert.deepEqual(store.getObservation('obs-null01').tags, []); // DEFAULT '[]' が効く
+  });
+});
+
 test('importRows: 長すぎる観測本文はスキップして可視化（MEDIUM-1 回帰）', () => {
   withFreshStore((store) => {
     const res = store.importRows('observations', [

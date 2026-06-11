@@ -61,15 +61,22 @@ const MIN_LINE_COST = 64;
  * 破滅的バックトラックは「曖昧さ（グループ/選択肢・隣接反復）× 無制限量化子」で起きる。
  * 純 Node では正規表現実行に timeout を掛けられないため、危険要素を構造的に禁止する:
  *  - グループ `(` と選択肢 `|`（指数爆発の源）を一切許可しない
- *  - 無制限量化子（* + {n,}）は最大1個まで（`a*a*$` 等の隣接反復による二次爆発も封じる）
- * これにより指数も二次も原理的に起きず、線形時間に収まる。
- * `?` や `{n}` `{n,m}`（有界）はカウントしないので実用パターンは書ける。
- * 組込みパターンはこの制約の対象外（人手でレビュー済み）。
+ *  - 無制限量化子（* + {n,}）は最大1個まで（`a*a*$` 等の隣接反復による二次爆発を封じる）
+ *  - その1個も「末尾」でなければならない。後ろに別アトムが続く `x+y` `.*z` は不一致時に
+ *    各開始位置から末尾まで再走査して O(n²) になるため拒否する（末尾アンカー $ \b \B は許容）
+ * これらで指数も二次も静的に排除し、線形時間に収める。`?` や `{n}` `{n,m}`（有界）は
+ * カウントしないので実用パターンは書ける。組込みパターンはこの制約の対象外（人手レビュー済み）。
  */
 export function isPatternSafe(src) {
   if (/[(|]/.test(src)) return false; // グループ・選択肢を禁止
   const unbounded = (src.match(/\*|\+|\{\s*\d+\s*,\s*\}/g) || []).length;
-  if (unbounded > 1) return false; // 無制限量化子は1個まで（二次爆発の防止）
+  if (unbounded > 1) return false; // 無制限量化子は1個まで（隣接反復の二次を防ぐ）
+  if (unbounded === 1) {
+    // その1個は末尾でなければならない（末尾アンカー $ \b \B は除いて判定）。
+    // 後ろにアトムが続くと不一致時に O(n²) になる（x+y / .*z / [a-z]+! 等）。
+    const tail = src.replace(/(?:\$|\\b|\\B)+$/, '');
+    if (!/(?:\*|\+|\{\s*\d+\s*,\s*\})$/.test(tail)) return false;
+  }
   return true;
 }
 
@@ -208,7 +215,16 @@ export function sanitizeForContext(text) {
   try {
     // NFKC で全角等を畳み、NFD 分解→Latin 結合域除去で合成済みアクセントを ASCII 字母に畳む。
     // \u6700\u5f8c\u306b NFC \u3067\u518d\u5408\u6210\uff08\u65e5\u672c\u8a9e\u306e\u6fc1\u70b9/\u534a\u6fc1\u70b9\u306a\u3069 Latin \u57df\u5916\u306e\u7d50\u5408\u6587\u5b57\u3092\u5143\u306e\u5408\u6210\u5f62\u306b\u623b\u3059\uff09\u3002
-    s = s.normalize('NFKC').normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC');
+    // Default_Ignorable\uff08\u7570\u4f53\u5b57\u9078\u629e\u5b50 FE00-0F\u30fbHangul filler\u30fbsoft hyphen \u7b49\u3001\u30ec\u30f3\u30c0\u30e9/
+    // \u30c8\u30fc\u30af\u30ca\u30a4\u30b6\u304c\u7121\u8996\u3059\u308b\u4e0d\u53ef\u8996\u6587\u5b57\uff09\u3092\u9664\u53bb\u3002`<`\u301c\u30bf\u30b0\u540d\u306e\u9593\u306b\u631f\u3080\u4e0d\u53ef\u8996 fence \u8131\u51fa
+    // \uff08`<\ufe0f/user-memory>`\uff09\u3092\u3001\u69cb\u9020\u3092\u96a3\u63a5\u3055\u305b\u3066\u304b\u3089\u691c\u51fa\u3059\u308b\u3053\u3068\u3067\u5c01\u3058\u308b\uff08HIGH-1\uff09\u3002
+    // \u3055\u3089\u306b\u7d50\u5408\u30de\u30fc\u30af(Mn/Me)\u3092\u9664\u53bb\u3057\u3066\u7d50\u5408\u7cfb\u306e\u507d\u88c5\u3092\u7573\u3080\uff08\u65e5\u672c\u8a9e\u306e\u6fc1\u70b9/\u534a\u6fc1\u70b9 U+3099/309A \u306f\u4fdd\u6301\uff09\u3002
+    s = s
+      .normalize('NFKC')
+      .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
+      .normalize('NFD')
+      .replace(/[\p{Mn}\p{Me}]/gu, (m) => (/[\u3099\u309a]/.test(m) ? m : '')) // \u7d50\u5408\u30de\u30fc\u30af\u9664\u53bb(\u65e5\u672c\u8a9e\u6fc1\u70b9/\u534a\u6fc1\u70b9\u306f\u4fdd\u6301)
+      .normalize('NFC');
   } catch {
     // 不正なコードポイントは握りつぶす
   }
@@ -218,6 +234,10 @@ export function sanitizeForContext(text) {
     .replace(CONTROL, ' ')
     .replace(ANGLE_OPEN, '<')
     .replace(ANGLE_CLOSE, '>')
+    // fence タグ名 user-memory を無条件中和（`<`〜`/`間に可視ジャンク文字を挟む変種も含め、
+    // データ内に fence 境界トークンを一切出さない最終防壁）。sanitize はデータにのみ適用され、
+    // 実 fence タグは context 側が囲うので安全。
+    .replace(/user[\s_-]{0,4}memory/gi, '[tag]')
     .replace(/\n[ \t]*/g, ' ') // 改行+後続空白を空白化
     // 空白畳みを tag/role 中和の「前」に行う。これをしないと `<`〜`/word>` の間に
     // TAG_LIKE の上限(\s{0,40})を超える空白(41字以上)を詰めて TAG_LIKE を外し、後段の
