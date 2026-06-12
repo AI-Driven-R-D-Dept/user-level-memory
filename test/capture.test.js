@@ -154,3 +154,31 @@ test('parseDedupVerdicts: index は数値型のみ（null や文字列の緩い�
   assert.deepEqual(parseDedupVerdicts('[{"index":"0","duplicate_of":"obs-aaa111"}]', items), [null]);
   assert.deepEqual(parseDedupVerdicts('[{"index":0,"duplicate_of":"obs-aaa111"}]', items), ['obs-aaa111']);
 });
+
+test('validateAutoObs: person スキーマの機械検証（主語必須・person タグ自動付与）', () => {
+  const max = 10;
+  // 正常: text に主語あり → person タグが先頭に付く
+  const ok = validateAutoObs([{ text: 'ユーザーは野菜が嫌いだと明言した', tags: ['food'], person: 'ユーザー' }], gate, max);
+  assert.equal(ok.length, 1);
+  assert.deepEqual(ok[0].tags, ['person:ユーザー', 'food']);
+  // 第三者: 続柄もそのまま
+  const spouse = validateAutoObs([{ text: 'ユーザーの妻はトマトが苦手（本人談）', tags: [], person: 'ユーザーの妻' }], gate, max);
+  assert.deepEqual(spouse[0].tags, ['person:ユーザーの妻']);
+  // 棄却: person 指定なのに text に主語が無い（プロンプト指示を忘れた出力は保存させない）
+  assert.equal(validateAutoObs([{ text: '野菜が嫌いだと明言した', person: 'ユーザー' }], gate, max).length, 0);
+  // 棄却: person の機械的拘束（長すぎ・空白/カンマ/角括弧入り）
+  assert.equal(validateAutoObs([{ text: 'あ'.repeat(30), person: 'あ'.repeat(21) }], gate, max).length, 0);
+  assert.equal(validateAutoObs([{ text: 'x y は野菜が嫌い、と言った', person: 'x y' }], gate, max).length, 0);
+  // person:null（人物に関しない事実）は従来どおり・person タグなし
+  const tech = validateAutoObs([{ text: 'node:sqlite は Node 22.5 未満で落ちる', tags: ['node'], person: null }], gate, max);
+  assert.deepEqual(tech[0].tags, ['node']);
+  // person タグは tags 上限5件の中で保証される（先頭に置かれ slice で残る）
+  const many = validateAutoObs([{ text: 'ユーザーは肉が好き', tags: ['a', 'b', 'c', 'd', 'e'], person: 'ユーザー' }], gate, max);
+  assert.equal(many[0].tags.length, 5);
+  assert.equal(many[0].tags[0], 'person:ユーザー');
+});
+
+test('SYSTEM: person フィールドの出力契約を明示している', () => {
+  assert.ok(SYSTEM.includes('"person"'), 'スキーマに person がある');
+  assert.ok(SYSTEM.includes('null'), '人物に関しない事実は null');
+});

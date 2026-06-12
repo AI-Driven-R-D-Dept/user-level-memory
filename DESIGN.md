@@ -220,12 +220,13 @@ SessionStart の recency 詰め込みだけでは「古いが関連する記憶�
 「同事実の言い換え」と「同型文の別事実」を分離できないと実測済みのため、検索は候補生成のみに使い判定はしない。
 判定不能・候補ID不一致（幻覚）は保存側に倒す。`capture.dedup_judge` で無効化可。
 
+抽出物は未レビュー扱いで、無条件注入はせず recall の関連時のみ。人間は redact/promote で取捨。
+LLM が無い環境では静かに no-op（degrade gracefully）。
+
 手動経路（`obs add`）にもバックストップがある: 保存後に FTS + trigram 弱フィルタ（閾値0.4・警告専用）で
 似た既存観測を stderr に警告する（保存は止めない・断定もしない・取りこぼしあり）。警告の stderr は
 skill/command 経由で Claude のコンテキストに載るため実質 LLM ペイロードであり、候補には judge と同じ
 二条件ゲート（deny + 高エントロピー）を一様に適用する。
-抽出物は未レビュー扱いで、無条件注入はせず recall の関連時のみ。人間は redact/promote で取捨。
-LLM が無い環境では静かに no-op（degrade gracefully）。
 
 ## 10. 非スコープ（MVP では作らない）
 
