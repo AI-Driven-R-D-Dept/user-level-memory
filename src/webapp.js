@@ -61,17 +61,23 @@ function json(res, code, obj) {
 
 function readBody(req) {
   return new Promise((resolveBody, reject) => {
-    let data = '';
+    // Buffer のまま貯めて末尾で一度だけ decode する。チャンクごとに toString すると
+    // マルチバイト文字（日本語が主用途）が TCP segment 境界をまたいだとき U+FFFD に壊れる。
+    const chunks = [];
+    let bytes = 0;
     req.on('data', (c) => {
-      data += c;
-      if (data.length > MAX_BODY) {
+      bytes += c.length;
+      if (bytes > MAX_BODY) {
         reject(new Error('body too large'));
         req.destroy();
+        return;
       }
+      chunks.push(c);
     });
     req.on('end', () => {
       try {
-        resolveBody(data ? JSON.parse(data) : {});
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolveBody(text ? JSON.parse(text) : {});
       } catch {
         reject(new Error('invalid json'));
       }

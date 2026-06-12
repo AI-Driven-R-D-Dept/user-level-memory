@@ -160,3 +160,26 @@ test('webapp: GET /api/obs は本文が機密の観測に sensitive を立てる
     });
   });
 });
+
+test('webapp: readBody は TCP 分割された UTF-8 マルチバイトを壊さない（記憶完全性）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    await withServer(store, home, async ({ base, token }) => {
+      const { request } = await import('node:http');
+      const port = Number(new URL(base).port);
+      const payload = Buffer.from(JSON.stringify({ text: 'A日本語のメモB', tags: ['x'] }), 'utf8');
+      // 「日」(UTF-8 3バイト) の途中で2つの TCP write に分割する
+      const splitAt = payload.indexOf(Buffer.from('日', 'utf8')) + 1;
+      const obs = await new Promise((res, rej) => {
+        const req = request(
+          { host: '127.0.0.1', port, path: '/api/obs', method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-ulm-token': token, 'content-length': payload.length } },
+          (r) => { let d = ''; r.on('data', (x) => (d += x)); r.on('end', () => res(JSON.parse(d))); }
+        );
+        req.on('error', rej);
+        req.write(payload.subarray(0, splitAt));
+        setTimeout(() => req.end(payload.subarray(splitAt)), 20);
+      });
+      assert.equal(obs.obs.text, 'A日本語のメモB', '分割された日本語が壊れずに保存される');
+    });
+  });
+});

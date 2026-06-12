@@ -478,11 +478,13 @@
       <h2>SQL</h2>
       <p>データベースへの自由クエリ。書き込みは各画面の編集 UI から行います。</p>
     </div>
-    <textarea class="sql-editor" spellcheck="false">SELECT id, ts, project, substr(text, 1, 60) AS text
+    <textarea class="sql-editor" spellcheck="false">-- 既定は本文(text)を出さない。機密の偶発露出を避けるため、本文が要るときは
+-- WHERE secret = 0 を保ったまま明示的に text を SELECT に足す（SQL は生 DB の読取り）。
+SELECT id, ts, project, source, tags
 FROM observations
-WHERE redacted = 0
+WHERE redacted = 0 AND secret = 0
 ORDER BY ts DESC
-LIMIT 20;</textarea>
+LIMIT 20;
     <div class="sql-bar">
       <button class="btn primary" id="sql-run"><svg class="ic"><use href="#i-play"/></svg>実行</button>
       <span class="ro-badge"><svg class="ic"><use href="#i-lock"/></svg>READ ONLY</span>
@@ -513,7 +515,8 @@ LIMIT 20;</textarea>
 
 <script>
 const I = (n, cls = 'ic') => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+// 属性値（data-id 等）にも使う共有エスケーパなので " ' > も畳む（defense-in-depth）
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const TOKEN = new URLSearchParams(location.search).get('token');
 
 // ---------- API ----------
