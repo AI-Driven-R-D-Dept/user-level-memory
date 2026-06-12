@@ -198,3 +198,17 @@ test('webapp: GET /api/states も本文機密に sensitive を立てる（obs �
     });
   });
 });
+
+test('webapp/index.html: textarea と script の開閉が対応し script が飲み込まれない（構造ガード）', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'webapp', 'index.html'), 'utf8');
+  const open = (re) => (html.match(re) || []).length;
+  assert.equal(open(/<textarea\b/g), open(/<\/textarea>/g), 'textarea の開閉数が一致');
+  assert.equal(open(/<script\b/g), open(/<\/script>/g), 'script の開閉数が一致');
+  // 最後の </textarea> は <script> より前にある（script が未閉 textarea に飲まれない）
+  assert.ok(html.lastIndexOf('</textarea>') < html.indexOf('<script>'), 'script の前に textarea が閉じている');
+  // クライアントの要となる識別子が script ブロック内に存在
+  assert.ok(/const TOKEN = new URLSearchParams/.test(html), 'クライアント JS が含まれる');
+});
