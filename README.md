@@ -1,11 +1,42 @@
 # ulm — user-level memory
 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node.js >= 22.5](https://img.shields.io/badge/node-%3E%3D22.5-brightgreen.svg)
+![dependencies: 0](https://img.shields.io/badge/dependencies-0-success.svg)
+![tests: 153 passed](https://img.shields.io/badge/tests-153%20passed-success.svg)
+
 > 作業で得たコツを、次の仕事で迷わず使う。
 > CLAUDE.md / ref / beads(bd) の **次に来る**「現場の勘所を育てる生もの」の記憶レイヤー。
 
-`ulm` は、Claude Code（や任意のエージェント / 人間）が作業で得た**メタ観測事実**を貯め、必要なときだけ思い出すための、ユーザーレベル（プロジェクト横断）の長期記憶 CLI + Claude Code プラグインです。依存パッケージはゼロ（`node:sqlite` のみ）。
+`ulm` は、Claude Code（や任意のエージェント / 人間）が作業で得た**メタ観測事実**を貯め、必要なときだけ思い出すための、ユーザーレベル（プロジェクト横断）の長期記憶 CLI + Claude Code プラグインです。
 
-## 知識の置き場 4 段
+## 目次
+
+- [特徴](#特徴)
+- [なぜ ulm か — 知識の置き場 4 段](#なぜ-ulm-か--知識の置き場-4-段)
+- [必要環境](#必要環境)
+- [インストール](#インストール)
+- [クイックスタート](#クイックスタート)
+- [使い方（CLI）](#使い方cli)
+- [Claude Code プラグイン](#claude-code-プラグイン)
+- [想起の質（ベンチマーク）](#想起の質ベンチマーク)
+- [セキュリティ](#セキュリティ)
+- [ストレージ](#ストレージ)
+- [FAQ](#faq)
+- [開発](#開発)
+- [コントリビュート](#コントリビュート)
+- [ライセンス](#ライセンス)
+
+## 特徴
+
+- **依存パッケージゼロ・ビルド不要** — `node:sqlite` のみで動作。`git clone` してすぐ使えます
+- **記憶を腐り方ごとに 3 分類** — 観測（追記のみ）/ 可変状態（上書き + TTL）/ 仮説候補（inbox で育成）
+- **普段は隠し、関連分だけ注入** — SessionStart では state・ref・ピン留め・最近分のみ。プロンプト連動の動的想起は BM25 + 埋め込みのハイブリッド検索
+- **仮説の正式化は人間が決める** — `mine` の生成物は inbox 隔離。承認・`ref` への昇格は人間の操作だけが行えます
+- **機密の門番は AI ではなく機械的ルール** — 鍵・トークン等は入口で自動 `secret` 化し、注入・採掘・持出から機械的に除外
+- **外部評価つき** — 作者非依存の評価コーパスで Success@10 95%（後述）
+
+## なぜ ulm か — 知識の置き場 4 段
 
 | 層 | 役割 | 性質 |
 |---|---|---|
@@ -16,14 +47,7 @@
 
 `ulm` は `ref` の手前。まだ正式ルールにできない経験則を預かり、検証できたものだけを **人間の承認** で `ref` へ昇格させます。
 
-## 設計の 4 原則
-
-1. **記憶は腐り方ごとに分ける** — 観測（腐らない事実）/ 可変状態（上書き）/ 仮説候補（育てる）。
-2. **普段は隠し、関連分だけ差し込む** — SessionStart 注入は state・ref・ピン留め・最近分に絞る。検索は能動的に。
-3. **仮説は遊び場で育て、人間の承認で正式化** — `mine` で生成した候補は inbox 隔離。自動採用・自動注入はしない。
-4. **機密の門番は AI ではなく機械的ルール** — パス・パターン・フラグで入口/注入/生成/持出/読取を機械的に止める。
-
-## 記憶の 3 分類
+記憶は腐り方ごとに 3 つに分けて扱います：
 
 | 種類 | 例 | 扱い | コマンド |
 |---|---|---|---|
@@ -31,9 +55,12 @@
 | 可変状態 (state) | 「今の担当 / 作業中の方針」 | 上書き + TTL | `ulm state set` |
 | 仮説候補 (candidate) | 「赤ボタンは"軽い操作のとき"有効」 | inbox で育て、人間が承認 | `ulm mine` / `ulm approve` |
 
-## インストール
+## 必要環境
 
-Node.js **>= 22.5** が必要（`node:sqlite` のため）。ビルド・依存インストールは不要です。
+- Node.js **>= 22.5**（`node:sqlite` を使用するため）
+- それ以外の依存はありません。`npm install` も不要です
+
+## インストール
 
 ```bash
 # CLI として
@@ -41,18 +68,29 @@ git clone <repo> && cd user-level-memory
 node bin/ulm.js init
 # 任意で PATH に通す
 ln -s "$PWD/bin/ulm.js" /usr/local/bin/ulm
+```
 
+```bash
 # Claude Code プラグインとして（ローカル）
 claude --plugin-dir /path/to/user-level-memory
+
 # または marketplace 経由（ローカルパス / GitHub の owner/repo どちらも可）
 claude plugin marketplace add /path/to/user-level-memory
 claude plugin install ulm@ulm-marketplace
 ```
 
+## クイックスタート
+
+```bash
+ulm init                                              # ~/.claude/user-memory を初期化
+ulm obs add "node:sqlite は Node 22.5 未満で落ちる" --tags ci --pin
+ulm recall "sqlite がうまく動かない"                   # 関連する過去の勘所を想起
+ulm status                                            # 統計
+```
+
 ## 使い方（CLI）
 
 ```bash
-ulm init                                          # ~/.claude/user-memory を初期化
 ulm obs add "node:sqlite は Node 22.5 未満で落ちる" --tags ci --pin
 ulm state set 現在の担当 "決済リファクタ" --ttl 30d --global
 ulm recall "金額計算で丸め誤差が出る"             # BM25 で関連する過去の勘所を想起（FTS5）
@@ -61,47 +99,11 @@ ulm mine                                          # 観測 → 仮説候補を i
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
 ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
 ulm promote <cand-id> --ref ./decisions.md        # 承認済みを ref へ昇格（人間の操作）
+ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
 ```
 
-全コマンドは `ulm help` を参照。
-
-## 想起の質（外部評価・作者非依存）
-
-「自作コーパスで有利では」という批判に答えるため、**作者が本文もクエリも正解も書かない**外部評価を用意した（`test/eval/external/`）：実OSS docs（179段落。内訳は ripgrep 105 / bat 32 / fd 27 / tokio 8 / ruff 5 / esbuild・uv 各1 と ripgrep系に偏る）を観測化 → 別LLMが症状ベースのクエリを生成（原文の語彙を使わない）→ 第3のLLMが TREC スタイルで関連度採点。本番コードをそのまま通す。
-
-44クエリ・95%信頼区間つき。**Success@10**＝top-10 に関連が1件でも出れば成功（メモリ注入の運用指標）。**Recall@10**＝古典的定義（取得した関連数 ÷ 全関連数）。
-
-| route | Success@10 [95%CI] | Recall@10 [95%CI] | nDCG@10 | MRR |
-|---|---|---|---|---|
-| recency | 9% [2-18] | 7% [1-14] | 5% | 7% |
-| FTS のみ（キー無し） | 32% [18-43] | 17% [10-25] | 15% | 24% |
-| vector（意味） | **98%** [93-100] | **87%** [80-93] | 66% | 83% |
-| hybrid（最終） | **95%** [89-100] | **86%** [78-92] | 65% | 82% |
-
-意味検索(vector)が圧倒。症状ベースのクエリ（語彙が違う）ゆえ FTS は Success@10 32%・Recall@10 17% に留まり、意味検索が無いと拾えないことが独立に裏づけられた。この外部評価は**等重みRRFが hybrid を vector 未満に劣化させる実欠陥**も暴き、融合を「vector 順位保持＋FTS固有のみ救済」に修正した。
-
-## 想起の質（ハイブリッド: FTS5/BM25 + 埋め込み）
-
-SessionStart の「最近分の詰め込み」だけでなく、**プロンプトに関連する記憶を取り出す**のが ulm の中核。
-2層を Reciprocal Rank Fusion で融合する：
-
-- **字句層**（FTS5 trigram / BM25）: 日本語クエリもトライグラム分解で関連度検索。`vocab_size` 等の特異トークンに強い。
-- **意味層**（埋め込み / 任意）: OpenAI 互換 embeddings で「スタイルが反映されない ⇄ クラスが効かない」のような<b>字面ゼロ一致の同義語</b>を拾う。API キーが無ければ自動で無効化し字句層のみで動く（依存ゼロを保つ）。
-
-拡張評価ハーネス（`node test/eval/recall-eval-large.js 5 2000` — 2000件ノイズ・relevant は古い・4カテゴリ）の実測：
-
-| クエリの種類 | recency | FTSのみ | ハイブリッド |
-|---|---|---|---|
-| 完全一致 | 0% | 100% | 100% |
-| 言い換え | 0% | 73% | 100% |
-| 同義語（字面ゼロ一致） | 0% | 20% | **87%** |
-| タイプミス | 0% | 100% | 100% |
-| **全体 Recall@5** | **0%** | **73%** | **97%** |
-
-（secret 観測は全リトリーバで top-5 に漏れない。回帰テストで固定。）
-
-> 正直な内訳: 上の「FTSのみ 73%」が **API キーが無いときの実力**（依存ゼロの floor）。キーがある時の 97% は主に埋め込みの寄与で、vector 単独でもほぼ同値。FTS の固有価値はキー無しの floor と埋め込み障害時の保険であり、ハイブリッドは「キーの有無で最良経路を自動選択する」ための設計。
+全コマンドとオプションは `ulm help` を参照してください。
 
 ## Claude Code プラグイン
 
@@ -124,6 +126,45 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きません — ulm の観測は**昇格の餌**であり、
 `mine` → 人間レビュー → `promote` を通ったものだけが ref に正式化されます。
 
+## 想起の質（ベンチマーク）
+
+### 外部評価（作者非依存）
+
+「自作コーパスで有利では」という批判に答えるため、**作者が本文もクエリも正解も書かない**外部評価を用意しました（`test/eval/external/`）：実OSS docs（179段落。内訳は ripgrep 105 / bat 32 / fd 27 / tokio 8 / ruff 5 / esbuild・uv 各1 と ripgrep系に偏る）を観測化 → 別LLMが症状ベースのクエリを生成（原文の語彙を使わない）→ 第3のLLMが TREC スタイルで関連度採点。本番コードをそのまま通します。
+
+44クエリ・95%信頼区間つき。**Success@10**＝top-10 に関連が1件でも出れば成功（メモリ注入の運用指標）。**Recall@10**＝古典的定義（取得した関連数 ÷ 全関連数）。
+
+| route | Success@10 [95%CI] | Recall@10 [95%CI] | nDCG@10 | MRR |
+|---|---|---|---|---|
+| recency | 9% [2-18] | 7% [1-14] | 5% | 7% |
+| FTS のみ（キー無し） | 32% [18-43] | 17% [10-25] | 15% | 24% |
+| vector（意味） | **98%** [93-100] | **87%** [80-93] | 66% | 83% |
+| hybrid（最終） | **95%** [89-100] | **86%** [78-92] | 65% | 82% |
+
+意味検索(vector)が圧倒。症状ベースのクエリ（語彙が違う）ゆえ FTS は Success@10 32%・Recall@10 17% に留まり、意味検索が無いと拾えないことが独立に裏づけられました。この外部評価は**等重みRRFが hybrid を vector 未満に劣化させる実欠陥**も暴き、融合を「vector 順位保持＋FTS固有のみ救済」に修正しています。
+
+### ハイブリッド検索の内訳（FTS5/BM25 + 埋め込み）
+
+SessionStart の「最近分の詰め込み」だけでなく、**プロンプトに関連する記憶を取り出す**のが ulm の中核。
+2層を Reciprocal Rank Fusion で融合します：
+
+- **字句層**（FTS5 trigram / BM25）: 日本語クエリもトライグラム分解で関連度検索。`vocab_size` 等の特異トークンに強い
+- **意味層**（埋め込み / 任意）: OpenAI 互換 embeddings で「スタイルが反映されない ⇄ クラスが効かない」のような**字面ゼロ一致の同義語**を拾う。API キーが無ければ自動で無効化し字句層のみで動く（依存ゼロを保つ）
+
+拡張評価ハーネス（`node test/eval/recall-eval-large.js 5 2000` — 2000件ノイズ・relevant は古い・4カテゴリ）の実測：
+
+| クエリの種類 | recency | FTSのみ | ハイブリッド |
+|---|---|---|---|
+| 完全一致 | 0% | 100% | 100% |
+| 言い換え | 0% | 73% | 100% |
+| 同義語（字面ゼロ一致） | 0% | 20% | **87%** |
+| タイプミス | 0% | 100% | 100% |
+| **全体 Recall@5** | **0%** | **73%** | **97%** |
+
+（secret 観測は全リトリーバで top-5 に漏れない。回帰テストで固定。）
+
+> 正直な内訳: 上の「FTSのみ 73%」が **API キーが無いときの実力**（依存ゼロの floor）。キーがある時の 97% は主に埋め込みの寄与で、vector 単独でもほぼ同値。FTS の固有価値はキー無しの floor と埋め込み障害時の保険であり、ハイブリッドは「キーの有無で最良経路を自動選択する」ための設計です。
+
 ## セキュリティ
 
 `ulm` の脅威モデルは「observation は自動注入される特権チャネル」という前提に立ちます。
@@ -135,17 +176,53 @@ CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きま�
 - **exfil 防止**: `mine` の OpenAI 互換 API は base_url を allowlist 検証。機密値は LLM へ送りません。
 - **権威の偽装防止**: 候補の出自（`miner:codex:gpt-5.5` 等）と status を常に表示します。
 
+脆弱性を見つけた場合は、公開 Issue ではなくメンテナへ直接ご連絡ください。
+
 ## ストレージ
 
 - 本体: `$ULM_HOME/memory.db`（SQLite, WAL, `ULM_HOME` 既定 `~/.claude/user-memory`）
 - 控え: `$ULM_HOME/export/*.jsonl`（`ulm export`。secret は別ファイルに分離 + gitignore 自動生成）
 - 設定: `$ULM_HOME/config.json`（deny パターン、注入予算、miner プロバイダ）
 
-詳細な設計は [DESIGN.md](./DESIGN.md) を参照。
+詳細な設計は [DESIGN.md](./DESIGN.md) を参照してください。
+
+## FAQ
+
+**Q. CLAUDE.md や MEMORY.md と何が違う？**
+A. CLAUDE.md は「人が書き、常時注入される確定ルール」。ulm は「まだ確定していない経験則を貯め、関連するときだけ思い出す」層です。確度が上がったものだけを人間の承認で `ref` に昇格させます。
+
+**Q. API キーが無いと使えない？**
+A. 使えます。埋め込み（意味検索）と `mine`（仮説採掘）だけが LLM/API を使う任意機能で、無ければ自動的に FTS5/BM25 のみで動作します。
+
+**Q. 記憶が勝手に増えて汚れない？**
+A. 自動取り込み（`capture`）の観測は `source=auto` として区別され、`mine` の生成物は inbox 隔離。正式な知識（ref）には人間が承認したものしか入りません。`ulm obs archive` / `redact` / `reject-stale` で整理できます。
+
+**Q. 機密情報を書いてしまったら？**
+A. 入口の機密ゲートが既知パターンを自動で `secret` 化します。手動でも `ulm obs secret <id>`（機密化）や `ulm obs redact <id>`（墓石化）が使えます。secret は注入・採掘・通常エクスポートから除外されます。
+
+**Q. 別マシンに移行したい**
+A. `ulm export` で JSONL 控えを書き出し、移行先で `ulm import <dir>` を実行します（プラグインの `memory-export` skill も同じ手順を案内します）。
 
 ## 開発
 
 ```bash
-node --test test/*.test.js          # ユニットテスト（147件）
+node --test test/*.test.js                        # ユニットテスト（153件）
+node test/eval/recall-eval-large.js 5 2000        # 想起評価（ローカル）
 node test/eval/external/run-external-eval.js 10   # 外部評価（要 OPENAI_API_KEY）
 ```
+
+- ランタイムは Node.js >= 22.5・依存ゼロが前提です。**新しい依存パッケージは追加しないでください**
+- `src/gate.js`（機密ゲート）・`src/safepath.js`(パス検証)・人間ゲート（approve/promote の TTY 必須）は安全機構です。緩める変更は受け付けません
+- 設計の背景は [DESIGN.md](./DESIGN.md) にまとまっています
+
+## コントリビュート
+
+バグ報告・機能提案・プルリクエストを歓迎します。
+
+1. Issue で報告・提案する（大きな変更は実装前に相談いただけると確実です）
+2. 変更には可能な限りテストを添える
+3. `node --test test/*.test.js` が全件通ることを確認してから PR を送る
+
+## ライセンス
+
+[MIT](./LICENSE) © bond-ai
