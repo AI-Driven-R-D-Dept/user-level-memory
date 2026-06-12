@@ -112,10 +112,17 @@ export function validateAutoObs(raw, gate, max) {
 
 const DUP_CANDIDATE_K = 3; // 1件あたりの判定候補数
 
-/** 新規テキストに似た既存観測の候補を FTS で引く（閾値判定はしない・候補生成のみ） */
-export function findDupCandidates(store, text, { scopes = null, limit = DUP_CANDIDATE_K } = {}) {
+/**
+ * 新規テキストに似た既存観測の候補を FTS で引く（閾値判定はしない・候補生成のみ）。
+ * 候補は judge プロンプト＝LLM ペイロードに載るため、生成ゲート②（deny パターン + 高エントロピー）を
+ * ここでも適用する（miner/recall/context と同じ二条件で多層防御を一様にする。
+ * 保存後に deny パターンが追加された観測・import 由来の secret 未フラグ観測の外部送信を防ぐ）。
+ */
+export function findDupCandidates(store, text, { scopes = null, limit = DUP_CANDIDATE_K, gate = null } = {}) {
   try {
-    return store.searchObservations({ query: text, scopes, includeSecret: false, includeArchived: false, limit });
+    const hits = store.searchObservations({ query: text, scopes, includeSecret: false, includeArchived: false, limit: limit * 2 });
+    const safe = gate ? hits.filter((o) => !gate.match(o.text) && !detectHighEntropy(o.text)) : hits;
+    return safe.slice(0, limit);
   } catch {
     return []; // 検索失敗は「候補なし」として保存側に倒す
   }
@@ -151,8 +158,9 @@ export function parseDedupVerdicts(raw, items) {
   if (!Array.isArray(arr)) return verdicts;
   for (const v of arr) {
     if (!v || typeof v !== 'object') continue;
-    const i = Number(v.index);
-    if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
+    const i = v.index;
+    // Number() の緩い強制をしない（{"index":null} が 0 に化けて誤マップしないように型で絞る）
+    if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= items.length) continue;
     const dup = v.duplicate_of;
     // その index に実際に提示した候補 id だけを受理（LLM がでっち上げた id で誤スキップしない）
     if (typeof dup === 'string' && items[i].candidates.some((c) => c.id === dup)) verdicts[i] = dup;
@@ -204,7 +212,7 @@ export async function capture(store, config, home, { transcriptPath, project, pr
     const scopes = project ? ['global', project] : null;
     const items = fresh.map((e) => ({
       text: e.text,
-      candidates: findDupCandidates(store, e.text, { scopes }).map((c) => ({ id: c.id, text: String(c.text).slice(0, EXISTING_OBS_CHARS) })),
+      candidates: findDupCandidates(store, e.text, { scopes, gate }).map((c) => ({ id: c.id, text: String(c.text).slice(0, EXISTING_OBS_CHARS) })),
     }));
     // 候補が付いた項目だけを判定に送る（候補ゼロ＝明らかな新規はトークンも呼び出しも使わない）
     const judged = items.map((it, i) => ({ ...it, origIndex: i })).filter((it) => it.candidates.length);

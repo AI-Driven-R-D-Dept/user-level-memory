@@ -132,3 +132,22 @@ test('parseDedupVerdicts: 提示した候補 id のみ受理し、不正は保�
   assert.deepEqual(parseDedupVerdicts('[{"index":9,"duplicate_of":"obs-aaa111"}]', items), [null, null, null]);
   assert.deepEqual(parseDedupVerdicts('判定できませんでした', items), [null, null, null]);
 });
+
+test('findDupCandidates: 生成ゲートで機密様テキストを候補から除外（LLM 送信前の一様防御）', () => {
+  withFreshStore((store) => {
+    // secret フラグは付いていないが deny パターンに一致する import 由来観測
+    store.importRows('observations', [{ id: 'obs-leak01', ts: new Date().toISOString(), project: null, text: 'ユーザーの鍵は AKIA1234567890ABCDEF である', tags: '[]', source: 'import', secret: 0, meta: '{}', pinned: 0, redacted: 0, archived: 0 }]);
+    const safe = store.addObservation({ text: 'ユーザーの鍵の管理は 1Password で行っている', project: null });
+    const gate = compileGate({ deny_patterns: [] });
+    const hits = findDupCandidates(store, 'ユーザーの鍵はどこにあるか', { gate });
+    assert.ok(!hits.some((h) => h.id === 'obs-leak01'), 'deny 一致テキストは judge ペイロードに載せない');
+    assert.ok(hits.some((h) => h.id === safe.id), '安全な候補は残る');
+  });
+});
+
+test('parseDedupVerdicts: index は数値型のみ（null や文字列の緩い強制をしない）', () => {
+  const items = [{ text: 'a', candidates: [{ id: 'obs-aaa111', text: 'x' }] }];
+  assert.deepEqual(parseDedupVerdicts('[{"index":null,"duplicate_of":"obs-aaa111"}]', items), [null]);
+  assert.deepEqual(parseDedupVerdicts('[{"index":"0","duplicate_of":"obs-aaa111"}]', items), [null]);
+  assert.deepEqual(parseDedupVerdicts('[{"index":0,"duplicate_of":"obs-aaa111"}]', items), ['obs-aaa111']);
+});
