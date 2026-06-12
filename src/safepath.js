@@ -2,7 +2,7 @@
 // 脅威: 汚染観測→mine→人間承認→promote が CLAUDE.md 等の自動読込ファイルへ injection を追記する
 // フルチェーンの遮断点。realpath 解決後に危険な書込先を機械的に拒否する。
 import { realpathSync, existsSync, lstatSync } from 'node:fs';
-import { resolve, dirname, basename, sep } from 'node:path';
+import { resolve, dirname, basename, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 
 // 追記すると次セッション以降に自動で読み込まれ/実行されうるファイル・ディレクトリ
@@ -52,6 +52,39 @@ function isInside(child, root) {
  * @returns {{ok: true, path: string} | {ok: false, reason: string}}
  */
 const DANGEROUS_LOWER = new Set([...DANGEROUS_BASENAMES].map((s) => s.toLowerCase()));
+
+/**
+ * promote の skill 化専用の書込先検証。
+ * .claude/ は checkWriteTarget が拒否する自動読込チャネルだが、promote に限り
+ * 「検証済み slug から組み立てた <projectRoot>/.claude/skills/<slug>/SKILL.md」だけを許す。
+ * 任意パスは受け取らない（slug 正規表現が / . を禁じるため traversal 不能）。
+ * 人間ゲート（approve 済みのみ昇格可・--yes/TTY）が前段にある前提の経路。
+ * @returns {{ok: true, path: string} | {ok: false, reason: string}}
+ */
+const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export function checkSkillTarget(slug, projectRoot) {
+  if (!SKILL_SLUG_RE.test(String(slug))) {
+    return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
+  }
+  const root = realpathish(resolve(projectRoot));
+  const dir = join(root, '.claude', 'skills', slug);
+  const target = join(dir, 'SKILL.md');
+  // 経路上の既存 symlink を拒否（リンク差し替えで作業ツリー外へ書かせない）
+  for (const p of [join(root, '.claude'), join(root, '.claude', 'skills'), dir, target]) {
+    try {
+      if (lstatSync(p).isSymbolicLink()) {
+        return { ok: false, reason: `シンボリックリンクを経由する書込は拒否します (${p})` };
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') return { ok: false, reason: 'パスを評価できません' };
+    }
+  }
+  if (existsSync(target)) {
+    return { ok: false, reason: `既に存在します: ${target}（--name で別名を指定してください）` };
+  }
+  return { ok: true, path: target };
+}
 
 export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) {
   const abs = resolve(targetPath);

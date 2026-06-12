@@ -37,7 +37,8 @@ ulm は ref の手前。まだ正式ルールにできない経験則を預か�
 ① 観測がたまる        ulm obs add（追記のみ・削除しない）
 ② 突然変異 — AI       ulm mine: 観測 → 仮説+反例+条件 を inbox へ（candidates.status=inbox）
 ③ 自然選択 — 人間     ulm review/approve/reject: 反例込みで人間が判断
-④ 昇格 — ref へ       ulm promote: 承認済み候補だけを ref ファイルへ追記（人間の操作）
+④ 昇格 — skill へ     ulm promote: 承認済み候補を project の .claude/skills/<name>/SKILL.md へ skill 化
+                       （条件→description。常時注入されず、条件マッチ時のみ本文ロード）
 ```
 
 - **神殿（厳格）**: ref・機密・現在状態。勝手な生成・統合は禁止。
@@ -83,7 +84,7 @@ candidates(
   origin TEXT NOT NULL,          -- manual | miner:<model>（権威の偽装防止: 出自を常に表示）
   project TEXT,
   reviewed_at TEXT,
-  promoted_to TEXT,              -- 昇格先 ref ファイルパス
+  promoted_to TEXT,              -- 昇格先パス（生成された SKILL.md）
   note TEXT NOT NULL DEFAULT ''
 )
 refs(
@@ -109,7 +110,7 @@ ulm inbox                                 # status=inbox の候補一覧（出�
 ulm show <id>                             # obs/cand 詳細
 ulm approve <id> [--note N]               # 人間の操作
 ulm reject <id> [--note N]                # 人間の操作
-ulm promote <id> [--ref <file>]           # approved → ref へ追記（人間の操作）
+ulm promote <id> [--name slug]            # approved → project の .claude/skills へ skill 化
 ulm ref add <path> [--note N] [--project P]
 ulm ref list
 ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -163,7 +164,7 @@ commands/note.md               # /ulm:note   観測を記録
 commands/state.md              # /ulm:state  可変状態の更新
 commands/mine.md               # /ulm:mine   仮説の採掘
 commands/review.md             # /ulm:review inbox を人間レビュー（approve/reject/promote はユーザー指示時のみ）
-commands/promote.md            # /ulm:promote approved を ref へ一括昇格（判断は approve 済み・機械的処理のみ）
+commands/promote.md            # /ulm:promote approved を project の skill へ一括昇格（判断は approve 済み・機械的処理のみ）
 commands/status.md             # /ulm:status 統計と doctor
 skills/memory-recorder/SKILL.md  # 作業中に得た再利用可能なコツを自動で obs add する習慣づけ
 bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビルド不要）
@@ -173,7 +174,13 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
 - **/ulm:review の契約**: Claude は inbox を提示し反例込みで説明するだけ。approve/reject/promote の実行は、ユーザーがその場で明示した指示があるときのみ。skill/command 本文に明記する。
 - **/ulm:promote の契約**: 人間ゲートの本体は approve（inbox の選別）にある。approved → promoted は機械的処理なので、
   /ulm:promote は approved の候補を一括で `promote --yes` してよい（--yes はユーザーが command を起動したことの明示指示）。
-  inbox には触れない。昇格先制限（safepath）と origin の常時記録は従来どおり機械的に効く。
+  inbox には触れない。
+- **昇格先は project の skill**: promote は候補の project の作業ツリーで実行し、検証済み slug から組み立てた
+  `.claude/skills/<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
+  候補と現在地の project 不一致は拒否）。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
+  skill は常時注入されない（description マッチ時のみロード）ため、昇格しても context 予算を消費しない。
+  旧方式（ULM_HOME/ref への md 追記 + SessionStart でのパス注入）は廃止。refs テーブルと `ulm ref add` は
+  手動登録の正式規範ポインタ用として残る。
 - memory-recorder skill: 「条件付きで再利用できる知見」を見つけたら `ulm obs add --source claude` で記録するよう促す（記録は観測のみ。候補化は mine の仕事）。
 
 ## 8. セキュリティ脅威モデル（PDF の3つの落とし穴）
@@ -182,7 +189,7 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
 |---|---|
 | 生成時の漏れ（機密を外部送信） | §5 生成ゲート: 機械的除外を LLM 呼び出しの前段に固定 |
 | 隠し命令の保存（prompt injection の永続化） | 候補は inbox 隔離・自動注入なし・人間レビュー必須。注入されるのは観測/state/ref のみで、observation はユーザー由来 or Claude が記録した事実テキスト |
-| 権威の偽装（AI 仮説が育った知識の顔をする） | origin/status の常時表示。ref へ昇格できるのは人間が approve した候補のみ（昇格自体は /ulm:promote で一括処理可） |
+| 権威の偽装（AI 仮説が育った知識の顔をする） | origin/status の常時表示。skill へ昇格できるのは人間が approve した候補のみで、生成される SKILL.md にも origin・承認日・候補 ID が機械的に記録される |
 
 ## 9. テスト戦略
 

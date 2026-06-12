@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,10 +10,11 @@ const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js')
 
 /** ulm を子プロセスで実行。{ status, stdout, stderr } を返す（非TTY 環境）。
  *  spawnSync を使う: execFileSync は成功時に stderr を返せず、警告系（⚠）の検証ができない。 */
-function run(home, args, { input } = {}) {
+function run(home, args, { input, cwd } = {}) {
   const r = spawnSync('node', [BIN, ...args], {
     env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
     input: input ?? '',
+    cwd,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -109,18 +110,82 @@ test('CLI: 非TTY の approve は --yes なしで拒否される（人間ゲー�
   }
 });
 
-test('CLI: promote は CLAUDE.md など危険な書込先を拒否', () => {
+/** promote テスト用: git root を持つ仮 project ディレクトリを作る */
+function freshProject(name) {
+  const root = join(mkdtempSync(join(tmpdir(), 'ulm-proj-')), name);
+  mkdirSync(join(root, '.git'), { recursive: true });
+  return root;
+}
+
+test('CLI: promote は project の .claude/skills に SKILL.md を生成する', () => {
   const home = freshHome();
+  const proj = freshProject('demo-proj');
   try {
     run(home, ['init']);
-    run(home, ['cand', 'add', '昇格テスト']);
+    run(home, ['cand', 'add', '昇格テスト仮説', '--conditions', 'デモ作業のとき'], { cwd: proj });
     const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
     run(home, ['approve', id, '--yes']);
-    const r = run(home, ['promote', id, '--yes', '--ref', join(home, '..', 'CLAUDE.md')]);
-    assert.equal(r.status, 1);
-    assert.match(r.stderr, /昇格先を拒否|自動読込|許可された場所/);
+    const r = run(home, ['promote', id, '--yes', '--name', 'demo-rule'], { cwd: proj });
+    assert.equal(r.status, 0, r.stderr);
+    const skillPath = join(proj, '.claude', 'skills', 'demo-rule', 'SKILL.md');
+    const body = readFileSync(skillPath, 'utf8');
+    assert.match(body, /^---\nname: demo-rule\n/);
+    assert.match(body, /description: .*デモ作業のとき/);
+    assert.match(body, /# 昇格テスト仮説/);
+    assert.match(body, new RegExp(`出自: .*\\(${id}\\)`));
+    // DB 側にも昇格先が記録される
+    const cand = JSON.parse(run(home, ['show', id, '--json']).stdout);
+    assert.equal(cand.status, 'promoted');
+    // checkSkillTarget は project root を realpath 解決する（macOS の /var → /private/var 等）
+    assert.equal(cand.promoted_to, realpathSync(skillPath));
   } finally {
     rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote は候補と現在地の project 不一致を拒否する', () => {
+  const home = freshHome();
+  const projA = freshProject('proj-a');
+  const projB = freshProject('proj-b');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '別projectの仮説'], { cwd: projA });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes'], { cwd: projB });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /proj-a/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(projA), { recursive: true, force: true });
+    rmSync(dirname(projB), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote は不正な skill 名と既存 skill への上書きを拒否する', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'slug検証その1'], { cwd: proj });
+    run(home, ['cand', 'add', 'slug検証その2'], { cwd: proj });
+    const ids = JSON.parse(run(home, ['inbox', '--json']).stdout).map((c) => c.id);
+    for (const id of ids) run(home, ['approve', id, '--yes']);
+    // 不正 slug（traversal・大文字・空白）はすべて拒否
+    for (const bad of ['../escape', 'Bad Name', 'UPPER']) {
+      const r = run(home, ['promote', ids[0], '--yes', '--name', bad], { cwd: proj });
+      assert.equal(r.status, 1, `slug "${bad}" が通ってしまった`);
+      assert.match(r.stderr, /skill 名は/);
+    }
+    // 同名 skill が既にある場合は上書きせず拒否
+    assert.equal(run(home, ['promote', ids[0], '--yes', '--name', 'same-name'], { cwd: proj }).status, 0);
+    const r2 = run(home, ['promote', ids[1], '--yes', '--name', 'same-name'], { cwd: proj });
+    assert.equal(r2.status, 1);
+    assert.match(r2.stderr, /既に存在します/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
   }
 });
 

@@ -1,6 +1,6 @@
 // ulm CLI — コマンドディスパッチ
 import { parseArgs } from 'node:util';
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { ulmHome, ensureHome, loadConfig } from './config.js';
 import { openStore } from './store.js';
@@ -11,8 +11,8 @@ import { mine } from './miner.js';
 import { capture, findDupCandidates } from './capture.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
-import { checkWriteTarget } from './safepath.js';
-import { resolveProject } from './project.js';
+import { checkWriteTarget, checkSkillTarget } from './safepath.js';
+import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
 const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI）
@@ -35,7 +35,7 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm cand edit <id> [--conditions C] [--note N]
   ulm inbox [--json] | ulm show <id>
   ulm approve|reject <id> [--note N] [--yes]
-  ulm promote <id> [--ref file.md] [--yes]          承認済みを ref へ昇格（人間の操作）
+  ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills へ skill 化
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -511,7 +511,7 @@ function cmdReview(args, status) {
   return withStore((store) => {
     const c = store.reviewCandidate(positionals[0], status, values.note);
     console.log(`✓ ${c.id} を ${status === 'approved' ? '承認' : '却下'}しました`);
-    if (status === 'approved') console.log(`  昇格するには: ulm promote ${c.id} [--ref <file.md>]`);
+    if (status === 'approved') console.log(`  昇格するには: ulm promote ${c.id} [--name <slug>]（project の .claude/skills へ skill 化）`);
     return 0;
   });
 }
@@ -528,37 +528,48 @@ function cmdRejectStale(args) {
 
 function cmdPromote(args) {
   const { values, positionals } = parse(args, {
-    ref: { type: 'string' },
+    name: { type: 'string' },
     yes: { type: 'boolean', default: false },
   }, { positionals: 1 });
   requireHuman(values, 'promote');
-  return withStore((store, config, home) => {
+  return withStore((store) => {
     const c = store.getCandidate(positionals[0]);
     if (!c) throw new Error(`候補が見つかりません: ${positionals[0]}`);
     if (c.status === 'promoted') throw new Error(`既に昇格済みです: ${c.promoted_to}`);
     if (c.status !== 'approved') {
       throw new Error(`昇格できるのは approved の候補のみです（現在: ${c.status}）。まず ulm approve ${c.id}`);
     }
-    const refRoot = join(home, 'ref');
-    const target = values.ref ? resolve(values.ref) : join(refRoot, 'promoted.md');
-    const check = checkWriteTarget(target, { refRoot, allowRoots: [process.cwd()] });
+    // 昇格先はその候補の project の .claude/skills。候補と現在地の project が
+    // 食い違ったまま書くと別 project に規範が混入するため、一致を要求する。
+    const proj = projectInfo(process.cwd());
+    if (c.project && c.project !== proj.name) {
+      throw new Error(`候補は project '${c.project}' のものです。その project の作業ツリーで実行してください（現在: '${proj.name}'）`);
+    }
+    const slug = values.name ?? c.id.replace(/^cand-/, 'ulm-');
+    const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 
-    const block = [
-      ``,
-      `## ${c.hypothesis}`,
-      ``,
+    // description = 発動条件。skill は常時注入されず、ここのマッチで初めて本文がロードされる
+    const oneline = (s) => String(s).replace(/\s+/g, ' ').trim();
+    const description = oneline([c.conditions, c.hypothesis].filter(Boolean).join(' — ')).slice(0, 300);
+    const skill = [
+      '---',
+      `name: ${slug}`,
+      `description: ${JSON.stringify(description)}`,
+      '---',
+      '',
+      `# ${oneline(c.hypothesis)}`,
+      '',
       ...(c.conditions ? [`- 条件: ${c.conditions}`] : []),
       ...c.counterexamples.map((x) => `- 反例: ${x}`),
       ...(c.evidence.length ? [`- 根拠: ${c.evidence.join(', ')}`] : []),
       `- 出自: ${c.origin} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
-      ``,
+      '',
     ].join('\n');
     mkdirSync(dirname(check.path), { recursive: true });
-    appendFileSync(check.path, block);
+    writeFileSync(check.path, skill);
     store.markPromoted(c.id, check.path);
-    store.addRef({ path: check.path, note: 'ulm promote による昇格先', project: c.project });
-    console.log(`✓ ${c.id} を ref へ昇格: ${check.path}`);
+    console.log(`✓ ${c.id} を skill へ昇格: ${check.path}`);
     return 0;
   });
 }

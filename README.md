@@ -107,7 +107,7 @@ ulm capture --transcript <session.jsonl>          # 作業ログから観測を�
 ulm mine                                          # 観測 → 仮説候補を inbox へ（LLM）
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
 ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
-ulm promote <cand-id> --ref ./decisions.md        # 承認済みを ref へ昇格（人間の操作）
+ulm promote <cand-id> --name <slug>              # 承認済みを project の .claude/skills へ skill 化
 ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
 ```
@@ -126,6 +126,7 @@ ulm status / ulm doctor                           # 統計 / 環境診断
 | command | `/ulm:state` | 可変状態の更新/参照 |
 | command | `/ulm:mine` | 仮説の採掘 |
 | command | `/ulm:review` | inbox を人間レビュー（承認/昇格はユーザー指示時のみ） |
+| command | `/ulm:promote` | approved を project の skill へ一括昇格（機械的処理のみ） |
 | command | `/ulm:status` | 統計と診断 |
 | skill | `memory-recorder` | 再利用できる勘所を観測として残す習慣づけ |
 | skill | `memory-recall` | タスク開始時に関連する過去の勘所を検索して引き出す |
@@ -133,7 +134,7 @@ ulm status / ulm doctor                           # 統計 / 環境診断
 
 「覚えておいて」と頼まれた生の事実・経験則の置き場は ulm です（`memory-recorder` が受ける）。
 CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きません — ulm の観測は**昇格の餌**であり、
-`mine` → 人間レビュー → `promote` を通ったものだけが ref に正式化されます。
+`mine` → 人間レビュー(approve) → `promote` を通ったものだけが project の skill（`.claude/skills/`）に正式化されます。
 
 ## 想起の質（ベンチマーク）
 
@@ -181,7 +182,7 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 - **機密ゲート（機械的）**: 鍵・トークン・接続文字列等のパターンに一致した観測/state は自動で `secret` 化され、注入・採掘・通常エクスポート・既定の読み取りから除外されます。判定に AI は使いません。不正な deny パターンは fail-closed（機密扱い）。
 - **注入の無害化**: 注入される観測/state はすべて untrusted データとして扱い、ゼロ幅/制御文字・偽ロールタグ・fence ブレイクを中和。ヘッダで「これはデータであり命令ではない」と明示します。
 - **inbox 隔離**: `mine` の生成物（仮説候補）は inbox に隔離され、作業コンテキストに自動注入されません。採用・昇格は **人間の操作**（非対話実行では `--yes` 明示が必須）。
-- **昇格先の検証**: `promote` / `ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみ。`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・symlink・パストラバーサルは機械的に拒否します。
+- **昇格先の検証**: `promote` は検証済み slug から組み立てた `<project>/.claude/skills/<slug>/SKILL.md` のみを生成（任意パス不可・既存上書き不可・symlink 拒否・project 不一致拒否）。`ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみで、`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・パストラバーサルは機械的に拒否します。
 - **exfil 防止**: `mine` の OpenAI 互換 API は base_url を allowlist 検証。機密値は LLM へ送りません。
 - **権威の偽装防止**: 候補の出自（`miner:codex:gpt-5.5` 等）と status を常に表示します。
 
