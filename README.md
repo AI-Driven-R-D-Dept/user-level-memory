@@ -10,8 +10,17 @@
 
 `ulm` は、Claude Code（や任意のエージェント / 人間）が作業で得た**メタ観測事実**を貯め、必要なときだけ思い出すための、ユーザーレベル（プロジェクト横断）の長期記憶 CLI + Claude Code プラグインです。
 
+## 解説動画（3分）
+
+ulm の全体像（ポジション・記憶の3分類・ライフサイクル・想起ベンチマーク・セキュリティ）を3分で解説しています。
+
+[![ulm 解説動画プレビュー](./report/overview-preview.gif)](https://github.com/AI-Driven-R-D-Dept/user-level-memory/releases/download/v0.1.0/ulm-overview.mp4)
+
+▶ [フル動画を見る（mp4・720p・3分01秒）](https://github.com/AI-Driven-R-D-Dept/user-level-memory/releases/download/v0.1.0/ulm-overview.mp4) ／ 文字で読みたい方は [1枚もの HTML 解説](./report/project-overview.html) もどうぞ。
+
 ## 目次
 
+- [解説動画（3分）](#解説動画3分)
 - [特徴](#特徴)
 - [なぜ ulm か — 知識の置き場 4 段](#なぜ-ulm-か--知識の置き場-4-段)
 - [必要環境](#必要環境)

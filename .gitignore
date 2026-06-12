@@ -6,6 +6,8 @@
 
 # ulm
 node_modules/
+# 解説動画の作業ディレクトリ（成果物は report/ と GitHub Release に置く）
+explainer-video-work/
 .DS_Store
 *.log
 # 機密の二重防御: 鍵ファイル類はリポジトリに入れない（ULM_HOME は既定でリポ外）

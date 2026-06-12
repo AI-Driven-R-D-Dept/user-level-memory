@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ulm — user-level memory プロジェクト解説</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-card: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #9da7b3;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --accent3: #ffa657;
+    --accent4: #d2a8ff;
+    --danger: #ff7b72;
+    --code-bg: #11151c;
+    --mono: "SFMono-Regular", "Cascadia Code", Consolas, "BIZ UDGothic", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 70px; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+    line-height: 1.8;
+    font-size: 15.5px;
+  }
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(13,17,23,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 24px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  nav .logo { font-weight: 700; color: var(--accent2); font-family: var(--mono); font-size: 15px; }
+  nav a { color: var(--text-dim); text-decoration: none; font-size: 13px; white-space: nowrap; }
+  nav a:hover { color: var(--accent); }
+  /* ---------- layout ---------- */
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 120px; }
+  header.hero { text-align: center; padding: 72px 0 48px; }
+  .hero h1 {
+    font-size: 44px; font-weight: 800; letter-spacing: -.02em;
+    background: linear-gradient(90deg, var(--accent2), var(--accent), var(--accent4));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    font-family: var(--mono);
+  }
+  .hero .sub { font-size: 19px; color: var(--text); margin-top: 14px; font-weight: 600; }
+  .hero .sub2 { color: var(--text-dim); margin-top: 8px; max-width: 720px; margin-left: auto; margin-right: auto; }
+  .badges { display: flex; gap: 8px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }
+  .badge {
+    font-family: var(--mono); font-size: 12px; padding: 4px 12px;
+    border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim);
+    background: var(--bg-soft);
+  }
+  .badge b { color: var(--accent2); font-weight: 600; }
+  /* ---------- sections ---------- */
+  section { margin-top: 72px; }
+  h2 {
+    font-size: 27px; font-weight: 700; padding-bottom: 12px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .num { color: var(--accent); font-family: var(--mono); margin-right: 10px; font-size: 21px; }
+  h3 { font-size: 19px; margin: 32px 0 14px; color: var(--accent); }
+  h4 { font-size: 16px; margin: 22px 0 10px; color: var(--accent3); }
+  p { margin: 12px 0; }
+  ul, ol { margin: 12px 0 12px 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  em { color: var(--accent3); font-style: normal; }
+  a { color: var(--accent); }
+  /* ---------- tables ---------- */
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 9px 13px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); color: var(--accent); font-weight: 600; white-space: nowrap; }
+  td code, li code, p code {
+    font-family: var(--mono); font-size: .88em; background: var(--code-bg);
+    padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--accent2);
+  }
+  tr.hl td { background: rgba(126,231,135,.07); }
+  td.good { color: var(--accent2); font-weight: 700; }
+  td.bad { color: var(--danger); }
+  /* ---------- code blocks ---------- */
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 20px; overflow-x: auto; margin: 16px 0;
+    font-family: var(--mono); font-size: 13px; line-height: 1.7; color: #c9d1d9;
+  }
+  pre .c { color: #8b949e; }      /* comment */
+  pre .k { color: var(--accent4); } /* keyword */
+  pre .s { color: var(--accent2); } /* string */
+  pre .cmd { color: var(--accent3); font-weight: 600; }
+  /* ---------- cards ---------- */
+  .grid { display: grid; gap: 16px; margin: 18px 0; }
+  .grid.c2 { grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+  .grid.c3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .card h5 { font-size: 15px; margin-bottom: 8px; color: var(--accent2); display: flex; gap: 8px; align-items: center; }
+  .card h5 .tag {
+    font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-dim); font-weight: 400;
+  }
+  .card p, .card li { font-size: 13.5px; color: var(--text-dim); }
+  .card p strong, .card li strong { color: var(--text); }
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 4px solid var(--accent); background: rgba(88,166,255,.07);
+    padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 18px 0; font-size: 14px;
+  }
+  .note.warn { border-color: var(--accent3); background: rgba(255,166,87,.07); }
+  .note.danger { border-color: var(--danger); background: rgba(255,123,114,.07); }
+  .note.good { border-color: var(--accent2); background: rgba(126,231,135,.07); }
+  .note b:first-child { display: block; margin-bottom: 4px; }
+  /* ---------- flow diagram ---------- */
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 24px 0; flex-wrap: wrap; }
+  .flow .step {
+    flex: 1; min-width: 165px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; position: relative; margin-right: 34px;
+  }
+  .flow .step:last-child { margin-right: 0; }
+  .flow .step::after {
+    content: "→"; position: absolute; right: -27px; top: 50%; transform: translateY(-50%);
+    color: var(--accent); font-size: 20px; font-weight: 700;
+  }
+  .flow .step:last-child::after { content: none; }
+  .flow .step .ph { font-family: var(--mono); font-size: 11px; color: var(--accent3); }
+  .flow .step .ti { font-weight: 700; font-size: 14px; margin: 3px 0; }
+  .flow .step .de { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+  .flow .step.human { border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(126,231,135,.25); }
+  .flow .step.ai { border-color: var(--accent4); }
+  /* ---------- arch boxes ---------- */
+  .zone { border: 1px dashed var(--border); border-radius: 14px; padding: 16px 18px; margin: 14px 0; }
+  .zone > .zt { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+  .zone.temple { border-color: rgba(126,231,135,.5); }
+  .zone.temple > .zt { color: var(--accent2); }
+  .zone.playground { border-color: rgba(210,168,255,.5); }
+  .zone.playground > .zt { color: var(--accent4); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; background: var(--bg-soft);
+    border: 1px solid var(--border); border-radius: 8px; padding: 5px 11px; color: var(--text);
+  }
+  .chip small { color: var(--text-dim); margin-left: 6px; font-size: 11px; }
+  /* ---------- bar chart ---------- */
+  .bench { margin: 18px 0; }
+  .bench .row { display: grid; grid-template-columns: 190px 1fr 64px; align-items: center; gap: 12px; margin: 8px 0; font-size: 13px; }
+  .bench .lab { text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+  .bench .track { background: var(--bg-soft); border-radius: 6px; height: 22px; overflow: hidden; border: 1px solid var(--border); }
+  .bench .bar { height: 100%; border-radius: 5px 0 0 5px; }
+  .bench .val { font-family: var(--mono); font-weight: 700; }
+  footer { margin-top: 90px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 13px; text-align: center; }
+  @media (max-width: 720px) {
+    .hero h1 { font-size: 32px; }
+    .flow { flex-direction: column; }
+    .flow .step { margin-right: 0; margin-bottom: 30px; }
+    .flow .step::after { content: "↓"; right: 50%; top: auto; bottom: -26px; transform: translateX(50%); }
+    .bench .row { grid-template-columns: 110px 1fr 52px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">ulm</span>
+  <a href="#what">概要</a>
+  <a href="#position">ポジション</a>
+  <a href="#types">記憶の3分類</a>
+  <a href="#lifecycle">ライフサイクル</a>
+  <a href="#arch">アーキテクチャ</a>
+  <a href="#plugin">プラグイン</a>
+  <a href="#recall">想起</a>
+  <a href="#security">セキュリティ</a>
+  <a href="#storage">ストレージ</a>
+  <a href="#cli">CLI</a>
+  <a href="#test">テスト</a>
+  <a href="#faq">FAQ</a>
+</nav>
+
+<div class="wrap">
+
+<header class="hero">
+  <h1>ulm — user-level memory</h1>
+  <div class="sub">作業で得たコツを、次の仕事で迷わず使う。</div>
+  <div class="sub2">Claude Code（や任意のエージェント / 人間）が作業で得た<strong>メタ観測事実</strong>を貯め、必要なときだけ思い出すための、ユーザーレベル（プロジェクト横断）長期記憶 CLI + Claude Code プラグイン。</div>
+  <div class="badges">
+    <span class="badge">License: <b>MIT</b></span>
+    <span class="badge">Node.js <b>&ge; 22.5</b></span>
+    <span class="badge">依存パッケージ <b>0</b></span>
+    <span class="badge">ビルド <b>不要</b></span>
+    <span class="badge">tests <b>153 passed</b></span>
+    <span class="badge">src 全体 <b>約3,300行</b></span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section id="what">
+  <h2><span class="num">01</span>このプロジェクトは何か</h2>
+  <p><code>ulm</code> は、CLAUDE.md / ref / beads(bd) の<strong>次に来る</strong>「現場の勘所を育てる<em>生もの</em>」の記憶レイヤーです。AI エージェントとの作業中に生まれる「node:sqlite は Node 22.5 未満で落ちる」「このリポジトリでは X すると Y が壊れる」のような<strong>まだ正式ルールにできない経験則</strong>を預かり、検証できたものだけを<strong>人間の承認</strong>で正式規範（ref）へ昇格させます。</p>
+  <p>技術的な特徴は徹底したミニマリズムです。ランタイムは Node.js &ge; 22.5 のみで、SQLite は <code>node:sqlite</code>（標準モジュール）を使用。<strong>依存パッケージはゼロ、npm install もビルドも不要</strong>で、<code>git clone</code> してすぐ動きます。プラグイン配布時に何もインストールさせないことを最優先した選定です。</p>
+  <div class="grid c3">
+    <div class="card">
+      <h5>🧠 記憶を腐り方で3分類</h5>
+      <p>観測（追記のみ・腐らない）/ 可変状態（上書き + TTL）/ 仮説候補（inbox で育成）。全部混ぜずに性質ごとに扱う。</p>
+    </div>
+    <div class="card">
+      <h5>🔍 普段は隠し、関連分だけ注入</h5>
+      <p>SessionStart では state・ref・ピン留め・最近分のみ。プロンプト連動の動的想起は BM25 + 埋め込みのハイブリッド検索。</p>
+    </div>
+    <div class="card">
+      <h5>👤 正式化は人間が決める</h5>
+      <p><code>mine</code> の生成物は inbox 隔離。承認・ref への昇格は人間の操作だけが行える（自動採用は禁止）。</p>
+    </div>
+    <div class="card">
+      <h5>🔒 機密の門番は機械的ルール</h5>
+      <p>鍵・トークン等は正規表現パターンで入口にて自動 <code>secret</code> 化。判定に AI は使わない。</p>
+    </div>
+    <div class="card">
+      <h5>📦 依存ゼロ・ビルド不要</h5>
+      <p><code>node:sqlite</code> のみで動作する plain ESM JS + JSDoc。テストも <code>node --test</code> で追加依存なし。</p>
+    </div>
+    <div class="card">
+      <h5>📊 外部評価つき</h5>
+      <p>作者非依存の評価コーパスで Success@10 95%。等重み RRF の実欠陥を暴いて融合方式を修正した実績も。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="position">
+  <h2><span class="num">02</span>ポジション — 知識の置き場 4 段</h2>
+  <p>AI エージェントの「知識の置き場」には階層があります。ulm はそのうち、<strong>確定前の揺れている知識</strong>を受け持つ中間層です。</p>
+  <table>
+    <thead><tr><th>層</th><th>役割</th><th>性質</th></tr></thead>
+    <tbody>
+      <tr><td><code>CLAUDE.md</code></td><td>常に守るルール</td><td>常時注入・人が書く</td></tr>
+      <tr><td><code>ref</code></td><td>人が吟味した正式規範</td><td>承認済み・安定</td></tr>
+      <tr><td><code>bd</code>（beads）</td><td>課題の構造（依存グラフ・タスク文脈）</td><td>セッション〜プロジェクト規模</td></tr>
+      <tr class="hl"><td><strong><code>ulm</code>（本プロジェクト）</strong></td><td><strong>現場の勘所を育てる「生もの」</strong></td><td><strong>揺れている知識の中間層</strong></td></tr>
+    </tbody>
+  </table>
+  <p>ulm は <code>ref</code> の手前に位置します。「覚えておいて」と頼まれた生の事実・経験則の置き場は ulm です。CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きません — ulm の観測は<strong>昇格の餌</strong>であり、<code>mine</code> → 人間レビュー → <code>promote</code> を通ったものだけが ref に正式化されます。</p>
+
+  <h3>設計原則（4箇条）</h3>
+  <ol>
+    <li><strong>記憶は全部混ぜず、性質（腐り方）ごとに分けて扱う。</strong></li>
+    <li><strong>普段は隠し、関連する分だけ作業中に差し込む。</strong></li>
+    <li><strong>仮説は遊び場で育て、人間の承認で正式化する。</strong>（自動採用は禁止）</li>
+    <li><strong>機密の門番は AI ではなく機械的ルール。</strong>（パス・タグ・パターンで入口で止める）</li>
+  </ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="types">
+  <h2><span class="num">03</span>記憶の3分類 — 「どう腐るか」で扱いを変える</h2>
+  <p>記憶を一律に扱うと、変わらない事実と古くなる状態と未検証の仮説が混ざって信頼できなくなります。ulm は<strong>腐り方</strong>を軸に3種類へ分離します。</p>
+  <table>
+    <thead><tr><th>種類</th><th>例</th><th>どう腐るか</th><th>扱い方</th><th>テーブル / コマンド</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>A. 観測</strong><br>(observation)</td>
+        <td>「6月のA/Bで赤ボタンが+3pt」</td>
+        <td>腐らない<br>（過去は変わらない）</td>
+        <td>消さず追記するだけ</td>
+        <td><code>observations</code><br><code>ulm obs add</code></td>
+      </tr>
+      <tr>
+        <td><strong>B. 仮説候補</strong><br>(candidate)</td>
+        <td>「赤ボタンは"軽い操作のとき"有効」</td>
+        <td>条件が本体<br>（どこで効くか）</td>
+        <td>inbox で育て、人が吟味して ref に昇格</td>
+        <td><code>candidates</code><br><code>ulm mine / approve</code></td>
+      </tr>
+      <tr>
+        <td><strong>C. 可変状態</strong><br>(state)</td>
+        <td>「今の担当 / 作業中の方針」</td>
+        <td>新しい値が古い値を無効化</td>
+        <td>上書き + 期限切れ(TTL)は無視</td>
+        <td><code>states</code><br><code>ulm state set</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>加えて <strong>ref ポインタ</strong>（正式ルールの所在だけを持つ）を <code>refs</code> テーブルで管理します。ref 本文は ulm の外（Markdown ファイル）にあり、ulm はその場所と注記だけを知っています。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="lifecycle">
+  <h2><span class="num">04</span>ライフサイクル — 神殿と遊び場</h2>
+  <p>知識が「観測 → 仮説 → 正式規範」へ育つ流れは、進化のメタファーで設計されています。<strong>突然変異は AI が、自然選択は人間が</strong>担当します。</p>
+
+  <div class="flow">
+    <div class="step">
+      <div class="ph">① 蓄積</div>
+      <div class="ti">観測がたまる</div>
+      <div class="de"><code>ulm obs add</code> / Stop hook の自動 capture。追記のみ・削除しない。</div>
+    </div>
+    <div class="step ai">
+      <div class="ph">② 突然変異 — AI</div>
+      <div class="ti">仮説の採掘</div>
+      <div class="de"><code>ulm mine</code>: 観測 → 仮説 + 反例 + 条件を inbox へ（status=inbox）。</div>
+    </div>
+    <div class="step human">
+      <div class="ph">③ 自然選択 — 人間</div>
+      <div class="ti">レビュー</div>
+      <div class="de"><code>ulm review / approve / reject</code>: 反例込みで人間が判断。</div>
+    </div>
+    <div class="step human">
+      <div class="ph">④ 昇格 — 人間</div>
+      <div class="ti">ref へ正式化</div>
+      <div class="de"><code>ulm promote</code>: 承認済み候補だけを ref ファイルへ追記。</div>
+    </div>
+  </div>
+
+  <div class="grid c2">
+    <div class="zone temple">
+      <div class="zt">⛩ 神殿（厳格ゾーン）</div>
+      <div class="chips">
+        <span class="chip">ref<small>正式規範</small></span>
+        <span class="chip">機密 (secret)<small>機械的に隔離</small></span>
+        <span class="chip">現在状態 (state)<small>上書きのみ</small></span>
+      </div>
+      <p style="font-size:13px; color:var(--text-dim); margin-top:10px;">勝手な生成・統合は禁止。AI は触れない。</p>
+    </div>
+    <div class="zone playground">
+      <div class="zt">🛝 遊び場（創発OKゾーン）</div>
+      <div class="chips">
+        <span class="chip">candidates (inbox)<small>仮説の苗床</small></span>
+      </div>
+      <p style="font-size:13px; color:var(--text-dim); margin-top:10px;">自由に生成してよいが、<strong>普段の作業コンテキストには絶対に自動注入しない</strong>（件数の通知のみ）。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="arch">
+  <h2><span class="num">05</span>アーキテクチャ — コード構成</h2>
+  <p>全体で約 3,300 行のコンパクトな構成です。エントリは <code>bin/ulm.js</code>（18行）で、実体は <code>src/</code> の各モジュールに分かれています。</p>
+  <pre>user-level-memory/
+├── bin/ulm.js              <span class="c"># CLI エントリ（プラグインに同梱・ビルド不要）</span>
+├── src/
+│   ├── cli.js       (903行) <span class="c"># コマンドのルーティングと引数処理</span>
+│   ├── store.js     (682行) <span class="c"># SQLite ストレージ層（CRUD・FTS5・ベクタ格納）</span>
+│   ├── gate.js      (362行) <span class="c"># 機密ゲート（deny パターン・高エントロピー検出・無害化）</span>
+│   ├── miner.js     (307行) <span class="c"># 仮説採掘（codex / OpenAI 互換プロバイダ抽象）</span>
+│   ├── context.js   (182行) <span class="c"># SessionStart 注入コンテキスト生成（予算管理）</span>
+│   ├── capture.js   (132行) <span class="c"># Stop hook での transcript からの自動観測抽出</span>
+│   ├── embed.js     (114行) <span class="c"># OpenAI 互換 embeddings クライアント（任意機能）</span>
+│   ├── safepath.js  (112行) <span class="c"># promote / ref add 書込先のパス検証</span>
+│   ├── recall.js    (108行) <span class="c"># ハイブリッド想起（FTS×vector の融合）</span>
+│   ├── config.js    (106行) <span class="c"># $ULM_HOME/config.json の読み書き</span>
+│   ├── doctor.js     (74行) <span class="c"># 環境診断</span>
+│   ├── exporter.js   (52行) <span class="c"># JSONL エクスポート（secret 分離）</span>
+│   ├── util.js / project.js / ids.js   <span class="c"># 補助（TTL パース・project 解決・ハッシュID）</span>
+├── test/ (13 ファイル + eval/) <span class="c"># node --test、153 件 + 想起評価ハーネス</span>
+├── commands/  skills/  hooks/  scripts/  .claude-plugin/  <span class="c"># Claude Code プラグイン</span>
+└── DESIGN.md               <span class="c"># 設計の中核ドキュメント</span></pre>
+
+  <h3>ID 規約</h3>
+  <p>beads に倣い、連番ではなくハッシュ ID（<code>obs-a1b2c3</code> / <code>cand-x9y8z7</code> / <code>ref-…</code>）を採用。並行追記でも衝突しません。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="plugin">
+  <h2><span class="num">06</span>Claude Code プラグイン — 記録を「お願い」でなく「仕組み」に</h2>
+  <p>プラグイン（plugin 名: <code>ulm</code>）は 4 つの hook・5 つのコマンド・3 つの skill で構成され、記憶の記録と想起をセッションのライフサイクルに織り込みます。hooks は <code>${CLAUDE_PLUGIN_ROOT}</code> 経由でスクリプトを参照するため、インストール先に依存しません。</p>
+
+  <h3>hooks — セッションライフサイクルへの織り込み</h3>
+  <table>
+    <thead><tr><th>hook</th><th>タイミング</th><th>動作</th></tr></thead>
+    <tbody>
+      <tr><td><code>SessionStart</code></td><td>startup / resume / clear / compact</td><td><code>ulm context --hook</code> で state・ref・ピン留め・最近の観測を <code>additionalContext</code> として注入（fail-open、timeout 10秒）</td></tr>
+      <tr><td><code>UserPromptSubmit</code></td><td>プロンプト送信ごと</td><td><code>ulm recall --hook</code> でプロンプトに関連する記憶をハイブリッド検索して動的注入（timeout 8秒）</td></tr>
+      <tr><td><code>Stop</code></td><td>応答完了時（async）</td><td><code>ulm capture --hook</code> で作業 transcript から再利用可能な観測を LLM 抽出し <code>source=auto</code> で記録（timeout 60秒・fail-open）</td></tr>
+      <tr><td><code>SessionEnd</code></td><td>セッション終了時</td><td><code>ulm export --quiet</code> で JSONL 控えを更新（push はしない）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <b>2経路の注入の使い分け</b>
+    SessionStart は「無条件だが厳選」（state / ref / pin / 最近分のみ、予算: 観測10件・全体4000字）、UserPromptSubmit は「条件付きだが深掘り」（古い記憶でもプロンプトに関連すれば拾う）。自動 capture された <code>source=auto</code> の未レビュー観測は SessionStart には出さず、recall の関連時のみに委ねます。
+  </div>
+
+  <h3>commands / skills</h3>
+  <div class="grid c2">
+    <div class="card">
+      <h5>commands（スラッシュコマンド）</h5>
+      <ul>
+        <li><code>/ulm:note</code> — 観測を記録</li>
+        <li><code>/ulm:state</code> — 可変状態の更新 / 参照</li>
+        <li><code>/ulm:mine</code> — 仮説の採掘</li>
+        <li><code>/ulm:review</code> — inbox を人間レビュー（承認 / 昇格はユーザー指示時のみ）</li>
+        <li><code>/ulm:status</code> — 統計と診断</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h5>skills（習慣づけ）</h5>
+      <ul>
+        <li><code>memory-recorder</code> — 再利用できる勘所を観測として残す習慣づけ</li>
+        <li><code>memory-recall</code> — タスク開始時に関連する過去の勘所を検索して引き出す</li>
+        <li><code>memory-export</code> — JSONL 控えのエクスポート / 復元（バックアップ・移行）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <b>/ulm:review の契約</b>
+    Claude は inbox を提示し反例込みで説明するだけ。approve / reject / promote の実行は、ユーザーがその場で明示した指示があるときのみ — この制約は skill / command 本文に明記されています。
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="recall">
+  <h2><span class="num">07</span>想起（recall）— 字句 + 意味のハイブリッド検索</h2>
+  <p>SessionStart の recency 詰め込みだけでは「古いが関連する記憶」を取りこぼします。ulm の中核は<strong>プロンプトに関連する記憶を取り出す</strong>動的想起で、2 層の検索を組み合わせます。</p>
+
+  <div class="grid c2">
+    <div class="card">
+      <h5>字句層 <span class="tag">FTS5 trigram / BM25</span></h5>
+      <p><code>node:sqlite</code> の FTS5 仮想テーブル（<code>obs_fts</code>、トリガで観測に同期）。日本語クエリもトライグラム分解で OR 検索。<code>vocab_size</code> のような特異トークン・完全一致・タイプミスに強い。<strong>API キー不要 — 依存ゼロの floor</strong>。</p>
+    </div>
+    <div class="card">
+      <h5>意味層 <span class="tag">埋め込み / 任意</span></h5>
+      <p>OpenAI 互換 embeddings を <code>obs_vec</code> に貯め、クエリベクトルと cosine 類似。「スタイルが反映されない ⇄ クラスが効かない」のような<strong>字面ゼロ一致の同義語</strong>を拾う。キーが無ければ自動で無効化し字句層のみで動く。</p>
+    </div>
+  </div>
+
+  <h3>融合方式 — RRF を捨てて vector-primary へ（外部評価が暴いた実欠陥）</h3>
+  <p>当初は両層を等重み Reciprocal Rank Fusion で融合していましたが、外部評価（作者非依存）で<strong>「強い vector の順位を弱い FTS が引き下げ、hybrid &lt; vector に劣化する」実欠陥</strong>が発覚。融合は次の <em>vector-primary</em> 方式に修正されました（<code>src/recall.js</code>）：</p>
+  <ul>
+    <li><strong>vector の順位を完全保持</strong> — 両方に出る項目は vector 順位を尊重。FTS が vector を押し下げることは構造的にない</li>
+    <li><strong>FTS 固有ヒットだけ末尾に救済追加</strong> — vector が拾えなかった exact / typo マッチを補完</li>
+    <li><strong>二段の精度ガード（棄権機構）</strong> — 最良ヒットの cosine が <code>inject_min</code>（既定 0.3）未満なら「関連記憶なし」として全棄権し、無関係プロンプトへのノイズ注入を防ぐ。棄権しない場合も <code>min_sim</code>（既定 0.22）未満は候補から落とす</li>
+    <li>クエリ（生プロンプト）が機密パターン / 高エントロピーを含む場合は<strong>外部 embeddings API に送らない</strong>（exfil 防止）</li>
+  </ul>
+  <div class="note good">
+    <b>意図的なトレードオフ</b>
+    棄権機構により end-to-end の hybrid は raw vector を僅かに下回ります（外部評価で Success@10 95% vs 98%）。これは「誤注入ゼロ」の精度を優先した設計判断であり、ハイブリッドの本質的価値は<strong>キーの有無で最良経路を自動選択する</strong>ことにあります。
+  </div>
+
+  <h3>外部評価（作者非依存）— Success@10</h3>
+  <p>「自作コーパスで有利では」という批判に答えるため、<strong>作者が本文もクエリも正解も書かない</strong>評価を用意（<code>test/eval/external/</code>）。実 OSS docs 179 段落（ripgrep / bat / fd / tokio / ruff / esbuild / uv）を観測化 → 別 LLM が症状ベースのクエリを生成（原文の語彙を使わない）→ 第3の LLM が TREC スタイルで関連度採点。44 クエリ・95% 信頼区間つき。</p>
+
+  <div class="bench">
+    <div class="row"><div class="lab">recency</div><div class="track"><div class="bar" style="width:9%; background:var(--danger);"></div></div><div class="val" style="color:var(--danger)">9%</div></div>
+    <div class="row"><div class="lab">FTS のみ（キー無し）</div><div class="track"><div class="bar" style="width:32%; background:var(--accent3);"></div></div><div class="val" style="color:var(--accent3)">32%</div></div>
+    <div class="row"><div class="lab">vector（意味）</div><div class="track"><div class="bar" style="width:98%; background:var(--accent);"></div></div><div class="val" style="color:var(--accent)">98%</div></div>
+    <div class="row"><div class="lab">hybrid（最終）</div><div class="track"><div class="bar" style="width:95%; background:var(--accent2);"></div></div><div class="val" style="color:var(--accent2)">95%</div></div>
+  </div>
+
+  <table>
+    <thead><tr><th>route</th><th>Success@10 [95%CI]</th><th>Recall@10 [95%CI]</th><th>nDCG@10</th><th>MRR</th></tr></thead>
+    <tbody>
+      <tr><td>recency</td><td class="bad">9% [2–18]</td><td class="bad">7% [1–14]</td><td>5%</td><td>7%</td></tr>
+      <tr><td>FTS のみ（キー無し）</td><td>32% [18–43]</td><td>17% [10–25]</td><td>15%</td><td>24%</td></tr>
+      <tr><td>vector（意味）</td><td class="good">98% [93–100]</td><td class="good">87% [80–93]</td><td>66%</td><td>83%</td></tr>
+      <tr class="hl"><td>hybrid（最終）</td><td class="good">95% [89–100]</td><td class="good">86% [78–92]</td><td>65%</td><td>82%</td></tr>
+    </tbody>
+  </table>
+
+  <h3>拡張評価（2000件ノイズ・relevant は古い・4カテゴリ）— Recall@5</h3>
+  <table>
+    <thead><tr><th>クエリの種類</th><th>recency</th><th>FTS のみ</th><th>ハイブリッド</th></tr></thead>
+    <tbody>
+      <tr><td>完全一致</td><td class="bad">0%</td><td>100%</td><td class="good">100%</td></tr>
+      <tr><td>言い換え</td><td class="bad">0%</td><td>73%</td><td class="good">100%</td></tr>
+      <tr><td>同義語（字面ゼロ一致）</td><td class="bad">0%</td><td>20%</td><td class="good">87%</td></tr>
+      <tr><td>タイプミス</td><td class="bad">0%</td><td>100%</td><td class="good">100%</td></tr>
+      <tr class="hl"><td><strong>全体 Recall@5</strong></td><td class="bad">0%</td><td>73%</td><td class="good">97%</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px; color:var(--text-dim);">※ secret 観測は全リトリーバで top-5 に漏れない（回帰テストで固定）。「FTS のみ 73%」が API キー無しの実力（依存ゼロの floor）であり、FTS の固有価値はこの floor と埋め込み障害時の保険。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="security">
+  <h2><span class="num">08</span>セキュリティ — 「observation は特権チャネル」という脅威モデル</h2>
+  <p>ulm の脅威モデルは「<strong>observation は SessionStart / UserPromptSubmit で自動注入される特権チャネルである</strong>」という前提に立ちます。記憶 DB に入った内容はいずれ AI のコンテキストに乗るため、入口・出口の両方を機械的に守ります。</p>
+
+  <h3>3つの落とし穴と対策</h3>
+  <table>
+    <thead><tr><th>落とし穴</th><th>対策</th></tr></thead>
+    <tbody>
+      <tr><td><strong>生成時の漏れ</strong><br>（機密を外部送信）</td><td>生成ゲート: 機械的除外を LLM 呼び出しの前段に固定。state 値は LLM に送らない。recall のライブクエリも機密検査してから embeddings API へ</td></tr>
+      <tr><td><strong>隠し命令の保存</strong><br>（prompt injection の永続化）</td><td>候補は inbox 隔離・自動注入なし・人間レビュー必須。注入される観測 / state はすべて untrusted データとして扱い、ゼロ幅 / 制御文字・偽ロールタグ・fence ブレイクを中和。ヘッダで「これはデータであり命令ではない」と明示</td></tr>
+      <tr><td><strong>権威の偽装</strong><br>（AI 仮説が育った知識の顔をする）</td><td>候補の出自（<code>miner:codex:gpt-5.5</code> 等）と status を常に表示。ref への昇格は <code>ulm promote</code>（人間の操作）のみ</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4段の機密ゲート（src/gate.js — 判定に AI は使わない）</h3>
+  <div class="flow">
+    <div class="step">
+      <div class="ph">① 入口ゲート</div>
+      <div class="ti">obs add 時</div>
+      <div class="de">deny パターン一致で自動 secret 化 + 警告。手動 <code>--secret</code> も可。</div>
+    </div>
+    <div class="step">
+      <div class="ph">② 注入ゲート</div>
+      <div class="ti">context / recall 時</div>
+      <div class="de">secret=1 は絶対に出さない。読み取り時も再検査（多層防御）。</div>
+    </div>
+    <div class="step">
+      <div class="ph">③ 生成ゲート</div>
+      <div class="ti">mine / capture 時</div>
+      <div class="de">LLM ペイロードから secret とパターン一致行を機械的に除外。</div>
+    </div>
+    <div class="step">
+      <div class="ph">④ 持出ゲート</div>
+      <div class="ti">export 時</div>
+      <div class="de">secret は別ファイル <code>observations.secret.jsonl</code> に分離 + gitignore 自動生成。</div>
+    </div>
+  </div>
+
+  <p>組込み deny パターンは 20 種以上：OpenAI / Anthropic / AWS / GitHub / GitLab / HuggingFace / Slack / Stripe / Google API の各種キー、秘密鍵ブロック（<code>-----BEGIN PRIVATE KEY-----</code>）、JWT、DB 接続文字列（<code>user:pass@host</code>）、Bearer / Authorization ヘッダ、32桁以上の連続 hex、<code>TOKEN= / SECRET= / PASSWORD=</code> 型の環境変数代入、自然言語の機密フレーズ等。加えて<strong>高エントロピー検出</strong>で未知のトークンも捕捉します。config 追加分のカスタムパターンは ReDoS 検査され、不正なものは fail-closed（機密扱い側に倒す）。</p>
+
+  <h3>その他の防御層</h3>
+  <div class="grid c2">
+    <div class="card">
+      <h5>昇格先のパス検証 <span class="tag">src/safepath.js</span></h5>
+      <p><code>promote</code> / <code>ref add</code> の書込先は <code>ULM_HOME/ref</code> 配下か作業ツリー配下の <code>.md</code> のみ。<code>CLAUDE.md</code> 等の自動読込ファイル・<code>.git/</code>・<code>.ssh/</code>・symlink・パストラバーサルは機械的に拒否。</p>
+    </div>
+    <div class="card">
+      <h5>人間ゲート <span class="tag">TTY 必須</span></h5>
+      <p><code>approve</code> / <code>promote</code> は TTY での対話を要求。非対話実行では <code>--yes</code> の明示が必須で、AI が黙って昇格を実行することを防ぐ。</p>
+    </div>
+    <div class="card">
+      <h5>exfil 防止 <span class="tag">allowlist</span></h5>
+      <p><code>mine</code> の OpenAI 互換 API は base_url を allowlist 検証。API キーは環境変数のみ（config・DB・リポジトリに保存しない）。</p>
+    </div>
+    <div class="card">
+      <h5>inbox 隔離 <span class="tag">自動注入なし</span></h5>
+      <p><code>mine</code> の生成物は作業コンテキストへ自動注入されない（件数の通知のみ）。汚染の影響範囲は人間レビューで遮断される。</p>
+    </div>
+  </div>
+
+  <div class="note danger">
+    <b>開発上の不可侵ルール</b>
+    <code>src/gate.js</code>（機密ゲート）・<code>src/safepath.js</code>（パス検証）・人間ゲート（approve / promote の TTY 必須）は安全機構であり、これらを緩める変更は受け付けない方針です。
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="storage">
+  <h2><span class="num">09</span>ストレージ — ローカル SQLite + JSONL 控え</h2>
+  <table>
+    <thead><tr><th>もの</th><th>場所</th><th>備考</th></tr></thead>
+    <tbody>
+      <tr><td>本体 DB</td><td><code>$ULM_HOME/memory.db</code></td><td>SQLite（WAL）。<code>ULM_HOME</code> 既定は <code>~/.claude/user-memory</code>。テストは環境変数で分離</td></tr>
+      <tr><td>控え</td><td><code>$ULM_HOME/export/*.jsonl</code></td><td><code>ulm export</code> で出力。差分を git で追える。secret は別ファイルに分離 + gitignore 自動生成</td></tr>
+      <tr><td>設定</td><td><code>$ULM_HOME/config.json</code></td><td>deny パターン追加分、注入予算、miner プロバイダ等</td></tr>
+    </tbody>
+  </table>
+
+  <h3>スキーマ（主要4テーブル + 検索用仮想テーブル）</h3>
+  <pre><span class="k">observations</span>(id, ts, project, text, tags, source, secret, meta)
+  <span class="c">-- id: obs-&lt;hash6&gt; / source: manual | claude | auto | import / 追記のみ</span>
+<span class="k">states</span>(key, scope, value, updated_at, expires_at)
+  <span class="c">-- PRIMARY KEY (key, scope) / scope: global | &lt;project&gt; / 期限切れは読み取り時に無視</span>
+<span class="k">candidates</span>(id, ts, status, hypothesis, conditions, counterexamples,
+           evidence, origin, project, reviewed_at, promoted_to, note)
+  <span class="c">-- status: inbox | approved | rejected | promoted / origin で出自を常時追跡</span>
+<span class="k">refs</span>(id, path, note, project)
+  <span class="c">-- 正式ルールの所在ポインタのみ。ref 本文は外部の .md ファイル</span>
+
+<span class="k">obs_fts</span>  <span class="c">-- FTS5 trigram 仮想テーブル（トリガで observations に同期）</span>
+<span class="k">obs_vec</span>  <span class="c">-- 埋め込みベクトル格納（任意機能）</span></pre>
+</section>
+
+<!-- ============================================================ -->
+<section id="cli">
+  <h2><span class="num">10</span>CLI リファレンス</h2>
+  <pre><span class="cmd">ulm init</span>                                  <span class="c"># ~/.claude/user-memory を初期化（db, config, export/）</span>
+
+<span class="c"># --- 観測（追記のみ）---</span>
+<span class="cmd">ulm obs add</span> <span class="s">"node:sqlite は Node 22.5 未満で落ちる"</span> --tags ci --pin
+<span class="cmd">ulm obs list</span> [--project P] [--tags t] [--days N] [--all] [--json]
+<span class="cmd">ulm obs search</span> &lt;query&gt;                    <span class="c"># FTS 検索</span>
+<span class="cmd">ulm obs secret</span> &lt;id&gt; / <span class="cmd">ulm obs redact</span> &lt;id&gt; / <span class="cmd">ulm obs archive</span>  <span class="c"># 機密化 / 墓石化 / 整理</span>
+
+<span class="c"># --- 可変状態（上書き + TTL）---</span>
+<span class="cmd">ulm state set</span> 現在の担当 <span class="s">"決済リファクタ"</span> --ttl 30d --global
+<span class="cmd">ulm state get</span> &lt;key&gt; / <span class="cmd">ulm state list</span> [--all]
+
+<span class="c"># --- 想起・注入 ---</span>
+<span class="cmd">ulm recall</span> <span class="s">"金額計算で丸め誤差が出る"</span>      <span class="c"># ハイブリッド検索で過去の勘所を想起</span>
+<span class="cmd">ulm context</span> [--project P] [--hook] [--json]  <span class="c"># SessionStart 用の注入コンテキスト生成</span>
+
+<span class="c"># --- 仮説の育成（遊び場）---</span>
+<span class="cmd">ulm capture</span> --transcript &lt;session.jsonl&gt;  <span class="c"># 作業ログから観測を自動抽出（source=auto）</span>
+<span class="cmd">ulm mine</span> [--provider codex|openai] [--dry-run]  <span class="c"># 観測 → 仮説候補を inbox へ（LLM）</span>
+<span class="cmd">ulm inbox</span>                                 <span class="c"># 未レビューの候補（出自・反例込み）</span>
+<span class="cmd">ulm approve</span> &lt;cand-id&gt; --note <span class="s">"実際に踏んだ"</span>  <span class="c"># 人間の操作（TTY 必須）</span>
+<span class="cmd">ulm promote</span> &lt;cand-id&gt; --ref ./decisions.md   <span class="c"># 承認済みを ref へ昇格（人間の操作）</span>
+<span class="cmd">ulm ref add</span> &lt;path&gt; / <span class="cmd">ulm ref list</span>
+
+<span class="c"># --- 運用 ---</span>
+<span class="cmd">ulm export</span> / <span class="cmd">ulm import</span> &lt;dir&gt;             <span class="c"># JSONL 控えの書き出し / 復元（移行に使える）</span>
+<span class="cmd">ulm status</span> / <span class="cmd">ulm doctor</span>                   <span class="c"># 統計 / 環境診断</span></pre>
+
+  <h3>仮説採掘（miner）のプロバイダ抽象</h3>
+  <ul>
+    <li><code>codex</code> — <code>codex exec</code>（gpt-5.5, reasoning low）をサブプロセス起動。<strong>API キー不要</strong></li>
+    <li><code>openai</code> — OpenAI 互換 chat/completions。<code>base_url</code> / <code>model</code> は config、キーは環境変数のみ</li>
+    <li>hypothesis の正規化ハッシュで既存候補と突合し重複防止。観測テキストは「データ」としてフェンス内に渡し、プロンプトで命令解釈を禁止（隠し命令対策）</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="test">
+  <h2><span class="num">11</span>テスト戦略 — 153 件のユニット + 評価ハーネス</h2>
+  <div class="grid c2">
+    <div class="card">
+      <h5>ユニット / 統合 <span class="tag">node --test・153件</span></h5>
+      <p>storage CRUD・TTL・機密ゲート（パターン / フラグ）・context 予算・miner JSON パース・ID 衝突・safepath・プラグイン整合性。CLI 統合は <code>ULM_HOME=$(mktemp -d)</code> で bin を実行し stdout / exit code を検証。hook は stdin JSON を流して additionalContext を検証。</p>
+    </div>
+    <div class="card">
+      <h5>想起品質の評価ハーネス <span class="tag">test/eval/</span></h5>
+      <p>ローカル評価（2000件ノイズ・4カテゴリ）と外部評価（作者非依存・44クエリ・95%CI）。secret が top-5 に漏れないことは回帰テストで固定。さらに fresh-context subagent による設計 / セキュリティ / UX の批判的レビューも実施。</p>
+    </div>
+  </div>
+  <pre><span class="cmd">node --test test/*.test.js</span>                        <span class="c"># ユニットテスト（153件）</span>
+<span class="cmd">node test/eval/recall-eval-large.js 5 2000</span>        <span class="c"># 想起評価（ローカル）</span>
+<span class="cmd">node test/eval/external/run-external-eval.js 10</span>   <span class="c"># 外部評価（要 OPENAI_API_KEY）</span></pre>
+
+  <h3>非スコープ（あえて作らないもの）</h3>
+  <ul>
+    <li>自動統合・自動要約・セマンティック減衰 —「重い自動整理」はしない設計</li>
+    <li>チーム同期・リモートストレージ — ローカル第一。export を git 管理すれば足りる</li>
+    <li>bd 本体との双方向連携 — meta に bd issue id を書ける、までに留める</li>
+    <li>ローカル完結の埋め込み（量子化モデル同梱）— 現状は外部 embeddings API が任意で要る（無くても字句層で動く）</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="faq">
+  <h2><span class="num">12</span>FAQ</h2>
+  <h4>Q. CLAUDE.md や MEMORY.md と何が違う？</h4>
+  <p>CLAUDE.md は「人が書き、常時注入される確定ルール」。ulm は「まだ確定していない経験則を貯め、関連するときだけ思い出す」層です。確度が上がったものだけを人間の承認で ref に昇格させます。</p>
+  <h4>Q. API キーが無いと使えない？</h4>
+  <p>使えます。埋め込み（意味検索）と <code>mine</code>（仮説採掘）だけが LLM / API を使う任意機能で、無ければ自動的に FTS5/BM25 のみで動作します（degrade gracefully）。</p>
+  <h4>Q. 記憶が勝手に増えて汚れない？</h4>
+  <p>自動取り込み（<code>capture</code>）の観測は <code>source=auto</code> として区別され、<code>mine</code> の生成物は inbox 隔離。正式な知識（ref）には人間が承認したものしか入りません。<code>ulm obs archive</code> / <code>redact</code> / <code>reject-stale</code> で整理できます。</p>
+  <h4>Q. 機密情報を書いてしまったら？</h4>
+  <p>入口の機密ゲートが既知パターンを自動で <code>secret</code> 化します。手動でも <code>ulm obs secret &lt;id&gt;</code>（機密化）や <code>ulm obs redact &lt;id&gt;</code>（墓石化）が使えます。secret は注入・採掘・通常エクスポートから除外されます。</p>
+  <h4>Q. 別マシンに移行したい</h4>
+  <p><code>ulm export</code> で JSONL 控えを書き出し、移行先で <code>ulm import &lt;dir&gt;</code> を実行します（プラグインの <code>memory-export</code> skill も同じ手順を案内します）。</p>
+</section>
+
+<footer>
+  <p><strong>ulm — user-level memory</strong> v0.1.0 ／ MIT License © bond-ai</p>
+  <p>詳細設計は <code>DESIGN.md</code>、使い方は <code>README.md</code>・<code>ulm help</code> を参照。</p>
+</footer>
+
+</div>
+</body>
+</html>
