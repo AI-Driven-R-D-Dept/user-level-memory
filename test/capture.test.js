@@ -187,6 +187,9 @@ test('validateAutoObs: person タグの名前空間バイパスと型・値の�
   // tags 直書きの person: タグは無検証バイパスになるため auto 経路では剥がす（名前空間予約）
   const bypass = validateAutoObs([{ text: '野菜が嫌いだと明言した', tags: ['person:ユーザー', 'food'] }], gate, max);
   assert.deepEqual(bypass[0].tags, ['food']);
+  // 表記揺れ（Person: / PERSON:）も剥がす — SQLite LIKE は ASCII case-insensitive のため
+  const caseFold = validateAutoObs([{ text: '野菜が嫌いだと明言した', tags: ['Person:Alice', 'PERSON:Bob', 'food'] }], gate, max);
+  assert.deepEqual(caseFold[0].tags, ['food']);
   // 検証済み person がある場合も tags 直書き分は剥がれ、二重 person タグにならない
   const dup = validateAutoObs([{ text: 'ユーザーは肉が好き', tags: ['person:妻'], person: 'ユーザー' }], gate, max);
   assert.deepEqual(dup[0].tags, ['person:ユーザー']);

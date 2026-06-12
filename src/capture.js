@@ -103,8 +103,10 @@ export function validateAutoObs(raw, gate, max) {
     let tags = (Array.isArray(item.tags) ? item.tags : []).map((t) => String(t).trim()).filter(Boolean);
     // person: 名前空間は auto 経路では「検証済みタグ」専用に予約する。LLM が tags 直書きで
     // 未検証の person タグを作るバイパス（不変条件「person タグ＝主語検証済み」の破り）を塞ぎ、
-    // 検証済み person と矛盾する二重 person タグも防ぐ。
-    tags = tags.filter((t) => !t.startsWith('person:'));
+    // 検証済み person と矛盾する二重 person タグも防ぐ。大文字小文字を区別せず剥がす:
+    // SQLite の LIKE は ASCII を case-insensitive に照合するため、`Person:` 等の表記揺れが
+    // 予約をすり抜けて `--tags person:X` の検索結果に混ざる（レビュー実証済み）。
+    tags = tags.filter((t) => !/^person:/i.test(t));
     // 人物事実の主語をスキーマで機械検証する（プロンプト指示だけでは LLM が忘れたとき漏れる）:
     // person が指定された項目は text にその主語表記が無ければ棄却し、person:<who> タグを自動付与する。
     // person:null（人物に関しない事実）は従来どおり。既知の限界: 「person:null なのに人物事実」と
