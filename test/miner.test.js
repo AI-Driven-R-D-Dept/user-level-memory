@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractJsonArray, validateCandidates, buildPrompt, gatherObservations } from '../src/miner.js';
+import { extractJsonArray, validateCandidates, buildPrompt, gatherObservations, resolveProvider, providerModel, callProvider } from '../src/miner.js';
 import { withFreshStore, testConfig } from './helpers.js';
 
 test('extractJsonArray: 素の配列', () => {
@@ -76,4 +76,31 @@ test('gatherObservations: secret/deny/高エントロピーを除外（生成ゲ
     assert.equal(obs.length, 1);
     assert.equal(obs[0].text, '普通の観測');
   });
+});
+
+test('resolveProvider: auto は codex→opencode の順、openai へは暗黙フォールバックしない', () => {
+  const auto = { miner: { provider: 'auto' } };
+  assert.equal(resolveProvider(auto, { codex: () => true, opencode: () => true }), 'codex');
+  assert.equal(resolveProvider(auto, { codex: () => false, opencode: () => true }), 'opencode');
+  // どちらの CLI も無い: キーが設定されていても openai に落とさず 'none'（従量課金の事故防止）
+  assert.equal(resolveProvider(auto, { codex: () => false, opencode: () => false }), 'none');
+  // 明示指定はそのまま尊重（可用性チェックを呼ばない）
+  assert.equal(resolveProvider({ miner: { provider: 'openai' } }, { codex: () => true, opencode: () => true }), 'openai');
+  assert.equal(resolveProvider({ miner: { provider: 'opencode' } }, {}), 'opencode');
+  assert.equal(resolveProvider({ miner: { provider: 'codex' } }, {}), 'codex');
+});
+
+test('providerModel: opencode は opencode_model、それ以外は model', () => {
+  const config = { miner: { model: 'gpt-5.5', opencode_model: 'opencode-go/deepseek-v4-flash' } };
+  assert.equal(providerModel('codex', config), 'gpt-5.5');
+  assert.equal(providerModel('openai', config), 'gpt-5.5');
+  assert.equal(providerModel('opencode', config), 'opencode-go/deepseek-v4-flash');
+});
+
+test('callProvider: 利用可能プロバイダ無しは明確なエラー（openai へ送らない）', async () => {
+  const config = { miner: { provider: 'auto' } };
+  await assert.rejects(
+    () => callProvider(undefined, { system: 's', user: 'u' }, config, '/tmp', { codex: () => false, opencode: () => false }),
+    /プロバイダが見つかりません/
+  );
 });

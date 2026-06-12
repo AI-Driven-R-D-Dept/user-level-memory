@@ -38,7 +38,7 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm promote <id> [--ref file.md] [--yes]          承認済みを ref へ昇格（人間の操作）
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
-  ulm mine [--project P] [--days N] [--limit M] [--provider codex|openai] [--dry-run]
+  ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
   ulm capture [--transcript F] [--project P] [--dry-run]  作業ログから観測を自動抽出(source=auto)
   ulm ref add <path.md> [--note N] [--project P] | ulm ref list | ulm ref rm <id|path>
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）

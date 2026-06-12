@@ -22,7 +22,7 @@ export const DEFAULT_CONFIG = {
   },
   capture: {
     enabled: true, // Stop hook での観測自動抽出
-    provider: 'auto', // auto | codex | openai（miner と同設定を流用）
+    provider: 'auto', // auto | codex | opencode | openai（miner と同設定を流用）
     max_per_session: 3, // 1セッションで自動抽出する観測の上限
     // 自動抽出(source=auto)の未レビュー観測を recall 注入に含めるか。
     // recall は「関連時のみ発火・データfenceで無害化・(自動抽出/未レビュー)ラベル付き・機密ゲート済み」
@@ -37,8 +37,11 @@ export const DEFAULT_CONFIG = {
     // base_url / api_key_env / allowed_hosts は未指定なら miner 設定を流用
   },
   miner: {
-    provider: 'auto', // auto | codex | openai
-    model: 'gpt-5.5',
+    // auto は codex → opencode の順で CLI を探す（どちらも API キー不要・定額側）。
+    // openai（従量課金 API）への暗黙フォールバックはしない: 'openai' を明示したときのみ使う。
+    provider: 'auto', // auto | codex | opencode | openai
+    model: 'gpt-5.5', // codex / openai 用
+    opencode_model: 'opencode-go/deepseek-v4-flash', // opencode 用（provider/model 形式）
     reasoning_effort: 'low',
     base_url: 'https://api.openai.com/v1',
     allowed_hosts: [], // base_url の追加許可ホスト（exfil 防止の allowlist）

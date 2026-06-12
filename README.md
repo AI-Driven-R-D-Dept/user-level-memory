@@ -201,7 +201,10 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 A. CLAUDE.md は「人が書き、常時注入される確定ルール」。ulm は「まだ確定していない経験則を貯め、関連するときだけ思い出す」層です。確度が上がったものだけを人間の承認で `ref` に昇格させます。
 
 **Q. API キーが無いと使えない？**
-A. 使えます。埋め込み（意味検索）と `mine`（仮説採掘）だけが LLM/API を使う任意機能で、無ければ自動的に FTS5/BM25 のみで動作します。
+A. 使えます。埋め込み（意味検索）と `mine`/`capture`（仮説採掘・自動抽出）だけが LLM を使う任意機能です。`mine`/`capture` は codex / opencode CLI があれば API キー不要で動き、無ければ静かに no-op。埋め込みもキーが無ければ自動的に FTS5/BM25 のみで動作します。
+
+**Q. 勝手に従量課金の API を叩かない？**
+A. 叩きません。プロバイダの auto 解決は **codex → opencode**（定額・CLI 認証）の順で、OpenAI API（従量課金）は `config.miner.provider: "openai"` を明示したときだけ使います。`OPENAI_API_KEY` が設定されているだけでは LLM 呼び出しに使われません（埋め込みは例外で、`embed.enabled: false` で無効化できます）。
 
 **Q. 記憶が勝手に増えて汚れない？**
 A. 自動取り込み（`capture`）の観測は `source=auto` として区別され、`mine` の生成物は inbox 隔離。正式な知識（ref）には人間が承認したものしか入りません。`ulm obs archive` / `redact` / `reject-stale` で整理できます。

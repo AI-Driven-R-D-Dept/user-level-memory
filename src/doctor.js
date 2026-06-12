@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { ulmHome, configPath, dbPath, loadConfig, homeInitialized } from './config.js';
 import { compileGate } from './gate.js';
-import { codexAvailable } from './miner.js';
+import { codexAvailable, opencodeAvailable } from './miner.js';
 import { openStore } from './store.js';
 import { projectInfo } from './project.js';
 
@@ -57,15 +57,21 @@ export function runDoctor() {
     if (warns.length) warn('deny_patterns', warns.join(' / '));
     else ok('gate', `組込み + 追加 ${config.deny_patterns.length} パターン`);
 
-    // miner プロバイダ
+    // miner プロバイダ（auto は codex → opencode。openai は明示時のみ）
     const codex = codexAvailable();
+    const oc = opencodeAvailable();
     const keyEnv = config.miner.api_key_env || 'OPENAI_API_KEY';
     const hasKey = !!process.env[keyEnv];
     if (codex) ok('miner:codex', 'codex CLI が利用可能');
     else warn('miner:codex', 'codex CLI が見つかりません');
-    if (hasKey) ok('miner:openai', `${keyEnv} が設定済み (${config.miner.base_url})`);
+    if (oc) ok('miner:opencode', `opencode CLI が利用可能 (model=${config.miner.opencode_model})`);
+    else warn('miner:opencode', 'opencode CLI が見つかりません');
+    if (hasKey) ok('miner:openai', `${keyEnv} が設定済み (${config.miner.base_url}) — provider="openai" 明示時のみ使用`);
     else warn('miner:openai', `${keyEnv} が未設定（openai プロバイダは使えません）`);
-    if (!codex && !hasKey) bad('miner', 'どのプロバイダも使えません。`ulm mine` は失敗します');
+    if (!codex && !oc) {
+      if (hasKey) warn('miner', 'codex / opencode が無いため auto では mine/capture は動きません（openai は provider 明示で使用可）');
+      else bad('miner', 'どのプロバイダも使えません。`ulm mine` は失敗します');
+    }
   } catch (err) {
     bad('config', err.message);
   }

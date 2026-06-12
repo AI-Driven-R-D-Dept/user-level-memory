@@ -135,6 +135,32 @@ export function codexAvailable() {
   return r.status === 0;
 }
 
+export function opencodeAvailable() {
+  const r = spawnSync('opencode', ['--version'], { encoding: 'utf8' });
+  return r.status === 0;
+}
+
+function callOpencode(prompt, config, home) {
+  // opencode run: ヘッドレス1回実行。--agent plan は読み取り専用エージェント（ファイル編集ツール無効）。
+  // 認証・課金は opencode CLI 側（OpenCode Go 等のサブスク）に乗るため、ulm は API キーを扱わない。
+  // 応答本文は stdout、バナー類は stderr に出る。cwd は ULM_HOME（リポジトリの文脈を読ませない）。
+  const r = spawnSync('opencode', ['run', '--agent', 'plan', '-m', config.miner.opencode_model], {
+    input: `${prompt.system}\n\n${prompt.user}`,
+    encoding: 'utf8',
+    timeout: 180_000,
+    cwd: home,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
+  const out = String(r.stdout || '').trim();
+  if (r.status !== 0 || !out) {
+    throw new Error(
+      `opencode から応答が得られませんでした (exit=${r.status})${r.stderr ? `: ${String(r.stderr).slice(-400)}` : ''}`
+    );
+  }
+  return out;
+}
+
 function callCodex(prompt, config, home) {
   const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
   const outFile = join(tmp, 'last-message.txt');
@@ -257,17 +283,36 @@ async function callOpenAi(prompt, config) {
   }
 }
 
-export function resolveProvider(config) {
+/**
+ * プロバイダの解決。auto は API キー不要・定額の CLI を codex → opencode の順で探す。
+ * openai（従量課金 API）への暗黙フォールバックはしない: provider='openai' の明示時のみ使う
+ * （キーが設定されているだけで Stop hook ごとに従量課金が走る事故を防ぐ）。
+ * @param {{codex?: () => boolean, opencode?: () => boolean}} avail テスト用の可用性チェック差し替え
+ * @returns {'codex'|'opencode'|'openai'|'none'}
+ */
+export function resolveProvider(config, avail = {}) {
   const p = config.miner.provider;
-  if (p === 'codex' || p === 'openai') return p;
-  // auto: codex があれば codex（API キー不要）、なければ openai
-  return codexAvailable() ? 'codex' : 'openai';
+  if (p === 'codex' || p === 'openai' || p === 'opencode') return p;
+  if ((avail.codex ?? codexAvailable)()) return 'codex';
+  if ((avail.opencode ?? opencodeAvailable)()) return 'opencode';
+  return 'none';
+}
+
+/** プロバイダごとの実モデル名（log / origin / meta の表記用） */
+export function providerModel(provider, config) {
+  return provider === 'opencode' ? config.miner.opencode_model : config.miner.model;
 }
 
 /** 指定プロバイダで {system,user} プロンプトを実行し応答テキストを返す（mine/capture 共用） */
-export async function callProvider(provider, prompt, config, home) {
-  const prov = provider === 'codex' || provider === 'openai' ? provider : resolveProvider(config);
-  return prov === 'codex' ? callCodex(prompt, config, home) : await callOpenAi(prompt, config);
+export async function callProvider(provider, prompt, config, home, avail = {}) {
+  const prov = ['codex', 'opencode', 'openai'].includes(provider) ? provider : resolveProvider(config, avail);
+  if (prov === 'codex') return callCodex(prompt, config, home);
+  if (prov === 'opencode') return callOpencode(prompt, config, home);
+  if (prov === 'openai') return await callOpenAi(prompt, config);
+  throw new Error(
+    'LLM プロバイダが見つかりません: codex / opencode CLI が無く、openai（従量課金 API）は明示設定時のみ使用します。' +
+      ' codex か opencode をインストールするか、config.miner.provider="openai" を明示してください'
+  );
 }
 
 /**
@@ -281,7 +326,9 @@ export async function mine(store, config, home, { project, days, limit, provider
   }
   const maxCandidates = config.miner.max_candidates;
   const prompt = buildPrompt(obs, maxCandidates);
-  const prov = provider || resolveProvider(config);
+  // 'auto' 等は具体名に確定させる（log / origin に 'auto' を残さない）
+  let prov = provider || 'auto';
+  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
 
   if (dryRun) {
     log(`[dry-run] provider=${prov} 観測 ${obs.length} 件を送信予定。ペイロード:`);
@@ -289,15 +336,15 @@ export async function mine(store, config, home, { project, days, limit, provider
     return { created: [], duplicates: 0, observations: obs.length, provider: prov, dryRun };
   }
 
-  log(`provider=${prov} model=${config.miner.model} で ${obs.length} 件の観測から採掘中…`);
-  const text = prov === 'codex' ? callCodex(prompt, config, home) : await callOpenAi(prompt, config);
+  log(`provider=${prov} model=${providerModel(prov, config)} で ${obs.length} 件の観測から採掘中…`);
+  const text = await callProvider(prov, prompt, config, home);
   const raw = extractJsonArray(text);
   const knownObsIds = new Set(obs.map((o) => o.id));
   const validated = validateCandidates(raw, { knownObsIds, maxCandidates });
 
   const created = [];
   let duplicates = 0;
-  const origin = `miner:${prov}:${config.miner.model}`; // 権威の偽装防止: 出自を必ず記録
+  const origin = `miner:${prov}:${providerModel(prov, config)}`; // 権威の偽装防止: 出自を必ず記録
   for (const v of validated) {
     const r = store.addCandidate({ ...v, origin, project: project || null });
     if (r.duplicateOf) duplicates++;

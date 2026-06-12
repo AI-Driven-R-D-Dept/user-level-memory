@@ -112,7 +112,7 @@ ulm reject <id> [--note N]                # 人間の操作
 ulm promote <id> [--ref <file>]           # approved → ref へ追記（人間の操作）
 ulm ref add <path> [--note N] [--project P]
 ulm ref list
-ulm mine [--project P] [--days N] [--limit M] [--provider codex|openai] [--dry-run]
+ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
 ulm context [--project P] [--hook] [--json]   # 注入用コンテキスト生成
 ulm export [--quiet]                      # JSONL スナップショット
 ulm doctor                                # 診断
@@ -143,7 +143,11 @@ beads に倣いハッシュ ID（`obs-a1b2c3` / `cand-x9y8z7`）。並行追記�
   `{hypothesis, conditions, counterexamples[], evidence[]}` の JSON 配列を生成 → **inbox に置くだけ**。
 - プロバイダ抽象:
   - `codex`: `codex exec`（gpt-5.5, reasoning low）をサブプロセス起動。API キー不要。
+  - `opencode`: `opencode run --agent plan`（読み取り専用エージェント）をサブプロセス起動。API キー不要
+    （opencode CLI 側の認証 / OpenCode Go 等のサブスクに乗る）。モデルは `config.miner.opencode_model`。
   - `openai`: OpenAI 互換 chat/completions。`base_url`/`model` は config、キーは **環境変数のみ**（config・DB・リポジトリに保存しない）。
+  - **auto 解決は codex → opencode の順**（どちらも定額側）。openai（従量課金 API）への**暗黙フォールバックはしない** —
+    キーが設定されているだけで Stop hook ごとに従量課金が走る事故を防ぐため、`provider: "openai"` の明示時のみ使う。
 - 重複防止: hypothesis の正規化ハッシュで既存候補と突合。
 - **隠し命令対策**: 観測テキストは「データ」としてフェンス内に渡し、プロンプトで命令解釈を禁止。
   生成物はどのみち inbox 隔離（自動採用なし・自動注入なし）なので、汚染の影響範囲は人間レビューで遮断される。

@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { compileGate, detectHighEntropy } from './gate.js';
 import { hypothesisHash } from './ids.js';
-import { buildPrompt, extractJsonArray, resolveProvider, callProvider } from './miner.js';
+import { buildPrompt, extractJsonArray, resolveProvider, callProvider, providerModel } from './miner.js';
 
 const MAX_TRANSCRIPT_CHARS = 12_000; // LLM に渡す抜粋の上限
 const SYSTEM = `あなたは開発セッションのログから「次の似た作業でも使える、条件付きの再利用可能な事実(観測)」だけを抽出するアシスタントです。
@@ -99,7 +99,9 @@ export async function capture(store, config, home, { transcriptPath, project, pr
   if (!text.trim()) return { captured: [], skippedDup: 0, transcriptChars: 0, provider: 'none', dryRun };
 
   const max = config.capture?.max_per_session ?? 3;
-  const prov = provider || config.capture?.provider || resolveProvider(config);
+  // 'auto' は具体名（codex→opencode、無ければ none）に確定させる。meta/出力に 'auto' を残さない
+  let prov = provider || config.capture?.provider || 'auto';
+  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
   const prompt = {
     system: SYSTEM.replace('{MAX}', String(max)),
     user: `<transcript>\n${text}\n</transcript>\n\nJSON配列のみを出力:`,
@@ -123,7 +125,7 @@ export async function capture(store, config, home, { transcriptPath, project, pr
       project: project || null,
       tags: e.tags,
       source: 'auto',
-      meta: { captured_by: `capture:${prov}`, model: config.miner.model },
+      meta: { captured_by: `capture:${prov}`, model: providerModel(prov, config) },
     });
     existing.add(hypothesisHash(e.text));
     captured.push(obs);
