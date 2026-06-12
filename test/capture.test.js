@@ -179,6 +179,28 @@ test('validateAutoObs: person スキーマの機械検証（主語必須・perso
 });
 
 test('SYSTEM: person フィールドの出力契約を明示している', () => {
-  assert.ok(SYSTEM.includes('"person"'), 'スキーマに person がある');
-  assert.ok(SYSTEM.includes('null'), '人物に関しない事実は null');
+  assert.ok(SYSTEM.includes('"person": 人物名 または null'), 'スキーマに person 契約が明文化されている');
+});
+
+test('validateAutoObs: person タグの名前空間バイパスと型・値の拘束', () => {
+  const max = 10;
+  // tags 直書きの person: タグは無検証バイパスになるため auto 経路では剥がす（名前空間予約）
+  const bypass = validateAutoObs([{ text: '野菜が嫌いだと明言した', tags: ['person:ユーザー', 'food'] }], gate, max);
+  assert.deepEqual(bypass[0].tags, ['food']);
+  // 検証済み person がある場合も tags 直書き分は剥がれ、二重 person タグにならない
+  const dup = validateAutoObs([{ text: 'ユーザーは肉が好き', tags: ['person:妻'], person: 'ユーザー' }], gate, max);
+  assert.deepEqual(dup[0].tags, ['person:ユーザー']);
+  // person:"" は「指定なし」扱いで項目は保存される（non-person 事実を黙って落とさない）
+  const empty = validateAutoObs([{ text: 'node:sqlite は Node 22.5 未満で落ちる', tags: ['node'], person: '' }], gate, max);
+  assert.deepEqual(empty[0].tags, ['node']);
+  // 型違反（配列・数値）は棄却
+  assert.equal(validateAutoObs([{ text: 'ユーザーは肉が好き', person: ['ユーザー'] }], gate, max).length, 0);
+  assert.equal(validateAutoObs([{ text: 'ユーザーは肉が好き', person: 42 }], gate, max).length, 0);
+  // 禁止文字: コロン・バックスラッシュ・制御文字
+  assert.equal(validateAutoObs([{ text: 'a:b は肉が好き', person: 'a:b' }], gate, max).length, 0);
+  assert.equal(validateAutoObs([{ text: 'a\\b は肉が好き', person: 'a\\b' }], gate, max).length, 0);
+  assert.equal(validateAutoObs([{ text: 'a\x1bb は肉が好き', person: 'a\x1bb' }], gate, max).length, 0);
+  // 旧形式（person キー無し）は従来どおり保存される（互換）
+  const legacy = validateAutoObs([{ text: 'ユーザーは野菜が嫌いだと明言した', tags: ['food'] }], gate, max);
+  assert.deepEqual(legacy[0].tags, ['food']);
 });

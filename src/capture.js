@@ -101,15 +101,26 @@ export function validateAutoObs(raw, gate, max) {
     if (gate.match(text)) continue; // 抽出結果の機密は破棄
     if (detectHighEntropy(text)) continue; // 高エントロピー（未知形式トークンの兆候）の自動観測は破棄
     let tags = (Array.isArray(item.tags) ? item.tags : []).map((t) => String(t).trim()).filter(Boolean);
+    // person: 名前空間は auto 経路では「検証済みタグ」専用に予約する。LLM が tags 直書きで
+    // 未検証の person タグを作るバイパス（不変条件「person タグ＝主語検証済み」の破り）を塞ぎ、
+    // 検証済み person と矛盾する二重 person タグも防ぐ。
+    tags = tags.filter((t) => !t.startsWith('person:'));
     // 人物事実の主語をスキーマで機械検証する（プロンプト指示だけでは LLM が忘れたとき漏れる）:
     // person が指定された項目は text にその主語表記が無ければ棄却し、person:<who> タグを自動付与する。
-    // person:null（人物に関しない事実）は従来どおり。person が null なのに人物事実、は機械判定不能（残課題）。
+    // person:null（人物に関しない事実）は従来どおり。既知の限界: 「person:null なのに人物事実」と
+    // 部分一致（person="ユー" が「ユーザーは…」に一致）は機械判定不能。
     if (item.person !== undefined && item.person !== null) {
-      const person = String(item.person).trim();
-      // タグ・注入ブロックに載る値なので機械的に拘束: 1〜20字・空白/カンマ/角括弧なし
-      if (!person || person.length > 20 || /[\s,\[\]"]/.test(person)) continue;
-      if (!text.includes(person)) continue; // 主語が本文に無い人物事実は受け付けない（fail-closed）
-      tags = [`person:${person}`, ...tags.filter((t) => t !== `person:${person}`)];
+      if (typeof item.person !== 'string') continue; // 型違反（配列・数値等）は棄却（fail-closed）
+      const person = item.person.trim();
+      // trim 後空文字は「指定なし」扱い: non-person 事実に "" を出す LLM 出力で正当な知見を落とさない
+      if (person) {
+        // タグ・検索条件・CLI 表示に載る値なので機械的に拘束:
+        // 1〜20字、空白/カンマ/角括弧/引用符/バックスラッシュ/コロン/制御文字なし
+        // （" \ 制御文字は JSON エスケープで tags LIKE 検索を恒久不一致にする。: は person:<who> 規約を曖昧にする）
+        if (person.length > 20 || /[\s,\[\]"\\:]/.test(person) || /\p{C}/u.test(person)) continue;
+        if (!text.includes(person)) continue; // 主語が本文に無い人物事実は受け付けない（fail-closed）
+        tags = [`person:${person}`, ...tags];
+      }
     }
     out.push({ text, tags: tags.slice(0, 5) });
   }
