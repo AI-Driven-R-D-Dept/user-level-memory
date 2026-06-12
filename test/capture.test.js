@@ -239,8 +239,10 @@ test('capture 統合: 第2段の配線（部分集合の origIndex 再マップ�
     try {
       const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
       assert.equal(calls.length, 2, '抽出 + judge の2回だけ');
-      // 候補ゼロの新規項目は judge プロンプトに載らない（部分集合送信）
-      assert.ok(!calls[1].user.includes('Quark'), '候補ゼロの項目は judge に送らない');
+      // 候補ゼロの新規項目は判定対象（new）として送られない（部分集合送信）。
+      // ※ バッチ内 dedup の導入で、後続項目の「候補」としては先行項目のテキストが載る
+      const judgedItems = JSON.parse(calls[1].user.match(/<items>\n([\s\S]*)\n<\/items>/)[1]);
+      assert.ok(!judgedItems.some((it) => it.new.includes('Quark')), '候補ゼロの項目は判定対象にならない');
       // 言い換えはスキップされ、新規だけ保存される（origIndex 再マップが正しい）
       assert.equal(r.skippedDup, 1);
       assert.equal(r.captured.length, 1);
@@ -309,6 +311,45 @@ test('capture 統合: 完全一致は第1段ハッシュで弾かれ judge は�
       assert.equal(calls.length, 1, '抽出のみ（fresh が空なので judge 不要）');
       assert.equal(r.skippedDup, 1);
       assert.equal(r.captured.length, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('capture 統合: 同一バッチ内の言い換え重複は先勝ちでスキップ（12b）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    const { dir, tp } = fakeTranscript();
+    const calls = [];
+    const call = async (prov, prompt) => {
+      calls.push(prompt);
+      if (calls.length === 1) {
+        // 空 DB なので FTS 候補ゼロ。だがバッチ内に同事実の2表現 + 別事実1件
+        return JSON.stringify([
+          { text: 'ユーザーは犬が好きで散歩によく行く', tags: [] },
+          { text: 'ユーザーは犬好きで、よく散歩に出かけている', tags: [] },
+          { text: 'Zig のビルドは build.zig が必須である', tags: [] },
+        ]);
+      }
+      const items = JSON.parse(prompt.user.match(/<items>\n([\s\S]*)\n<\/items>/)[1]);
+      // judge: new が「犬」を含み、候補にも「犬」を含むものがあれば重複と答える
+      return JSON.stringify(items.map((it) => {
+        const hit = it.candidates.find((c) => c.text.includes('犬') && it.new.includes('犬'));
+        return { index: it.index, duplicate_of: hit ? hit.id : null };
+      }));
+    };
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(calls.length, 2);
+      // 判定に送られた item には合成 id（new-0 等）のバッチ候補が含まれる
+      const judged = JSON.parse(calls[1].user.match(/<items>\n([\s\S]*)\n<\/items>/)[1]);
+      assert.ok(judged.some((it) => it.candidates.some((c) => /^new-\d+$/.test(c.id))), 'バッチ候補が合成 id で提示される');
+      // 先勝ち: 1件目の犬は保存・2件目の言い換えはスキップ・別事実は保存
+      assert.equal(r.skippedDup, 1);
+      assert.equal(r.captured.length, 2);
+      assert.ok(r.captured.some((o) => o.text.includes('散歩によく行く')));
+      assert.ok(r.captured.some((o) => o.text.includes('Zig')));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

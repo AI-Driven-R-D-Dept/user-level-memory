@@ -232,12 +232,18 @@ export async function capture(store, config, home, { transcriptPath, project, pr
     return true;
   });
 
-  // 第2段: retrieve-then-judge（全DB対象）。候補が1件も無ければ追加 LLM 呼び出しはゼロ
+  // 第2段: retrieve-then-judge（全DB対象 + 同一バッチ内）。候補が1件も無ければ追加 LLM 呼び出しはゼロ
   if (fresh.length && (config.capture?.dedup_judge ?? true)) {
     const scopes = project ? ['global', project] : null;
-    const items = fresh.map((e) => ({
+    const items = fresh.map((e, i) => ({
       text: e.text,
-      candidates: findDupCandidates(store, e.text, { scopes, gate }).map((c) => ({ id: c.id, text: String(c.text).slice(0, EXISTING_OBS_CHARS) })),
+      candidates: [
+        ...findDupCandidates(store, e.text, { scopes, gate }).map((c) => ({ id: c.id, text: String(c.text).slice(0, EXISTING_OBS_CHARS) })),
+        // 同一バッチ内の言い換え対策: 先行する抽出項目も合成 id（new-<j>）の候補として判定に含める。
+        // 同セッションで同事実が2表現出た場合、FTS は DB のみ・ハッシュは完全一致のみで拾えないため。
+        // 先勝ち（後の項目が dup 側）になり、先行項目が DB 重複でスキップされても後続のスキップは正しい（推移的に同事実）。
+        ...fresh.slice(0, i).map((p, j) => ({ id: `new-${j}`, text: String(p.text).slice(0, EXISTING_OBS_CHARS) })),
+      ],
     }));
     // 候補が付いた項目だけを判定に送る（候補ゼロ＝明らかな新規はトークンも呼び出しも使わない）
     const judged = items.map((it, i) => ({ ...it, origIndex: i })).filter((it) => it.candidates.length);
