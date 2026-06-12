@@ -94,10 +94,13 @@ test('findDupCandidates: 言い換えを FTS 候補として引く（判定は�
   withFreshStore((store) => {
     const a = store.addObservation({ text: 'ユーザーは野菜が嫌いと本人が明言（食べ物の好み）。食事・レシピ・店選びの話題に関連する', project: null });
     store.addObservation({ text: 'GitHub README はコミットした mp4 をインライン再生できない', project: null });
-    const hits = findDupCandidates(store, 'ユーザーは野菜が嫌い。食事の提案では野菜中心を避ける。');
+    const gate = compileGate({ deny_patterns: [] });
+    const hits = findDupCandidates(store, 'ユーザーは野菜が嫌い。食事の提案では野菜中心を避ける。', { gate });
     assert.ok(hits.some((h) => h.id === a.id), '言い換えが候補に入る');
-    const none = findDupCandidates(store, '完全に無関係な暗号通貨のマイニング手法のはなし');
+    const none = findDupCandidates(store, '完全に無関係な暗号通貨のマイニング手法のはなし', { gate });
     assert.ok(!none.some((h) => h.id === a.id), '無関係テキストでは野菜観測は候補にならない');
+    // gate は必須（fail-closed）: 未指定なら候補を返さない＝LLM ペイロードに何も載らない
+    assert.deepEqual(findDupCandidates(store, 'ユーザーは野菜が嫌い'), []);
   });
 });
 

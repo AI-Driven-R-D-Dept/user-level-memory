@@ -118,11 +118,11 @@ const DUP_CANDIDATE_K = 3; // 1件あたりの判定候補数
  * ここでも適用する（miner/recall/context と同じ二条件で多層防御を一様にする。
  * 保存後に deny パターンが追加された観測・import 由来の secret 未フラグ観測の外部送信を防ぐ）。
  */
-export function findDupCandidates(store, text, { scopes = null, limit = DUP_CANDIDATE_K, gate = null } = {}) {
+export function findDupCandidates(store, text, { scopes = null, limit = DUP_CANDIDATE_K, gate } = {}) {
+  if (!gate) return []; // gate 必須（fail-closed）: ゲート無しの呼び出しに LLM ペイロード候補を返さない
   try {
     const hits = store.searchObservations({ query: text, scopes, includeSecret: false, includeArchived: false, limit: limit * 2 });
-    const safe = gate ? hits.filter((o) => !gate.match(o.text) && !detectHighEntropy(o.text)) : hits;
-    return safe.slice(0, limit);
+    return hits.filter((o) => !gate.match(o.text) && !detectHighEntropy(o.text)).slice(0, limit);
   } catch {
     return []; // 検索失敗は「候補なし」として保存側に倒す
   }

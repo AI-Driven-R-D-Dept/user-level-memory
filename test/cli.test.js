@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -8,19 +8,16 @@ import { fileURLToPath } from 'node:url';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js');
 
-/** ulm を子プロセスで実行。{ status, stdout, stderr } を返す（非TTY 環境）。 */
+/** ulm を子プロセスで実行。{ status, stdout, stderr } を返す（非TTY 環境）。
+ *  spawnSync を使う: execFileSync は成功時に stderr を返せず、警告系（⚠）の検証ができない。 */
 function run(home, args, { input } = {}) {
-  try {
-    const stdout = execFileSync('node', [BIN, ...args], {
-      env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
-      input: input ?? '',
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { status: 0, stdout, stderr: '' };
-  } catch (err) {
-    return { status: err.status ?? 1, stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
-  }
+  const r = spawnSync('node', [BIN, ...args], {
+    env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
+    input: input ?? '',
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
 function freshHome() {
@@ -179,4 +176,20 @@ test('CLI: 不明なコマンドは exit 2', () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('obs add: 類似観測の機械的警告（保存は止めない・判定はしない）', () => {
+  const home = freshHome();
+  const a = run(home, ['obs', 'add', 'ユーザーは野菜が嫌いと本人が明言（食べ物の好み）。食事・レシピ・店選びの話題に関連する', '--global']);
+  assert.equal(a.status, 0);
+  // 言い換えを追加 → 警告に既存 id が出る。ただし保存自体は行われる
+  const b = run(home, ['obs', 'add', 'ユーザーは野菜が嫌い。食事・レシピ・店選びの提案時は、野菜中心の提案を避けるのが無難。', '--global']);
+  assert.equal(b.status, 0);
+  assert.match(b.stdout, /✓ 観測を記録/);
+  assert.match(b.stderr, /似ている可能性のある既存観測/);
+  assert.match(b.stderr, /obs-[0-9a-f]+/);
+  // 無関係テキストでは警告なし
+  const c = run(home, ['obs', 'add', 'Remotion のレンダリングは SFX を全コピーしないと404で失敗する', '--global']);
+  assert.equal(c.status, 0);
+  assert.ok(!c.stderr.includes('似ている可能性'), `無関係では警告しない: ${c.stderr}`);
 });

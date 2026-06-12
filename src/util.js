@@ -49,3 +49,26 @@ export function parseJsonSafe(s, fallback) {
     return fallback;
   }
 }
+
+/**
+ * トライグラム包含率（小さい方の集合に対する共通率、0〜1）。
+ * 注意: これは「似ているかもしれない」警告用の弱フィルタ専用。重複の判定には使えない —
+ * 実測で「同事実の言い換え」(0.44-0.54) より「同型文の別事実」(0.76) が高く、分離する閾値が
+ * 存在しない（DESIGN.md §9.6）。判定が要る場面では LLM のペア判定を使うこと。
+ */
+export function trigramContainment(a, b) {
+  const norm = (s) => String(s).toLowerCase().replace(/[\s、。・「」『』（）()\[\]【】.,:;!?！？]/g, '');
+  const tri = (s) => {
+    const n = norm(s);
+    const set = new Set();
+    for (let i = 0; i + 3 <= n.length; i++) set.add(n.slice(i, i + 3));
+    return set;
+  };
+  const A = tri(a);
+  const B = tri(b);
+  if (!A.size || !B.size) return 0;
+  const [small, large] = A.size <= B.size ? [A, B] : [B, A];
+  let hit = 0;
+  for (const t of small) if (large.has(t)) hit++;
+  return hit / small.size;
+}

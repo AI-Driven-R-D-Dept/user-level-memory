@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTtl, truncate, splitCsv, shortDate, parseJsonSafe } from '../src/util.js';
+import { parseTtl, truncate, splitCsv, shortDate, parseJsonSafe, trigramContainment } from '../src/util.js';
 import { newId, hypothesisHash } from '../src/ids.js';
 
 test('parseTtl: 各単位', () => {
@@ -42,4 +42,19 @@ test('hypothesisHash: 表記揺れを正規化', () => {
   assert.equal(hypothesisHash('赤ボタンが有効'), hypothesisHash('赤ボタンが有効。'));
   assert.equal(hypothesisHash('A B C'), hypothesisHash('a　b　c')); // 全角空白/大小
   assert.notEqual(hypothesisHash('赤'), hypothesisHash('青'));
+});
+
+test('trigramContainment: 警告用の弱フィルタとして実測ペアを拾う', () => {
+  // 実測した真の重複ペア（0.44-0.54）が閾値 0.4 で拾えること
+  const dup = trigramContainment(
+    'ユーザーは野菜が嫌いと本人が明言（食べ物の好み）。食事・レシピ・店選びの話題に関連する',
+    'ユーザーは野菜が嫌い。食事・レシピ・店選びの提案時は、野菜中心の提案を避けるのが無難。'
+  );
+  assert.ok(dup >= 0.4, `真の重複が閾値を超える: ${dup}`);
+  // 無関係テキストは拾わない
+  const unrelated = trigramContainment('GitHub README は mp4 をインライン再生できない', 'ユーザーは野菜が嫌い');
+  assert.ok(unrelated < 0.4, `無関係は閾値未満: ${unrelated}`);
+  // 端ケース: 短すぎる・空
+  assert.equal(trigramContainment('', 'abc'), 0);
+  assert.equal(trigramContainment('ab', 'ab'), 0);
 });

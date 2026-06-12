@@ -13,7 +13,7 @@ import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget } from './safepath.js';
 import { resolveProject } from './project.js';
-import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe } from './util.js';
+import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
 const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI）
 
@@ -182,6 +182,19 @@ async function cmdObs(args) {
         meta: metaObj,
       });
       if (!values.quiet) console.log(`✓ 観測を記録: ${obs.id}${obs.secret ? ' (secret)' : ''}${obs.pinned ? ' (pin)' : ''}`);
+      // 類似観測の機械的警告（手動経路のバックストップ）。保存は止めない・重複の断定もしない。
+      // trigramContainment は警告専用の弱フィルタ（判定に使えない理由は util.js のコメント参照）。
+      if (!values.quiet && !obs.secret) {
+        const scopes = obs.project ? ['global', obs.project] : null;
+        const similar = store
+          .searchObservations({ query: text, scopes, includeSecret: false, includeArchived: false, limit: 5 })
+          .filter((o) => o.id !== obs.id && trigramContainment(text, o.text) >= 0.4)
+          .slice(0, 2);
+        if (similar.length) {
+          console.error('⚠ 似ている可能性のある既存観測があります（重複なら ulm obs archive <id> で整理）:');
+          for (const o of similar) console.error(`  ${o.id} ${truncate(o.text, 60)}`);
+        }
+      }
       return 0;
     });
   }
