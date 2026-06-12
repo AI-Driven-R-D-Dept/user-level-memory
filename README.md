@@ -110,6 +110,7 @@ ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
 ulm promote <cand-id> --name <slug>              # 承認済みを project の .claude/skills へ skill 化
 ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
+ulm web                                           # DB を閲覧・編集するローカル Web UI（127.0.0.1）
 ```
 
 全コマンドとオプションは `ulm help` を参照してください。

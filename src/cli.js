@@ -9,6 +9,7 @@ import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
 import { capture, findDupCandidates } from './capture.js';
+import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
@@ -44,6 +45,7 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶を BM25 で想起
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
+  ulm web [--port 8765]                                 DB を閲覧・編集するローカル Web UI（127.0.0.1）
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
 
@@ -891,6 +893,20 @@ function cmdDoctor() {
   return checks.some((c) => c.level === 'error') ? 1 : 0;
 }
 
+async function cmdWeb(args) {
+  const { values } = parse(args, { port: { type: 'string', default: '8765' } });
+  const port = Number(values.port);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError('--port は 0〜65535 の整数です');
+  const home = ulmHome();
+  ensureHome(home);
+  const store = openStore(home); // サーバの寿命 = プロセスの寿命なので withStore は使わない
+  const { url } = await startWebServer(store, loadConfig(home), home, { port });
+  console.log('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
+  console.log(`  ${url}`);
+  console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+  return new Promise(() => {}); // サーバが生きている限り戻らない
+}
+
 export async function main(argv) {
   const [cmd, ...rest] = argv;
   try {
@@ -915,6 +931,7 @@ export async function main(argv) {
       case 'import': return await cmdImport(rest);
       case 'status': return await cmdStatus();
       case 'doctor': return cmdDoctor();
+      case 'web': return await cmdWeb(rest);
       case 'help': case '--help': case '-h': case undefined:
         console.log(HELP);
         return 0;

@@ -183,6 +183,21 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
   手動登録の正式規範ポインタ用として残る。
 - memory-recorder skill: 「条件付きで再利用できる知見」を見つけたら `ulm obs add --source claude` で記録するよう促す（記録は観測のみ。候補化は mine の仕事）。
 
+## 7.5. ローカル Web UI（ulm web）
+
+`ulm web [--port 8765]` で DB を閲覧・編集できるローカル UI を提供する（`webapp/index.html` 単一ファイル + JSON API。
+node:http のみで依存ゼロを維持）。
+
+- **セキュリティ**: ①127.0.0.1 バインドのみ ②起動ごとのランダムトークン必須（ページは `?token=`、API は
+  `x-ulm-token` ヘッダ）。トークンは起動した端末にだけ表示されるため、ブラウザ以外のローカルプロセス
+  （エージェント等）が API を直叩きして approve 等の人間操作を偽装できない（`--yes` と同等の信頼境界）
+  ③Host ヘッダ検証（DNS rebinding 対策）。変更系はカスタムヘッダ必須なので CSRF も成立しない。
+- **できること**: 観測のフラグ（pin/secret/archive）・タグ編集・redact・追加（入口ゲート適用・source=web）／
+  state の上書き・追加・削除（入口ゲート適用）／候補の approve・reject（**inbox のみ**）・条件/メモ編集／
+  ref ポインタの追加（CLI と同一の safepath 検証）・削除／SQL（**読み取り専用接続 + 単一 SELECT のみ**の二重の壁）。
+- **出さないもの（設計上の意図）**: promote（/ulm:promote の領分）。観測本文の編集（追記のみ・訂正は redact）。
+- secret 観測はトークン保持者（=人間オペレータ）に返すが、表示は既定マスク・クリックで開示。
+
 ## 8. セキュリティ脅威モデル（PDF の3つの落とし穴）
 
 | 落とし穴 | 対策 |
