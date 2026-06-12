@@ -8,7 +8,7 @@ import { compileGate, detectHighEntropy } from './gate.js';
 import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
-import { capture } from './capture.js';
+import { capture, findDupCandidates } from './capture.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget } from './safepath.js';
@@ -183,16 +183,22 @@ async function cmdObs(args) {
       });
       if (!values.quiet) console.log(`✓ 観測を記録: ${obs.id}${obs.secret ? ' (secret)' : ''}${obs.pinned ? ' (pin)' : ''}`);
       // 類似観測の機械的警告（手動経路のバックストップ）。保存は止めない・重複の断定もしない。
-      // trigramContainment は警告専用の弱フィルタ（判定に使えない理由は util.js のコメント参照）。
+      // trigramContainment は警告専用の弱フィルタ（判定に使えない理由は util.js のコメント参照。
+      // 閾値 0.4 は実測の言い換え下限 0.44 ぎりぎりで、recall は部分的 — 取りこぼしは普通に起こる）。
+      // 候補は findDupCandidates 経由: stderr は skill/command から Claude のコンテキストに載るため
+      // 実質 LLM ペイロードであり、capture の judge と同じ二条件ゲートを一様に適用する。
       if (!values.quiet && !obs.secret) {
-        const scopes = obs.project ? ['global', obs.project] : null;
-        const similar = store
-          .searchObservations({ query: text, scopes, includeSecret: false, includeArchived: false, limit: 5 })
-          .filter((o) => o.id !== obs.id && trigramContainment(text, o.text) >= 0.4)
-          .slice(0, 2);
-        if (similar.length) {
-          console.error('⚠ 似ている可能性のある既存観測があります（重複なら ulm obs archive <id> で整理）:');
-          for (const o of similar) console.error(`  ${o.id} ${truncate(o.text, 60)}`);
+        try {
+          const scopes = obs.project ? ['global', obs.project] : null;
+          const similar = findDupCandidates(store, text, { scopes, gate: compileGate(config), limit: 5 })
+            .filter((o) => o.id !== obs.id && trigramContainment(text, o.text) >= 0.4)
+            .slice(0, 2);
+          if (similar.length) {
+            console.error('⚠ 似ている可能性のある既存観測があります（重複なら ulm obs archive <id> で整理）:');
+            for (const o of similar) console.error(`  ${o.id} ${truncate(o.text, 60)}`);
+          }
+        } catch {
+          // 警告はベストエフォート（保存は完了済み。警告の失敗で obs add を失敗させない）
         }
       }
       return 0;

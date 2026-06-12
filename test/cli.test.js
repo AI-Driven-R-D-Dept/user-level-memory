@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -192,4 +192,21 @@ test('obs add: 類似観測の機械的警告（保存は止めない・判定�
   const c = run(home, ['obs', 'add', 'Remotion のレンダリングは SFX を全コピーしないと404で失敗する', '--global']);
   assert.equal(c.status, 0);
   assert.ok(!c.stderr.includes('似ている可能性'), `無関係では警告しない: ${c.stderr}`);
+});
+
+test('obs add: 警告候補にも生成ゲート（後付け deny パターンの未フラグ機密を stderr に出さない）', () => {
+  const home = freshHome();
+  // 保存時点では deny に当たらない観測（secret フラグなし）
+  const a = run(home, ['obs', 'add', 'デプロイ手順のコツ: 社内トークン ACMEXYZZY-9988-7766 を scripts/deploy.sh に渡す', '--global']);
+  assert.equal(a.status, 0);
+  // 後から deny パターンを追加（保存済み観測が読み取り時ゲートの対象になる状況を再現）
+  const cfgPath = join(home, 'config.json');
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  cfg.deny_patterns = ['ACMEXYZZY-\\d+'];
+  writeFileSync(cfgPath, JSON.stringify(cfg));
+  // 言い換えを追加 → 警告にはゲート一致の観測を出さない
+  const b = run(home, ['obs', 'add', 'デプロイ手順のコツ: 社内トークンを scripts/deploy.sh に渡して実行する', '--global']);
+  assert.equal(b.status, 0);
+  assert.match(b.stdout, /✓ 観測を記録/);
+  assert.ok(!b.stderr.includes('ACMEXYZZY'), `機密様テキストが警告に漏れない: ${b.stderr}`);
 });
