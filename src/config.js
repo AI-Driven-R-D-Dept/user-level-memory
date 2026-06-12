@@ -24,6 +24,9 @@ export const DEFAULT_CONFIG = {
     enabled: true, // Stop hook での観測自動抽出
     provider: 'auto', // auto | codex | opencode | openai（miner と同設定を流用）
     max_per_session: 3, // 1セッションで自動抽出する観測の上限
+    // 保存時の言い換え重複判定（retrieve-then-judge・全DB対象）。FTS で候補を引き LLM がペア判定。
+    // 候補が無ければ追加呼び出しゼロ。判定不能時は保存側に倒す。
+    dedup_judge: true,
     // 自動抽出(source=auto)の未レビュー観測を recall 注入に含めるか。
     // recall は「関連時のみ発火・データfenceで無害化・(自動抽出/未レビュー)ラベル付き・機密ゲート済み」
     // なので既定 true（E2E で実価値を確認）。SessionStart の無条件注入では auto は除外したまま。
