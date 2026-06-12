@@ -23,7 +23,7 @@ export const DEFAULT_CONFIG = {
   capture: {
     enabled: true, // Stop hook での観測自動抽出
     provider: 'auto', // auto | codex | opencode | openai（miner と同設定を流用）
-    max_per_session: 3, // 1セッションで自動抽出する観測の上限
+    max_per_session: 3, // 1セッションで自動抽出する観測の上限（注意: dedup_judge のバッチ内候補は O(n²) で増えるため大きくしすぎない）
     // 保存時の言い換え重複判定（retrieve-then-judge・全DB対象）。FTS で候補を引き LLM がペア判定。
     // 候補が無ければ追加呼び出しゼロ。判定不能時は保存側に倒す。
     dedup_judge: true,

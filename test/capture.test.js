@@ -234,7 +234,7 @@ test('capture 統合: 第2段の配線（部分集合の origIndex 再マップ�
       }
       // judge: 提示された items を読んで「猫」を含む new だけ重複と答える
       const items = JSON.parse(prompt.user.match(/<items>\n([\s\S]*)\n<\/items>/)[1]);
-      return JSON.stringify(items.map((it) => ({ index: it.index, duplicate_of: it.new.includes('猫') ? (it.candidates[0]?.id ?? null) : null })));
+      return JSON.stringify(items.map((it) => ({ index: it.index, duplicate_of: it.new.includes('猫') ? (it.candidates.find((c) => c.id.startsWith('obs-'))?.id ?? null) : null })));
     };
     try {
       const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
@@ -350,6 +350,25 @@ test('capture 統合: 同一バッチ内の言い換え重複は先勝ちでス�
       assert.equal(r.captured.length, 2);
       assert.ok(r.captured.some((o) => o.text.includes('散歩によく行く')));
       assert.ok(r.captured.some((o) => o.text.includes('Zig')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('capture 統合: バッチ内のバイト同一重複は第1段で決定的に弾く（judge 無効でも）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    config.capture.dedup_judge = false; // judge を切っても完全一致は閉じる
+    const { dir, tp } = fakeTranscript();
+    const call = async () => JSON.stringify([
+      { text: 'ユーザーは犬が好きで散歩によく行く', tags: [] },
+      { text: 'ユーザーは犬が好きで散歩によく行く', tags: [] },
+    ]);
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(r.captured.length, 1);
+      assert.equal(r.skippedDup, 1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -224,11 +224,14 @@ export async function capture(store, config, home, { transcriptPath, project, pr
   const resp = await call(prov, prompt, config, home);
   const extracted = validateAutoObs(extractJsonArray(resp), gate, max);
 
-  // 第1段: 正規化ハッシュの完全一致 dedup（無コスト）
+  // 第1段: 正規化ハッシュの完全一致 dedup（無コスト）。通過項目のハッシュも逐次加えることで
+  // バッチ内のバイト同一重複も LLM 不要・決定的にここで閉じる（judge 無効/失敗時の取りこぼし防止）
   const existing = new Set(store.listObservations({ includeSecret: true, includeArchived: true, limit: 100000 }).map((o) => hypothesisHash(o.text)));
   let skippedDup = 0;
   let fresh = extracted.filter((e) => {
-    if (existing.has(hypothesisHash(e.text))) { skippedDup++; return false; }
+    const h = hypothesisHash(e.text);
+    if (existing.has(h)) { skippedDup++; return false; }
+    existing.add(h);
     return true;
   });
 
@@ -256,7 +259,14 @@ export async function capture(store, config, home, { transcriptPath, project, pr
         // 判定呼び出し失敗は全件保存側に倒す（fail-open: 重複の可能性よりデータ喪失を避ける）
       }
       fresh = fresh.filter((e, i) => {
-        if (verdicts[i]) { skippedDup++; log(`重複スキップ: 「${e.text.slice(0, 40)}…」 ≒ ${verdicts[i]}`); return false; }
+        if (verdicts[i]) {
+          // new-<j> はユーザーに無意味な合成 id なので、相手のテキスト先頭に解決して表示する
+          const m = /^new-(\d+)$/.exec(verdicts[i]);
+          const label = m ? `バッチ内「${String(fresh[Number(m[1])]?.text ?? '').slice(0, 30)}…」` : verdicts[i];
+          skippedDup++;
+          log(`重複スキップ: 「${e.text.slice(0, 40)}…」 ≒ ${label}`);
+          return false;
+        }
         return true;
       });
     }
