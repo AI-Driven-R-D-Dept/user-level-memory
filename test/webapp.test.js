@@ -145,3 +145,18 @@ test('runReadonlyQuery: readOnly 接続なので SELECT を装った書込も DB
     assert.throws(() => runReadonlyQuery(home, 'select 1 attach database \'/tmp/x\' as y'), /./);
   });
 });
+
+test('webapp: GET /api/obs は本文が機密の観測に sensitive を立てる（読み取り時ゲート）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    // secret フラグ無しで保存された機密本文（import/legacy 経路を再現）
+    store.importRows('observations', [{ id: 'obs-leak99', ts: new Date().toISOString(), project: null, text: '鍵は sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX', tags: '[]', source: 'import', secret: 0, meta: '{}', pinned: 0, redacted: 0, archived: 0 }]);
+    const safe = store.addObservation({ text: '普通の観測テキスト', project: null });
+    await withServer(store, home, async ({ call }) => {
+      const r = await (await call('/api/obs')).json();
+      const leak = r.obs.find((o) => o.id === 'obs-leak99');
+      const ok = r.obs.find((o) => o.id === safe.id);
+      assert.equal(leak.sensitive, true, 'secret=0 でも本文が機密なら sensitive');
+      assert.equal(ok.sensitive, false, '無害な観測は sensitive=false');
+    });
+  });
+});

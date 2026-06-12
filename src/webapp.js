@@ -112,10 +112,18 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       try { dbBytes = statSync(dbPath(home)).size; } catch { /* db 未作成 */ }
       return { home, dbBytes, schema: store.schemaVersion(), stats: store.stats() };
     },
-    'GET /api/obs': () => ({
+    'GET /api/obs': () => {
       // 人間オペレータ専用 UI（トークン保持者）なので secret も返す。表示側で既定マスク。
-      obs: store.listObservations({ includeSecret: true, includeArchived: true, limit: 1000 }),
-    }),
+      // 読み取り時ゲート（多層防御）: secret=0 でも本文が機密パターン/高エントロピーなら sensitive を立て、
+      // クライアントに既定マスクさせる。import/legacy/別経路で secret フラグが付かなかった機密が
+      // 画面共有・録画で平文露出するのを防ぐ（recall.js/context.js の readSafe と一貫）。
+      const gate = compileGate(config);
+      const obs = store.listObservations({ includeSecret: true, includeArchived: true, limit: 1000 }).map((o) => ({
+        ...o,
+        sensitive: !!(o.secret || gate.match(o.text) || detectHighEntropy(o.text)),
+      }));
+      return { obs };
+    },
     'POST /api/obs': (body) => {
       const text = String(body.text || '').trim();
       if (!text) throw new Error('text が空です');

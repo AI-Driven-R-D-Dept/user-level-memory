@@ -629,10 +629,10 @@ function renderObs() {
     if (proj === '(global)' && o.project) continue;
     if (proj && proj !== '(global)' && o.project !== proj) continue;
     if (filters.pinned && !o.pinned) continue;
-    if (o.secret && !filters.secret) continue;
+    if (o.sensitive && !filters.secret) continue;
     if (o.archived && !filters.archived) continue;
     shown++;
-    const masked = o.secret && !revealed.has(o.id);
+    const masked = o.sensitive && !revealed.has(o.id);
     const div = document.createElement('div');
     div.className = 'obs' + (o.archived ? ' archived' : '');
     div.innerHTML = `
