@@ -23,11 +23,11 @@ allowed-tools: "Bash(node:*)"
 |---|---|---|
 | 普遍の事実・条件付きの経験則・生の観測 | **ulm（このスキル）** | Claude / 人間 |
 | 常に守るルール | CLAUDE.md | 人間（勝手に追記しない） |
-| 吟味済みの正式規範 | ref | 人間が `promote` で昇格 |
+| 吟味済みの再利用ルール | project の skill / ref | 人間が `promote`（skill化）/ `ref add` |
 | 課題・タスクの構造 | bd（beads） | `bd create` 等 |
 
 ulm の観測は**昇格の餌**です。貯まった観測から `/ulm:mine` が仮説候補を作り、人間レビュー
-（`/ulm:review`）を通ったものだけが ref へ昇格します。recorder の段階ではルール化・一般化をせず、
+（`/ulm:review`）を通り承認されたものだけが `promote` で project の skill へ昇格します。recorder の段階ではルール化・一般化をせず、
 生の事実を置くだけにします。MEMORY.md のような独自メモファイルを新設するのも禁止です
 （記憶が分散して腐るため）。
 

@@ -137,3 +137,12 @@ test('hookOutput: 正しい SessionStart 形式', () => {
   });
   assert.equal(hookOutput(''), null);
 });
+
+test('buildContext: source=web は (Web UIで記録) と表示し import 扱いしない（出自の正しい表示）', () => {
+  withFreshStore((store) => {
+    store.addObservation({ text: 'Web UI から人間が記録した観測', project: 'p', source: 'web' });
+    const ctx = buildContext(store, testConfig(), { project: 'p' });
+    assert.ok(ctx.includes('(Web UIで記録)'), 'web の出自ラベルが出る');
+    assert.ok(!ctx.includes('(取込)'), 'import(取込) として誤表示しない');
+  });
+});

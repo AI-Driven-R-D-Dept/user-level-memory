@@ -19,7 +19,7 @@ import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSa
 const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI）
 
 知識の置き場 4 段（CLAUDE.md / ref / bd / ulm）のうち、「現場の勘所を育てる生もの」の層。
-観測は追記、状態は上書き+TTL、仮説は inbox で育てて人間の承認で ref へ昇格する。
+観測は追記、状態は上書き+TTL、仮説は inbox で育てて人間の承認で project の skill へ昇格する。
 
 観測:
   ulm obs add <text|-> [--tags a,b] [--secret] [--pin] [--project P] [--source S] [--meta json]

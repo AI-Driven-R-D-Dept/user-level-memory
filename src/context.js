@@ -14,6 +14,7 @@ const SOURCE_LABEL = {
   manual: '',
   claude: ' (Claudeが記録)',
   auto: ' (自動抽出/未レビュー)',
+  web: ' (Web UIで記録)',
   import: ' (取込)',
 };
 

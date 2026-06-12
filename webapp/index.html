@@ -708,7 +708,7 @@ function renderStates() {
     <tr style="${expired ? 'opacity:.45' : ''}">
       <td style="font-weight:600">${esc(s.key)}</td>
       <td class="mono sub">${esc(s.scope)}</td>
-      <td><span class="editable" data-i="${i}">${s.secret ? '🔒 (secret)' : esc(s.value)}</span></td>
+      <td><span class="editable" data-i="${i}">${s.sensitive ? '🔒 (secret)' : esc(s.value)}</span></td>
       <td class="sub">${fmtTs(s.updated_at)}</td>
       <td class="sub">${s.expires_at ? fmtTs(s.expires_at) + (expired ? ' (失効)' : '') : '—'}</td>
       <td><div class="rowactions"><button class="iconbtn danger" data-i="${i}" title="削除">${I('trash')}</button></div></td>

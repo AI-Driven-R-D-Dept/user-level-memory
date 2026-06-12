@@ -106,7 +106,7 @@ export function runReadonlyQuery(home, query) {
 
 /**
  * Web UI サーバを起動する。
- * @returns {{server: import('node:http').Server, url: string, token: string, port: number}}
+ * @returns {Promise<{server: import('node:http').Server, url: string, token: string, port: number}>}
  */
 export function startWebServer(store, config, home, { host = '127.0.0.1', port = 8765 } = {}) {
   const token = randomBytes(16).toString('hex');
@@ -160,7 +160,15 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       const tags = (Array.isArray(body.tags) ? body.tags : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 10);
       return { obs: store.setObservationTags(String(body.id), tags) };
     },
-    'GET /api/states': () => ({ states: store.listStates({ includeExpired: true, includeSecret: true }) }),
+    'GET /api/states': () => {
+      // obs と同じ読み取り時ゲート: secret=0 でも値が機密なら sensitive を立て既定マスクさせる
+      const gate = compileGate(config);
+      const states = store.listStates({ includeExpired: true, includeSecret: true }).map((s) => ({
+        ...s,
+        sensitive: !!(s.secret || gate.match(s.value) || detectHighEntropy(s.value)),
+      }));
+      return { states };
+    },
     'POST /api/state': (body) => {
       const key = String(body.key || '').trim();
       const value = String(body.value ?? '');

@@ -183,3 +183,18 @@ test('webapp: readBody は TCP 分割された UTF-8 マルチバイトを壊さ
     });
   });
 });
+
+test('webapp: GET /api/states も本文機密に sensitive を立てる（obs と一様な読み取り時ゲート）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    // secret フラグ無しで機密値が入った state（import/後付け deny を再現）
+    store.setState('leaked', '鍵は sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX', { scope: 'global' });
+    store.setState('safe', '東京・自宅', { scope: 'global' });
+    await withServer(store, home, async ({ call }) => {
+      const r = await (await call('/api/states')).json();
+      const leak = r.states.find((x) => x.key === 'leaked');
+      const safe = r.states.find((x) => x.key === 'safe');
+      assert.equal(leak.sensitive, true, 'secret=0 でも機密値なら sensitive');
+      assert.equal(safe.sensitive, false, '無害な値は sensitive=false');
+    });
+  });
+});

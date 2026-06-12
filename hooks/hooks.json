@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/stop-capture.sh\"",
-            "timeout": 60,
+            "timeout": 150,
             "async": true
           }
         ]
