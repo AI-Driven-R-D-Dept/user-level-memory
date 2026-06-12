@@ -767,7 +767,7 @@ function renderCands() {
           <button class="btn sm tint-green" data-a="approved" data-id="${c.id}">${I('check')}Approve</button>
           <button class="btn sm tint-red" data-a="rejected" data-id="${c.id}">${I('x')}Reject</button>
           <button class="btn sm" data-a="edit" data-id="${c.id}">${I('pencil')}条件を編集</button>
-          <span class="gate-note">${I('lock')}promote（ref への昇格）は CLI のみ</span>
+          <span class="gate-note">${I('arrow-up-right')}approve 後は /ulm:promote で一括昇格</span>
         </div>` : ''}
     </div>`).join('');
   list.querySelectorAll('[data-a]').forEach(btn => btn.onclick = () => {
