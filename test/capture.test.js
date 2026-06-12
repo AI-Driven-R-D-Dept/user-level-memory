@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extractTranscriptText, validateAutoObs, stripSecretLines, buildCaptureUserPrompt, SYSTEM, findDupCandidates, buildDedupJudgePrompt, parseDedupVerdicts } from '../src/capture.js';
+import { extractTranscriptText, validateAutoObs, stripSecretLines, buildCaptureUserPrompt, SYSTEM, findDupCandidates, buildDedupJudgePrompt, parseDedupVerdicts, capture } from '../src/capture.js';
 import { compileGate } from '../src/gate.js';
-import { withFreshStore } from './helpers.js';
+import { withFreshStore, withFreshStoreAsync, testConfig } from './helpers.js';
 
 const gate = compileGate({ deny_patterns: [] });
 
@@ -206,4 +206,111 @@ test('validateAutoObs: person タグの名前空間バイパスと型・値の�
   // 旧形式（person キー無し）は従来どおり保存される（互換）
   const legacy = validateAutoObs([{ text: 'ユーザーは野菜が嫌いだと明言した', tags: ['food'] }], gate, max);
   assert.deepEqual(legacy[0].tags, ['food']);
+});
+
+// ---- capture() 統合（call DI シーム経由・LLM 不要） ----------------------------
+
+function fakeTranscript() {
+  const dir = mkdtempSync(join(tmpdir(), 'ulm-cap-'));
+  const tp = join(dir, 't.jsonl');
+  writeFileSync(tp, JSON.stringify({ type: 'user', message: { role: 'user', content: '今日の作業の話をした' } }) + '\n');
+  return { dir, tp };
+}
+
+test('capture 統合: 第2段の配線（部分集合の origIndex 再マップ・skippedDup 計上）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    const existing = store.addObservation({ text: 'ユーザーは猫アレルギーで猫のいる場所を避けている', project: null });
+    const { dir, tp } = fakeTranscript();
+    const calls = [];
+    const call = async (prov, prompt) => {
+      calls.push(prompt);
+      if (calls.length === 1) {
+        // 抽出: [0] は日本語トライグラムと重ならない新規（候補ゼロ）、[1] は既存の言い換え（候補あり）
+        return JSON.stringify([
+          { text: 'Quark entanglement drift in lab Z9 follows pattern QX', tags: [] },
+          { text: 'ユーザーは猫アレルギーがあり、猫のいる場所は避ける', tags: [] },
+        ]);
+      }
+      // judge: 提示された items を読んで「猫」を含む new だけ重複と答える
+      const items = JSON.parse(prompt.user.match(/<items>\n([\s\S]*)\n<\/items>/)[1]);
+      return JSON.stringify(items.map((it) => ({ index: it.index, duplicate_of: it.new.includes('猫') ? (it.candidates[0]?.id ?? null) : null })));
+    };
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(calls.length, 2, '抽出 + judge の2回だけ');
+      // 候補ゼロの新規項目は judge プロンプトに載らない（部分集合送信）
+      assert.ok(!calls[1].user.includes('Quark'), '候補ゼロの項目は judge に送らない');
+      // 言い換えはスキップされ、新規だけ保存される（origIndex 再マップが正しい）
+      assert.equal(r.skippedDup, 1);
+      assert.equal(r.captured.length, 1);
+      assert.ok(r.captured[0].text.includes('Quark'));
+      assert.ok(store.listObservations({ includeSecret: true, limit: 10 }).every((o) => o.id === existing.id || o.text.includes('Quark')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('capture 統合: 候補が1件も無ければ追加 LLM 呼び出しゼロ（受け入れ条件1）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    const { dir, tp } = fakeTranscript();
+    const calls = [];
+    const call = async (prov, prompt) => {
+      calls.push(prompt);
+      return JSON.stringify([{ text: '空のDBに対する完全に新規の知見である', tags: [] }]);
+    };
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(calls.length, 1, '抽出の1回のみ（judge は呼ばれない）');
+      assert.equal(r.captured.length, 1);
+      assert.equal(r.skippedDup, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('capture 統合: judge 失敗は保存側に倒す（fail-open・受け入れ条件4）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    store.addObservation({ text: 'ユーザーは猫アレルギーで猫のいる場所を避けている', project: null });
+    const { dir, tp } = fakeTranscript();
+    let n = 0;
+    const call = async () => {
+      n++;
+      if (n === 1) return JSON.stringify([{ text: 'ユーザーは猫アレルギーがあり、猫のいる場所は避ける', tags: [] }]);
+      throw new Error('judge provider down');
+    };
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(n, 2, 'judge は試みられた');
+      assert.equal(r.captured.length, 1, '判定不能でもデータ喪失しない');
+      assert.equal(r.skippedDup, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('capture 統合: 完全一致は第1段ハッシュで弾かれ judge は呼ばれない', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig();
+    store.addObservation({ text: 'ユーザーは猫アレルギーで猫のいる場所を避けている', project: null });
+    const { dir, tp } = fakeTranscript();
+    const calls = [];
+    const call = async (prov, prompt) => {
+      calls.push(prompt);
+      return JSON.stringify([{ text: 'ユーザーは猫アレルギーで猫のいる場所を避けている', tags: [] }]);
+    };
+    try {
+      const r = await capture(store, config, home, { transcriptPath: tp, project: 'pj', provider: 'codex', call });
+      assert.equal(calls.length, 1, '抽出のみ（fresh が空なので judge 不要）');
+      assert.equal(r.skippedDup, 1);
+      assert.equal(r.captured.length, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

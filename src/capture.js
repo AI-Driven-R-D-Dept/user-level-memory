@@ -197,7 +197,7 @@ export function parseDedupVerdicts(raw, items) {
  * 自動キャプチャ本体。
  * @returns {Promise<{captured:object[], skippedDup:number, transcriptChars:number, provider:string, dryRun:boolean, disabled?:boolean}>}
  */
-export async function capture(store, config, home, { transcriptPath, project, provider, dryRun = false, log = () => {} } = {}) {
+export async function capture(store, config, home, { transcriptPath, project, provider, dryRun = false, log = () => {}, call = callProvider } = {}) {
   if (!config.capture?.enabled && !dryRun) {
     return { captured: [], skippedDup: 0, transcriptChars: 0, provider: 'none', dryRun, disabled: true };
   }
@@ -221,7 +221,7 @@ export async function capture(store, config, home, { transcriptPath, project, pr
     return { captured: [], skippedDup: 0, transcriptChars: text.length, provider: prov, dryRun };
   }
 
-  const resp = await callProvider(prov, prompt, config, home);
+  const resp = await call(prov, prompt, config, home);
   const extracted = validateAutoObs(extractJsonArray(resp), gate, max);
 
   // 第1段: 正規化ハッシュの完全一致 dedup（無コスト）
@@ -244,7 +244,7 @@ export async function capture(store, config, home, { transcriptPath, project, pr
     if (judged.length) {
       const verdicts = new Array(items.length).fill(null);
       try {
-        const judgeResp = await callProvider(prov, buildDedupJudgePrompt(judged), config, home);
+        const judgeResp = await call(prov, buildDedupJudgePrompt(judged), config, home);
         parseDedupVerdicts(judgeResp, judged).forEach((v, j) => { verdicts[judged[j].origIndex] = v; });
       } catch {
         // 判定呼び出し失敗は全件保存側に倒す（fail-open: 重複の可能性よりデータ喪失を避ける）
