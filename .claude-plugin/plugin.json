@@ -10,6 +10,5 @@
   "keywords": ["memory", "long-term-memory", "observations", "knowledge", "context"],
   "license": "MIT",
   "commands": "./commands/",
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./skills/"
 }

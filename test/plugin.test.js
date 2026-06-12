@@ -34,11 +34,20 @@ test('plugin.json: 必須フィールドと参照先の実在', () => {
   assert.match(manifest.name, /^[a-z0-9]+(-[a-z0-9]+)*$/, 'name は kebab-case');
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/, 'version は semver');
   assert.ok(manifest.description, 'description 必須ではないが配布物には欲しい');
-  for (const key of ['commands', 'skills', 'hooks']) {
+  for (const key of ['commands', 'skills']) {
     const p = manifest[key];
     assert.ok(typeof p === 'string' && p.startsWith('./'), `${key} は ./ 始まりのパス`);
     assert.ok(fs.existsSync(path.join(ROOT, p)), `${key} の参照先 ${p} が存在しない`);
   }
+  // hooks/hooks.json は規約パスとして自動ロードされる。manifest.hooks で同じファイルを
+  // 参照すると "Duplicate hooks file detected" でプラグイン全体がロード失敗する（実機確認）。
+  // manifest.hooks は追加の hook ファイル専用なので、標準パスを指す宣言が無いことを固定する。
+  assert.ok(fs.existsSync(path.join(ROOT, 'hooks/hooks.json')), '規約パス hooks/hooks.json が存在しない');
+  assert.notEqual(
+    manifest.hooks && path.resolve(ROOT, manifest.hooks),
+    path.resolve(ROOT, 'hooks/hooks.json'),
+    'manifest.hooks が自動ロードされる標準パスを重複参照している（ロード失敗の原因）'
+  );
 });
 
 test('marketplace.json: plugin.json と名前・バージョンが一致', () => {
