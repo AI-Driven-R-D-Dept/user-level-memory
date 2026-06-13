@@ -385,7 +385,7 @@
     <button class="on" data-page="obs"><svg class="ic"><use href="#i-layers"/></svg>観測<span class="count" id="c-obs">—</span></button>
     <button data-page="states"><svg class="ic"><use href="#i-sliders"/></svg>状態<span class="count" id="c-states">—</span></button>
     <button data-page="cands"><svg class="ic"><use href="#i-bulb"/></svg>候補<span class="count" id="c-cands">—</span></button>
-    <button data-page="refs"><svg class="ic"><use href="#i-link"/></svg>参照<span class="count" id="c-refs">—</span></button>
+    <button data-page="refs"><svg class="ic"><use href="#i-link"/></svg>ref<span class="count" id="c-refs">—</span></button>
     <button data-page="sql"><svg class="ic"><use href="#i-terminal"/></svg>SQL</button>
   </div>
   <div class="side-foot">
@@ -441,7 +441,7 @@
   <section class="page" id="page-cands">
     <div class="page-head">
       <h2>候補</h2>
-      <p>採掘された仮説の遊び場。自動注入はされず、人間のレビューを経て ref へ昇格します。</p>
+      <p>採掘された仮説の遊び場。自動注入はされません。ここでの approve / reject が人間ゲート。承認済みは /ulm:promote が project の skill（.claude/skills）へ機械的に昇格します。</p>
     </div>
     <div class="toolbar">
       <div class="seg" id="cand-seg">
@@ -457,8 +457,8 @@
   <!-- ============ 参照 ============ -->
   <section class="page" id="page-refs">
     <div class="page-head">
-      <h2>参照</h2>
-      <p>昇格先となる正式ルール（ref ファイル）へのポインタ。実体はファイル側にあります。</p>
+      <h2>ref</h2>
+      <p>手動登録した正式規範（.md）へのポインタ。SessionStart で所在だけが注入されます。実体はファイル側。候補の昇格先ではありません（昇格先は project の skill）。</p>
     </div>
     <div class="toolbar">
       <span style="flex:1"></span>
@@ -560,7 +560,21 @@ function fillProjects() {
   sel.value = cur;
 }
 
-function fmtTs(iso) { return String(iso || '').slice(0, 16).replace('T', ' '); }
+// 保存値は UTC ISO（util.now() / store の toISOString）。表示は JST(Asia/Tokyo) に統一する。
+// （UTC のまま slice すると JST 朝の記録が前日の日付に見えてしまうため）
+const JST_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+function fmtTs(iso) {
+  const s = String(iso || '');
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s.slice(0, 16).replace('T', ' '); // パース不能はそのまま
+  const p = {};
+  for (const part of JST_FMT.formatToParts(d)) p[part.type] = part.value;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} JST`;
+}
 
 // ---------- ナビゲーション ----------
 document.querySelectorAll('#nav button').forEach(b => b.onclick = () => {
@@ -779,6 +793,10 @@ function renderCands() {
           <button class="btn sm tint-red" data-a="rejected" data-id="${esc(c.id)}">${I('x')}Reject</button>
           <button class="btn sm" data-a="edit" data-id="${esc(c.id)}">${I('pencil')}条件を編集</button>
           <span class="gate-note">${I('arrow-up-right')}approve 後は /ulm:promote で一括昇格</span>
+        </div>` : ''}
+      ${c.status === 'approved' ? `
+        <div class="cand-actions">
+          <span class="gate-note">${I('arrow-up-right')}/ulm:promote（Claude の機械的処理）が project の .claude/skills へ skill 化します</span>
         </div>` : ''}
     </div>`).join('');
   list.querySelectorAll('[data-a]').forEach(btn => btn.onclick = async () => {
