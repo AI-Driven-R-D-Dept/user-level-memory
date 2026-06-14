@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { checkWriteTarget, checkSkillUpdateTarget } from '../src/safepath.js';
+import { checkWriteTarget, checkSkillUpdateTarget, checkSkillTarget } from '../src/safepath.js';
 
 function sandbox(fn) {
   const root = mkdtempSync(join(tmpdir(), 'ulm-safe-'));
@@ -107,6 +107,31 @@ test('safepath: .git 配下は拒否', () => {
     mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
     const r = checkWriteTarget(join(work, '.git', 'hooks', 'post-checkout.md'), { refRoot, allowRoots: [work] });
     assert.equal(r.ok, false);
+  });
+});
+
+test('safepath: checkSkillTarget は未存在の ref- 先を許可し既存・非ref-・裸 ref- を拒否（NEW 書込先の唯一の砦）', () => {
+  sandbox(({ work }) => {
+    // 未存在 → ok
+    const ok = checkSkillTarget('ref-new', work);
+    assert.equal(ok.ok, true);
+    assert.equal(ok.path, join(realpathSync(work), '.claude', 'skills', 'ref-new', 'SKILL.md'));
+    // 既存 → 拒否（update との差）
+    const dir = join(work, '.claude', 'skills', 'ref-dup');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), 'x');
+    assert.match(checkSkillTarget('ref-dup', work).reason, /既に存在します/);
+    // 非 ref- / 裸 ref- は拒否
+    assert.match(checkSkillTarget('foo', work).reason, /ref-/);
+    assert.match(checkSkillTarget('ref-', work).reason, /ref-/);
+    assert.equal(checkSkillTarget('../escape', work).ok, false);
+  });
+});
+
+test('safepath: 裸 ref- / ref-- は update でも拒否', () => {
+  sandbox(({ work }) => {
+    assert.equal(checkSkillUpdateTarget('ref-', work).ok, false);
+    assert.equal(checkSkillUpdateTarget('ref--x', work).ok, false);
   });
 });
 

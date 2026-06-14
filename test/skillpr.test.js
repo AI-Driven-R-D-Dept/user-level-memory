@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync, realpathSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import {
@@ -229,7 +229,8 @@ test('runGitPr: branch→write→add→commit→push→gh pr の順で実行し 
     assert.ok(flat.some((c) => c.includes('switch -c ulm/skill-ref-x-cand-1')));
     assert.ok(flat.some((c) => c.includes(`add -- ${file}`)));
     assert.ok(flat.some((c) => c.includes('commit -m')));
-    assert.ok(flat.some((c) => c.includes('push -u origin ulm/skill-ref-x-cand-1')));
+    assert.ok(flat.some((c) => c.includes('push --force-with-lease -u origin ulm/skill-ref-x-cand-1')));
+    assert.ok(flat.some((c) => c.includes(`commit -m m -- ${file}`)), 'commit は pathspec 付き');
   });
 });
 
@@ -287,7 +288,7 @@ test('runGitPr: detached HEAD は復帰時に switch --detach <sha> する', () 
       ['symbolic-ref', { status: 1, stdout: '', stderr: '' }], // detached
       ['rev-parse HEAD', { status: 0, stdout: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' }],
       ['remote', { status: 0, stdout: 'origin\n' }],
-      ['push -u', { status: 1, stderr: 'fail' }],
+      ['push --force-with-lease', { status: 1, stderr: 'fail' }],
     ]);
     assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /push に失敗/);
     assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch --detach deadbeef')), 'detached 復帰していない');
@@ -502,7 +503,7 @@ test('runGitPr: push 失敗は throw（元ブランチへ復帰する）', () =>
       ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
       ['symbolic-ref', { status: 0, stdout: 'main\n' }],
       ['remote', { status: 0, stdout: 'origin\n' }],
-      ['push -u', { status: 1, stdout: '', stderr: 'auth failed' }],
+      ['push --force-with-lease', { status: 1, stdout: '', stderr: 'auth failed' }],
     ]);
     assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /push に失敗/);
     // finally で元ブランチ main へ戻す（commit 済みなのでファイルは PR ブランチに残る）
@@ -624,7 +625,7 @@ test('promoteWithPr: 機密を含む既存 skill はプロンプトから除外�
         projectRoot: root,
         provider: 'codex',
         deps: {
-          listSkills: () => [{ slug: 'ref-leak', name: 'ref-leak', description: `secret ${TOKEN}`, body: `本文 ${TOKEN}`, content: 'x', path: 'p' }],
+          listSkills: () => [{ slug: 'ref-leak', name: 'ref-leak', description: 'secret', body: '本文', content: `---\nname: ref-leak\nx-internal: ${TOKEN}\n---\n本文 ${TOKEN}`, path: 'p' }],
           callLlm: async (prov, prompt) => { captured = prompt; return '{"target":"NEW","new_slug":"safe","description":"d","body":"# 安全本文","pr_summary":"s"}'; },
           gitPr: (a) => ({ branch: a.branch, prUrl: 'https://pr/1', pushed: true }),
         },
@@ -824,4 +825,83 @@ test('renderUpdatedSkill: description 未指定なら既存 frontmatter の desc
   const out = renderUpdatedSkill(existing, '新本文', { id: 'cand-1', origin: 'o', slug: 'ref-foo' }, '');
   assert.match(out, /description: "OLD説明"/);
   assert.match(out, /新本文/);
+});
+
+// ---- round3 指摘の回帰 ----
+
+test('renderUpdatedSkill: 空値 description の置換が後続 allowed-tools 行を巻き込まない（R3-nit1 / `\\s*` 行跨ぎ）', () => {
+  // description は空値で、その直後に allowed-tools 行がある。description だけ差し替え allowed-tools は保持されるべき。
+  const existing = '---\nname: ref-foo\ndescription:\nallowed-tools: "Read"\n---\n\n旧\n';
+  const out = renderUpdatedSkill(existing, '新本文', { id: 'cand-1', origin: 'o', slug: 'ref-foo' }, '新説明');
+  assert.match(out, /description: "新説明"/);
+  assert.match(out, /^allowed-tools: "Read"$/m, 'allowed-tools 行が巻き込み削除されてはいけない');
+});
+
+test('renderUpdatedSkill: 既存にも新規にも description が無ければ hypothesis にフォールバック（R3-nit2 死skill防止）', () => {
+  const existing = '---\nname: ref-foo\n---\n\n旧\n';
+  const out = renderUpdatedSkill(existing, '新本文', { id: 'cand-1', origin: 'o', slug: 'ref-foo', hypothesis: '丸めは銀行丸め' }, '');
+  assert.match(out, /description: "丸めは銀行丸め"/);
+});
+
+test('runGitPr: ブランチ切替後の書込み失敗(read-only)でも元ブランチへ復帰する（R3-should4）', () => {
+  withTmpProject((root, file) => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'ORIG');
+    chmodSync(file, 0o444); // read-only → writeFileSync が EACCES
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+    ]);
+    try {
+      assert.throws(() => runGitPr({ projectRoot: root, file, content: 'NEW', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run));
+      assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch main')), 'write 失敗でも元ブランチへ復帰すべき');
+    } finally {
+      chmodSync(file, 0o644); // rm できるよう戻す
+    }
+  });
+});
+
+test('promoteWithPr: --name は既存 skill をプロンプトに載せない（最小送出・R3-nit8）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      let captured = null;
+      await promoteWithPr(store, testConfig(), home, {
+        candidate: cand, projectRoot: root, provider: 'codex', name: 'brand-new',
+        deps: {
+          listSkills: () => [{ slug: 'ref-existing', name: 'ref-existing', description: 'd', body: 'b', content: 'c', path: 'p' }],
+          callLlm: async (prov, prompt) => { captured = prompt; return '{"target":"NEW","new_slug":"ignored","description":"d","body":"# b","pr_summary":"s"}'; },
+          gitPr: (a) => ({ branch: a.branch, prUrl: 'https://pr/1', pushed: true }),
+        },
+      });
+      assert.ok(captured && !captured.user.includes('ref-existing'), '--name 新規強制時は既存 skill を外部送出しない');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: --name が既存 ref- skill と衝突したら LLM 送出前に拒否（R3-nit9）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const dir = join(root, '.claude', 'skills', 'ref-mine');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), '---\nname: ref-mine\n---\nx');
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      let llmCalled = false;
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand, projectRoot: root, provider: 'codex', name: 'mine', // → ref-mine（既存と衝突）
+            deps: { listSkills: () => [], callLlm: async () => { llmCalled = true; return '{}'; }, gitPr: () => ({}) },
+          }),
+        /既に存在します|新規 skill 先を拒否/
+      );
+      assert.equal(llmCalled, false, '衝突は LLM 送出前に弾くべき');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

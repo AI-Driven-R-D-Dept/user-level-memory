@@ -22,7 +22,9 @@ const MAX_PARSE_LENGTH = 512 * 1024;
  * 「送る/書くもの = ゲート対象」を一箇所に集約し、将来フィールド追加でも漏れないようにする。
  */
 export function gateHit(gate, text) {
-  const s = String(text ?? '');
+  // detectHighEntropy は入力長キャップを持たないため、巨大 skill 本文でも有界になるよう
+  // gate.match のバックストップ（1MB）相当で切り詰めてから両判定に渡す。
+  const s = String(text ?? '').slice(0, 1024 * 1024);
   return gate.match(s) || detectHighEntropy(s);
 }
 
@@ -266,12 +268,16 @@ export function renderNewSkill(slug, description, body, candidate, genOrigin) {
 export function renderUpdatedSkill(existingContent, body, candidate, description, genOrigin) {
   const { frontmatter } = splitFrontmatter(existingContent);
   let head = frontmatter || ['---', 'name: ' + (candidate.slug || 'skill'), '---'].join('\n');
-  if (description) {
-    // 置換は必ず関数 replacer を使う: description は LLM 由来で、文字列置換だと $`/$'/$& 等の
-    // 置換パターンが展開され frontmatter に任意行（allowed-tools 等）を注入できてしまう（防御）。
-    const line = `description: ${JSON.stringify(description)}`;
-    head = /^description:\s*.*$/m.test(head)
-      ? head.replace(/^description:\s*.*$/m, () => line)
+  const hasDesc = /^description:[ \t]*\S/m.test(head); // 非空の description 行があるか
+  // 差し替える description: 明示指定 > （既存に無いときだけ）hypothesis→slug フォールバック。
+  // 既存に非空 description があり新規指定が無ければ既存を温存（空文字で上書きしない）。
+  const desc = description || (hasDesc ? '' : oneline(candidate.hypothesis).slice(0, 300) || candidate.slug || 'skill');
+  if (desc) {
+    // 置換/挿入は必ず関数 replacer + 行内限定 `[ \t]*`。文字列置換だと $`/$'/$& が展開されて frontmatter へ
+    // 任意行（allowed-tools 等）を注入でき、`\s*` だと改行を跨いで後続行や閉じ --- を巻き込み削除してしまう（防御）。
+    const line = `description: ${JSON.stringify(desc)}`;
+    head = /^description:[ \t]*.*$/m.test(head)
+      ? head.replace(/^description:[ \t]*.*$/m, () => line)
       : head.replace(/^---[ \t]*$/m, () => `---\n${line}`); // description 行が無ければ先頭 --- 直後へ挿入
   }
   // 注: 注入の本丸（description の $ 置換展開）は上の関数 replacer で封じている。body 中の `---` は
@@ -314,32 +320,47 @@ export function runGitPr(
   };
 
   // 既存ブランチがあれば現在 HEAD にリセットして再利用（push 失敗→再実行で衝突しないように冪等化）
-  let sw = git(['switch', '-c', branch]);
-  if (sw.status !== 0) {
-    sw = git(['switch', '-C', branch]);
-    if (sw.status !== 0) throw new Error(`ブランチ作成に失敗 (${branch}): ${sw.stderr.trim() || sw.stdout.trim()}`);
-  }
-
-  // ブランチ切替「後」に書き込む。失敗時の巻き戻しのため、元の状態を控える。
-  const existedBefore = existsSync(file);
-  const origContent = existedBefore ? readFileSync(file, 'utf8') : null;
+  let switched = false;
+  let existedBefore = false;
+  let origContent = null;
   let committed = false;
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, content);
   try {
+    let sw = git(['switch', '-c', branch]);
+    if (sw.status !== 0) {
+      sw = git(['switch', '-C', branch]);
+      if (sw.status !== 0) throw new Error(`ブランチ作成に失敗 (${branch}): ${sw.stderr.trim() || sw.stdout.trim()}`);
+    }
+    switched = true;
+
+    // ブランチ切替「後」に書き込む。書込み自体が失敗（read-only/ディスクフル等）しても finally で
+    // 必ず復帰できるよう、状態の控えと write を try の内側に置く。
+    existedBefore = existsSync(file);
+    origContent = existedBefore ? readFileSync(file, 'utf8') : null;
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+
     const add = git(['add', '--', file]);
-    if (add.status !== 0) throw new Error(`git add に失敗: ${add.stderr.trim()}`);
-    const commit = git(['commit', '-m', commitMessage]);
+    if (add.status !== 0) {
+      const hint = /ignored/i.test(add.stderr)
+        ? `: .claude/ が .gitignore されているため skill を PR できません（.gitignore を見直すか、ローカル生成の ulm promote を使ってください）`
+        : `: ${add.stderr.trim()}`;
+      throw new Error(`git add に失敗${hint}`);
+    }
+    // pathspec 付き commit: ユーザーが事前ステージした無関係な変更を skill PR に巻き込まない（index 全体でなく file だけ）
+    const commit = git(['commit', '-m', commitMessage, '--', file]);
     if (commit.status !== 0) throw new Error(`git commit に失敗: ${commit.stderr.trim() || commit.stdout.trim()}`);
     committed = true;
     if (!push) return { branch, prUrl: null, pushed: false };
 
     const remotes = git(['remote']);
+    if (remotes.status !== 0) throw new Error(`remote 一覧の取得に失敗: ${remotes.stderr.trim()}`);
     const remoteList = remotes.stdout.split('\n').map((x) => x.trim()).filter(Boolean);
     if (!remoteList.length) throw new Error('push 先の remote がありません（branch+commit までは完了）');
     const remote = remoteList.includes('origin') ? 'origin' : remoteList[0];
     const remoteNote = remote === 'origin' ? undefined : `origin が無いため remote '${remote}' へ push しました`;
-    const pushRes = git(['push', '-u', remote, branch]);
+    // --force-with-lease: ulm が作る ulm/skill-* ブランチに限る前提で、再実行（switch -C でローカルを作り直し）時の
+    // non-fast-forward を安全に上書きする（remote が想定 ref と一致する場合のみ force。他者の更新は壊さない）。
+    const pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
     if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
 
     const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000 });
@@ -360,23 +381,25 @@ export function runGitPr(
     const prUrl = String(pr.stdout || '').trim().split('\n').filter(Boolean).pop() || null;
     return { branch, prUrl, pushed: true, note: remoteNote };
   } finally {
-    // commit が成立していなければ、書込んだファイルを元に戻し index も掃除する
-    // （元ブランチへ孤児ファイル/ステージを持ち帰らない）。commit 済みなら変更は PR ブランチに
-    // 載っているので作業ツリーはクリーン。
-    if (!committed) {
-      try {
-        git(['reset', '-q', '--', file]);
-      } catch {
-        /* ベストエフォート */
+    // ブランチを切替えたのに commit が成立していなければ、書込んだファイルを元に戻し index も掃除して
+    // から元ブランチへ復帰する（孤児ファイル/ステージを持ち帰らない・ユーザーを ulm ブランチに残さない）。
+    // commit 済みなら変更は PR ブランチに載っているので作業ツリーはクリーン。switch 前の失敗では何もしない。
+    if (switched) {
+      if (!committed) {
+        try {
+          git(['reset', '-q', '--', file]);
+        } catch {
+          /* ベストエフォート */
+        }
+        try {
+          if (existedBefore) writeFileSync(file, origContent);
+          else if (existsSync(file)) unlinkSync(file);
+        } catch {
+          /* ベストエフォート */
+        }
       }
-      try {
-        if (existedBefore) writeFileSync(file, origContent);
-        else if (existsSync(file)) unlinkSync(file);
-      } catch {
-        /* ベストエフォート */
-      }
+      restore();
     }
-    restore();
   }
 }
 
@@ -427,10 +450,17 @@ export async function promoteWithPr(
     );
   }
 
-  // 更新対象は ulm が作った ref-* skill のみ（手書き skill を改変しない）。さらに、外部 LLM へ渡す
-  // 既存 skill 本文/説明も再ゲート②し、機密を含む skill はプロンプトから除外（外部送出物=ゲート対象）。
-  const refSkills = listSkills(projectRoot).filter((s) => s.slug.startsWith(REF_PREFIX));
-  const safeSkills = refSkills.filter((s) => !gateHit(gate, `${s.description}\n${s.body}`));
+  // --name 指定時は既存照合をスキップし常に新規作成する。衝突は callLlm より前に弾き、無駄な外部送信/課金を避ける。
+  if (name) {
+    const pre = checkSkillTarget(sanitizeRefSlug(name), projectRoot);
+    if (!pre.ok) throw new Error(`新規 skill 先を拒否: ${pre.reason}`);
+  }
+
+  // 更新対象は ulm が作った ref-* skill のみ（手書き skill を改変しない）。さらに、外部 LLM へ渡す/PR へ逐語転写される
+  // 既存 skill の「完全な SKILL.md（frontmatter の name/カスタム行含む）」を再ゲート②し、機密を含む skill は除外。
+  // --name（新規強制）なら既存 skill は判定に不要なので送らない（最小送出）。
+  const refSkills = name ? [] : listSkills(projectRoot).filter((s) => s.slug.startsWith(REF_PREFIX));
+  const safeSkills = refSkills.filter((s) => !gateHit(gate, s.content));
   if (safeSkills.length !== refSkills.length) {
     log(`機密の疑いがある既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);
   }

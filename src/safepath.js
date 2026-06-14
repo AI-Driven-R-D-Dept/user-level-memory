@@ -67,9 +67,10 @@ export function checkSkillTarget(slug, projectRoot) {
   if (!SKILL_SLUG_RE.test(String(slug))) {
     return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
   }
-  // 昇格 skill は ref-* 名前空間に統一（呼び出し側依存にせず safepath を最後の砦にする）
-  if (!String(slug).startsWith('ref-')) {
-    return { ok: false, reason: '昇格 skill 名は ref- で始まる必要があります' };
+  // 昇格 skill は ref-* 名前空間に統一（呼び出し側依存にせず safepath を最後の砦にする）。
+  // ref- の後に最低1文字の英数字を要求し、裸の 'ref-' や 'ref--' を弾く。
+  if (!/^ref-[a-z0-9]/.test(String(slug))) {
+    return { ok: false, reason: '昇格 skill 名は ref- + 英数字で始まる必要があります' };
   }
   const root = realpathish(resolve(projectRoot));
   const dir = join(root, '.claude', 'skills', slug);
@@ -102,8 +103,8 @@ export function checkSkillUpdateTarget(slug, projectRoot) {
   if (!SKILL_SLUG_RE.test(String(slug))) {
     return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
   }
-  // 更新は ulm が作った ref-* skill に限る（手書き・運用 skill を上書きさせない）
-  if (!String(slug).startsWith('ref-')) {
+  // 更新は ulm が作った ref-* skill に限る（手書き・運用 skill を上書きさせない）。ref- + 英数字を要求。
+  if (!/^ref-[a-z0-9]/.test(String(slug))) {
     return { ok: false, reason: '既存 skill の更新は ref-* に限られます（手書き skill は更新対象外）' };
   }
   const root = realpathish(resolve(projectRoot));
