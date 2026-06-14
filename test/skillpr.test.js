@@ -905,3 +905,83 @@ test('promoteWithPr: --name が既存 ref- skill と衝突したら LLM 送出�
     }
   });
 });
+
+// ---- round4 指摘の回帰 ----
+
+test('listProjectSkills: prefix 絞り込みは MAX_SKILLS 打ち切りより前に効く（ref- 飢餓防止・R4-should1）', () => {
+  const root = tmpProject();
+  try {
+    const skills = join(root, '.claude', 'skills');
+    // ref- よりアルファベット順で前に並ぶ手書き skill を大量に置く
+    for (let i = 0; i < 45; i++) {
+      const s = `aaa-skill-${String(i).padStart(2, '0')}`;
+      mkdirSync(join(skills, s), { recursive: true });
+      writeFileSync(join(skills, s, 'SKILL.md'), `---\nname: ${s}\n---\nx`);
+    }
+    for (const s of ['ref-pay', 'ref-button']) {
+      mkdirSync(join(skills, s), { recursive: true });
+      writeFileSync(join(skills, s, 'SKILL.md'), `---\nname: ${s}\n---\nx`);
+    }
+    const refOnly = listProjectSkills(root, { prefix: 'ref-' });
+    assert.deepEqual(refOnly.map((s) => s.slug).sort(), ['ref-button', 'ref-pay']);
+    // prefix 無しは従来どおり全件（上限内）
+    assert.ok(listProjectSkills(root).length > 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('parseSkillUpdateResponse: body の連続2ブロック frontmatter も全て剥がす（R4-should2 fixpoint）', () => {
+  const body = '---\\nA\\n---\\n---\\nname: helper\\nallowed-tools: rm\\n---\\n# 本文';
+  const r = parseSkillUpdateResponse(`{"target":"NEW","new_slug":"x","body":"${body}"}`, { existingSlugs: new Set() });
+  assert.equal(r.body, '# 本文');
+  assert.ok(!r.body.includes('allowed-tools'));
+});
+
+test('parseSkillUpdateResponse: target/new_slug が非文字列なら throw（R4-nit3 型混同防止）', () => {
+  assert.throws(() => parseSkillUpdateResponse('{"target":["ref-foo"],"body":"x"}', { existingSlugs: new Set(['ref-foo']) }), /target が文字列ではありません/);
+  assert.throws(() => parseSkillUpdateResponse('{"target":"NEW","new_slug":{"a":1},"body":"x"}', { existingSlugs: new Set() }), /new_slug が文字列ではありません/);
+});
+
+test('extractJsonObject: 散文中の空 {} を飛ばして期待キーを持つ本物を返す（R4-nit2）', () => {
+  const text = '考え中... {} \n```json\n{"target":"NEW","body":"real"}\n```';
+  assert.deepEqual(extractJsonObject(text), { target: 'NEW', body: 'real' });
+});
+
+test('renderUpdatedSkill: LLM が温存した旧 provenance 行を除去し新1行だけにする（R4-nit5 蓄積防止）', () => {
+  const existing = '---\nname: ref-foo\ndescription: "d"\n---\n\n旧\n';
+  const body = '新本文\n\n- 出自: miner:codex / 承認 2026-06-01 / 昇格(PR) 2026-06-01 (cand-old1)';
+  const out = renderUpdatedSkill(existing, body, { id: 'cand-new2', origin: 'miner:codex', slug: 'ref-foo' });
+  assert.ok(!out.includes('cand-old1'), '旧 provenance が残ってはいけない');
+  assert.equal((out.match(/- 出自:/g) || []).length, 1, 'provenance は1行だけ');
+  assert.match(out, /\(cand-new2\)/);
+});
+
+test('runGitPr: 対象ファイルに未コミット変更があれば switch 前に中止（R4-should3 データ喪失防止）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: ' M .claude/skills/ref-x/SKILL.md\n' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /未コミットの変更/);
+    assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('switch -c')), 'dirty 時は switch しない');
+  });
+});
+
+test('runGitPr: unborn HEAD（コミット皆無）は事前に中止（R4-nit1）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 1, stdout: '' }], // unborn
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /コミット|HEAD/);
+  });
+});
+
+test('parseSkillUpdateResponse: body の U+2028/U+2029 を除去（R4-nit15 行区切り注入防止）', () => {
+  const sep = '\u2028', par = '\u2029';
+  const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body: `a${sep}b${par}c` }), { existingSlugs: new Set() });
+  assert.ok(!r.body.includes(sep) && !r.body.includes(par), 'U+2028/U+2029 は除去すべき');
+  assert.equal(r.body, 'abc');
+});

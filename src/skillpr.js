@@ -68,8 +68,12 @@ function readFrontmatterField(frontmatter, field) {
   return String(v);
 }
 
-/** project の .claude/skills 配下の既存 skill を列挙する（symlink ディレクトリ・不正 slug は除外） */
-export function listProjectSkills(projectRoot) {
+/**
+ * project の .claude/skills 配下の既存 skill を列挙する（symlink ディレクトリ・不正 slug は除外）。
+ * opts.prefix を渡すと、MAX_SKILLS の打ち切りより「前に」prefix で絞り込む。これをしないと、
+ * readdir 順で prefix 外の skill が 40 件を埋め尽くして対象 skill が一件も残らない飢餓が起きる。
+ */
+export function listProjectSkills(projectRoot, { prefix = '' } = {}) {
   const dir = join(projectRoot, '.claude', 'skills');
   let entries;
   try {
@@ -80,6 +84,7 @@ export function listProjectSkills(projectRoot) {
   const out = [];
   for (const e of entries) {
     const slug = e.name;
+    if (prefix && !slug.startsWith(prefix)) continue; // 上限適用の前に prefix で絞る（飢餓防止）
     if (!SKILL_SLUG_RE.test(slug)) continue; // 不正名は無視
     const skillDir = join(dir, slug);
     try {
@@ -162,29 +167,38 @@ function balancedObject(s, start, budget) {
   return { slice: null, scanned: limit - start };
 }
 
+// 期待キー: これらを含むオブジェクトを優先採用する（散文中の {} を誤って掴まないため。miner と同思想）
+const EXPECTED_KEYS = ['target', 'body', 'new_slug', 'description', 'pr_summary'];
+
 /** レスポンスから最初に parse できる JSON オブジェクトを取り出す（コードフェンス・前後文を許容・有界） */
 export function extractJsonObject(text) {
   let s = String(text ?? '');
   if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
   let budget = s.length * 2 + 65536;
+  let fallback;
   for (let i = s.indexOf('{'); i !== -1 && budget > 0; i = s.indexOf('{', i + 1)) {
     const { slice, scanned } = balancedObject(s, i, budget);
     budget -= scanned;
     if (!slice) continue;
+    let parsed;
     try {
-      const parsed = JSON.parse(slice);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      parsed = JSON.parse(slice);
     } catch {
-      /* 次の { を試す */
+      continue; // 次の { を試す
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+    // 期待キーを持つオブジェクトを優先（散文中の {} や空オブジェクトを先取りして本物を取り逃さない）
+    if (EXPECTED_KEYS.some((k) => k in parsed)) return parsed;
+    if (fallback === undefined && Object.keys(parsed).length > 0) fallback = parsed;
   }
+  if (fallback !== undefined) return fallback;
   throw new Error('レスポンスに JSON オブジェクトが見つかりません');
 }
 
 /** 制御文字を落とす（改行・タブは残す）。frontmatter/本文への注入素材を無害化 */
 function sanitizeText(s) {
   // eslint-disable-next-line no-control-regex
-  return String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  return String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029]/g, '');
 }
 
 function oneline(s) {
@@ -215,8 +229,15 @@ export function sanitizeRefSlug(raw) {
 export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } = {}) {
   const obj = extractJsonObject(text);
   const known = existingSlugs instanceof Set ? existingSlugs : new Set(existingSlugs || []);
+  // 型ガード: target/new_slug を String() で黙って文字列化すると配列 ['ref-foo'] が 'ref-foo' に化けて
+  // UPDATE 扱いで通ってしまう。body と同様に契約違反の応答は明示 throw する。
   if (typeof obj.body !== 'string') throw new Error('LLM 応答の body が文字列ではありません');
-  const body = sanitizeText(splitFrontmatter(obj.body).body); // 誤って付けた frontmatter は剥がす
+  for (const k of ['target', 'new_slug']) {
+    if (obj[k] !== undefined && obj[k] !== null && typeof obj[k] !== 'string') {
+      throw new Error(`LLM 応答の ${k} が文字列ではありません`);
+    }
+  }
+  const body = sanitizeText(stripLeadingFrontmatter(obj.body)); // 誤付与 frontmatter は連続ブロックでも剥がす
   if (!body.trim()) throw new Error('LLM 応答の body が空です');
   const description = oneline(obj.description).slice(0, 300);
   const prSummary = oneline(obj.pr_summary) || oneline(obj.description).slice(0, 80) || 'skill を更新';
@@ -234,6 +255,22 @@ export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } =
     throw new Error(`LLM が実在しない skill を指しました: ${target}（更新は既存 slug のみ）`);
   }
   return { isNew: false, slug: target, description, body, prSummary };
+}
+
+/** body 先頭に紛れた frontmatter ブロックを、連続していても無くなるまで剥がす（注入の冪等防御） */
+function stripLeadingFrontmatter(s) {
+  let out = String(s ?? '');
+  for (let i = 0; i < 5; i++) {
+    const r = splitFrontmatter(out);
+    if (r.frontmatter === null) return out.trim();
+    out = r.body;
+  }
+  return out.trim();
+}
+
+/** 過去 promote が付けた provenance 行（`- 出自: … (cand-…)`）を本文から除去（更新の度の蓄積防止） */
+function stripProvenance(body) {
+  return String(body ?? '').replace(/^-[ \t]*出自:.*\(cand-[^)]*\).*$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function provenanceLine(candidate, genOrigin) {
@@ -282,7 +319,8 @@ export function renderUpdatedSkill(existingContent, body, candidate, description
   }
   // 注: 注入の本丸（description の $ 置換展開）は上の関数 replacer で封じている。body 中の `---` は
   // markdown の水平線であり frontmatter ではない（YAML frontmatter は先頭ブロックのみ）。
-  return [head, '', body.trim(), '', provenanceLine(candidate, genOrigin), ''].join('\n');
+  // LLM が温存して返した旧 provenance 行は除去し、新しい1行だけを付ける（更新の度の蓄積を防ぐ）。
+  return [head, '', stripProvenance(body), '', provenanceLine(candidate, genOrigin), ''].join('\n');
 }
 
 /**
@@ -304,6 +342,15 @@ export function runGitPr(
   const inside = git(['rev-parse', '--is-inside-work-tree']);
   if (inside.status !== 0 || inside.stdout.trim() !== 'true') {
     throw new Error(`git リポジトリではありません: ${projectRoot}`);
+  }
+  // unborn HEAD（コミット皆無）では switch 往復後に元ブランチ ref が存在せず復帰不能になるため、事前に弾く。
+  if (git(['rev-parse', '--verify', '--quiet', 'HEAD']).status !== 0) {
+    throw new Error('promote --pr には最低1つのコミットがあるリポジトリが必要です（HEAD が未確定）');
+  }
+  // 対象 SKILL.md にユーザーの未コミット変更があると、switch 往復でその編集が失われる。fail-closed で守る。
+  const dirty = git(['status', '--porcelain', '--', file]);
+  if (dirty.status === 0 && dirty.stdout.trim()) {
+    throw new Error(`対象ファイルに未コミットの変更があります: ${file}（commit/stash してから再実行してください）`);
   }
   // 失敗時にユーザーの作業ブランチへ戻せるよう、元ブランチ（detached なら commit SHA）を控える
   const origRef = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
@@ -363,7 +410,7 @@ export function runGitPr(
     const pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
     if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
 
-    const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000 });
+    const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
     if ((ghCheck.status ?? 1) !== 0 || ghCheck.error) {
       return { branch, prUrl: null, pushed: true, note: ['gh CLI が無いため PR は未作成（push 済み）', remoteNote].filter(Boolean).join(' / ') };
     }
@@ -372,6 +419,7 @@ export function runGitPr(
       cwd: projectRoot,
       env: { ...process.env, GH_PROMPT_DISABLED: '1' },
       timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
       encoding: 'utf8',
     });
     if (pr.error) throw new Error(`gh pr create 実行に失敗（push は済み）: ${pr.error.message}`);
@@ -459,7 +507,9 @@ export async function promoteWithPr(
   // 更新対象は ulm が作った ref-* skill のみ（手書き skill を改変しない）。さらに、外部 LLM へ渡す/PR へ逐語転写される
   // 既存 skill の「完全な SKILL.md（frontmatter の name/カスタム行含む）」を再ゲート②し、機密を含む skill は除外。
   // --name（新規強制）なら既存 skill は判定に不要なので送らない（最小送出）。
-  const refSkills = name ? [] : listSkills(projectRoot).filter((s) => s.slug.startsWith(REF_PREFIX));
+  // prefix を渡して MAX_SKILLS 打ち切りの前に ref-* へ絞る（手書き skill が 40 件埋めても ref- が飢餓しない）。
+  // injected listSkills（テスト）は prefix を無視しうるため、保険で .filter も残す（二重）。
+  const refSkills = name ? [] : listSkills(projectRoot, { prefix: REF_PREFIX }).filter((s) => s.slug.startsWith(REF_PREFIX));
   const safeSkills = refSkills.filter((s) => !gateHit(gate, s.content));
   if (safeSkills.length !== refSkills.length) {
     log(`機密の疑いがある既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);

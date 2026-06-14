@@ -38,8 +38,9 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm inbox [--json] | ulm show <id>
   ulm approve|reject <id> [--note N] [--yes]
   ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills/ref-* へ skill 化（ローカル生成）
-  ulm promote <id> --pr [--provider P] [--dry-run]  agent が関連 ref-* skill を更新（無ければ ref- 新規）し PR を出す
-       --provider codex|opencode|openai（既定 auto）。--name 併用時は常に新規作成。実行すると即 push（--dry-run でも LLM は呼ぶ）。
+  ulm promote <id> --pr [--provider P] [--dry-run] [--yes]   agent が関連 ref-* skill を更新（無ければ ref- 新規）し PR を出す
+       --provider codex|opencode|openai（既定 auto。codex/opencode CLI か openai 明示が必要）。--name 併用時は常に新規作成。
+       非対話実行では --yes 必須。git リポジトリ・remote・gh CLI が前提。実行すると即 push（--dry-run でも LLM は呼ぶ）。
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
