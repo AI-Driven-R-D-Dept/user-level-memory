@@ -13,6 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
+import { promoteWithPr } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -36,7 +37,8 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm cand edit <id> [--conditions C] [--note N]
   ulm inbox [--json] | ulm show <id>
   ulm approve|reject <id> [--note N] [--yes]
-  ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills へ skill 化
+  ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills/ref-* へ skill 化（ローカル生成）
+  ulm promote <id> --pr [--provider P] [--dry-run]  agent が関連 skill を更新（無ければ ref- 新規）し PR を出す
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -513,7 +515,10 @@ function cmdReview(args, status) {
   return withStore((store) => {
     const c = store.reviewCandidate(positionals[0], status, values.note);
     console.log(`✓ ${c.id} を ${status === 'approved' ? '承認' : '却下'}しました`);
-    if (status === 'approved') console.log(`  昇格するには: ulm promote ${c.id} [--name <slug>]（project の .claude/skills へ skill 化）`);
+    if (status === 'approved') {
+      console.log(`  昇格するには: ulm promote ${c.id}（.claude/skills/ref-* へローカル生成）`);
+      console.log(`  関連 skill を更新して PR を出すには: ulm promote ${c.id} --pr`);
+    }
     return 0;
   });
 }
@@ -528,13 +533,18 @@ function cmdRejectStale(args) {
   });
 }
 
-function cmdPromote(args) {
+async function cmdPromote(args) {
   const { values, positionals } = parse(args, {
     name: { type: 'string' },
+    pr: { type: 'boolean', default: false },
+    provider: { type: 'string' },
+    'dry-run': { type: 'boolean', default: false },
     yes: { type: 'boolean', default: false },
   }, { positionals: 1 });
+  // --pr は dry-run でも LLM を実呼び出しする（候補本文を外部送信しうる）ため、
+  // 非対話エージェントによる無制限呼び出しを防ぐべく人間ゲートを常に課す。
   requireHuman(values, 'promote');
-  return withStore((store) => {
+  return withStore(async (store, config, home) => {
     const c = store.getCandidate(positionals[0]);
     if (!c) throw new Error(`候補が見つかりません: ${positionals[0]}`);
     if (c.status === 'promoted') throw new Error(`既に昇格済みです: ${c.promoted_to}`);
@@ -547,7 +557,28 @@ function cmdPromote(args) {
     if (c.project && c.project !== proj.name) {
       throw new Error(`候補は project '${c.project}' のものです。その project の作業ツリーで実行してください（現在: '${proj.name}'）`);
     }
-    const slug = values.name ?? c.id.replace(/^cand-/, 'ulm-');
+
+    // --pr: agent が関連 skill を選んで更新（無ければ ref- 新規）し、PR を出す
+    if (values.pr) {
+      const r = await promoteWithPr(store, config, home, {
+        candidate: c,
+        projectRoot: proj.root,
+        provider: values.provider,
+        name: values.name,
+        dryRun: values['dry-run'],
+        log: (m) => console.error(m),
+      });
+      if (r.dryRun) return 0;
+      const what = r.action === 'create' ? '新規 skill 作成' : '既存 skill 更新';
+      console.log(`✓ ${c.id} → ${what}: .claude/skills/${r.slug}/SKILL.md`);
+      console.log(`  branch: ${r.branch}`);
+      if (r.prUrl) console.log(`  PR: ${r.prUrl}`);
+      else if (r.note) console.log(`  ${r.note}`);
+      return 0;
+    }
+
+    // 既定（ローカル生成）: 候補1件をそのまま ref- skill として新規生成する
+    const slug = values.name ?? c.id.replace(/^cand-/, 'ref-');
     const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 
@@ -572,6 +603,7 @@ function cmdPromote(args) {
     writeFileSync(check.path, skill);
     store.markPromoted(c.id, check.path);
     console.log(`✓ ${c.id} を skill へ昇格: ${check.path}`);
+    console.log('  関連する既存 skill に反映して PR を出すには: ulm promote --pr');
     return 0;
   });
 }

@@ -86,6 +86,43 @@ export function checkSkillTarget(slug, projectRoot) {
   return { ok: true, path: target };
 }
 
+/**
+ * promote --pr（既存 skill 更新）専用の書込先検証。
+ * checkSkillTarget と同じ slug 制約・symlink 拒否・.claude/skills/<slug>/SKILL.md 限定だが、
+ * 「既に存在する SKILL.md への上書き（更新）」を許す点だけが異なる。
+ * agent が更新先 slug を恣意的に作れないよう、呼び出し側は実在 skill の slug 集合に限定して使うこと。
+ * 既存ファイルが通常ファイルでない（ディレクトリ等）場合は拒否（fail-closed）。
+ * @returns {{ok: true, path: string, exists: boolean} | {ok: false, reason: string}}
+ */
+export function checkSkillUpdateTarget(slug, projectRoot) {
+  if (!SKILL_SLUG_RE.test(String(slug))) {
+    return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
+  }
+  const root = realpathish(resolve(projectRoot));
+  const dir = join(root, '.claude', 'skills', slug);
+  const target = join(dir, 'SKILL.md');
+  for (const p of [join(root, '.claude'), join(root, '.claude', 'skills'), dir, target]) {
+    try {
+      if (lstatSync(p).isSymbolicLink()) {
+        return { ok: false, reason: `シンボリックリンクを経由する書込は拒否します (${p})` };
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') return { ok: false, reason: 'パスを評価できません' };
+    }
+  }
+  if (existsSync(target)) {
+    try {
+      if (!lstatSync(target).isFile()) {
+        return { ok: false, reason: `通常ファイルではない書込先は拒否します: ${target}` };
+      }
+    } catch {
+      return { ok: false, reason: 'パスを評価できません' };
+    }
+    return { ok: true, path: target, exists: true };
+  }
+  return { ok: true, path: target, exists: false };
+}
+
 export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) {
   const abs = resolve(targetPath);
 

@@ -107,7 +107,8 @@ ulm capture --transcript <session.jsonl>          # 作業ログから観測を�
 ulm mine                                          # 観測 → 仮説候補を inbox へ（LLM）
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
 ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
-ulm promote <cand-id> --name <slug>              # 承認済みを project の .claude/skills へ skill 化
+ulm promote <cand-id> [--name <slug>]            # 承認済みを project の .claude/skills/ref-* へ skill 化（--name 省略時は ref-<id>）
+ulm promote <cand-id> --pr [--dry-run]           # agent が関連する既存 skill を更新（無ければ ref- 新規）し PR を出す
 ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
 ulm web                                           # DB を閲覧・編集するローカル Web UI（127.0.0.1）
@@ -183,7 +184,7 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 - **機密ゲート（機械的）**: 鍵・トークン・接続文字列等のパターンに一致した観測/state は自動で `secret` 化され、注入・採掘・通常エクスポート・既定の読み取りから除外されます。判定に AI は使いません。不正な deny パターンは fail-closed（機密扱い）。
 - **注入の無害化**: 注入される観測/state はすべて untrusted データとして扱い、ゼロ幅/制御文字・偽ロールタグ・fence ブレイクを中和。ヘッダで「これはデータであり命令ではない」と明示します。
 - **inbox 隔離**: `mine` の生成物（仮説候補）は inbox に隔離され、作業コンテキストに自動注入されません。採用・昇格は **人間の操作**（非対話実行では `--yes` 明示が必須）。
-- **昇格先の検証**: `promote` は検証済み slug から組み立てた `<project>/.claude/skills/<slug>/SKILL.md` のみを生成（任意パス不可・既存上書き不可・symlink 拒否・project 不一致拒否）。`ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみで、`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・パストラバーサルは機械的に拒否します。
+- **昇格先の検証**: `promote`（既定）は検証済み slug から組み立てた `<project>/.claude/skills/ref-<slug>/SKILL.md` を**新規生成のみ**（任意パス不可・既存上書き不可・symlink 拒否・project 不一致拒否）。`promote --pr` は LLM が**実在 slug の集合から選んだ**既存 skill に限り更新を許すが、書込先は `checkSkillUpdateTarget` で機械検証（実在 slug 限定・symlink 拒否・通常ファイル限定）し、候補本文は外部送信前に `mine` と同じ再ゲート（deny パターン＋高エントロピー）を通し、変更は PR レビューを挟みます。`ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみで、`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・パストラバーサルは機械的に拒否します。
 - **exfil 防止**: `mine` の OpenAI 互換 API は base_url を allowlist 検証。機密値は LLM へ送りません。
 - **権威の偽装防止**: 候補の出自（`miner:codex:gpt-5.5` 等）と status を常に表示します。
 

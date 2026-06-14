@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { checkWriteTarget } from '../src/safepath.js';
+import { checkWriteTarget, checkSkillUpdateTarget } from '../src/safepath.js';
 
 function sandbox(fn) {
   const root = mkdtempSync(join(tmpdir(), 'ulm-safe-'));
@@ -107,5 +107,46 @@ test('safepath: .git 配下は拒否', () => {
     mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
     const r = checkWriteTarget(join(work, '.git', 'hooks', 'post-checkout.md'), { refRoot, allowRoots: [work] });
     assert.equal(r.ok, false);
+  });
+});
+
+test('safepath: checkSkillUpdateTarget は既存 SKILL.md の更新を許可する（checkSkillTarget と違う点）', () => {
+  sandbox(({ work }) => {
+    const dir = join(work, '.claude', 'skills', 'ref-foo');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: ref-foo\n---\nold');
+    const r = checkSkillUpdateTarget('ref-foo', work);
+    assert.equal(r.ok, true);
+    assert.equal(r.exists, true);
+    assert.equal(r.path, realpathSync(join(dir, 'SKILL.md')));
+  });
+});
+
+test('safepath: checkSkillUpdateTarget は未存在でも ok（exists:false）', () => {
+  sandbox(({ work }) => {
+    const r = checkSkillUpdateTarget('ref-new', work);
+    assert.equal(r.ok, true);
+    assert.equal(r.exists, false);
+  });
+});
+
+test('safepath: checkSkillUpdateTarget は不正 slug を拒否（traversal 不能）', () => {
+  sandbox(({ work }) => {
+    for (const bad of ['../escape', 'Bad Name', 'UPPER', 'a/b']) {
+      assert.equal(checkSkillUpdateTarget(bad, work).ok, false, `slug "${bad}" が通った`);
+    }
+  });
+});
+
+test('safepath: checkSkillUpdateTarget は symlink 経由の書込を拒否', () => {
+  sandbox(({ work, root }) => {
+    const skillsDir = join(work, '.claude', 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+    const outside = join(root, 'outside');
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(skillsDir, 'ref-evil'));
+    const r = checkSkillUpdateTarget('ref-evil', work);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /シンボリックリンク/);
   });
 });

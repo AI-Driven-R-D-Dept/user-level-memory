@@ -37,8 +37,10 @@ ulm は確定知識の手前。まだ正式ルールにできない経験則を�
 ① 観測がたまる        ulm obs add（追記のみ・削除しない）
 ② 突然変異 — AI       ulm mine: 観測 → 仮説+反例+条件 を inbox へ（candidates.status=inbox）
 ③ 自然選択 — 人間     ulm review/approve/reject: 反例込みで人間が判断
-④ 昇格 — skill へ     ulm promote: 承認済み候補を project の .claude/skills/<name>/SKILL.md へ skill 化
+④ 昇格 — skill へ     ulm promote: 承認済み候補を project の .claude/skills/ref-<name>/SKILL.md へ skill 化
                        （条件→description。常時注入されず、条件マッチ時のみ本文ロード）
+   昇格(PR) — agent    ulm promote --pr: LLM が関連する既存 ref-* skill を選んで更新（無ければ ref- 新規）し PR を出す
+                       （提案は LLM・書込先検証と git/gh 実行は ulm。候補本文は送出前に再ゲート）
 ```
 
 - **神殿（厳格）**: ref・機密・現在状態。勝手な生成・統合は禁止。
@@ -110,7 +112,8 @@ ulm inbox                                 # status=inbox の候補一覧（出�
 ulm show <id>                             # obs/cand 詳細
 ulm approve <id> [--note N]               # 人間の操作
 ulm reject <id> [--note N]                # 人間の操作
-ulm promote <id> [--name slug]            # approved → project の .claude/skills へ skill 化
+ulm promote <id> [--name slug]            # approved → project の .claude/skills/ref-* へ skill 化（既定: ref-<id>）
+ulm promote <id> --pr [--provider P] [--dry-run]  # agent が関連 skill を更新（無ければ ref- 新規）し PR を出す
 ulm ref add <path> [--note N] [--project P]
 ulm ref list
 ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -176,11 +179,19 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
   /ulm:promote は approved の候補を一括で `promote --yes` してよい（--yes はユーザーが command を起動したことの明示指示）。
   inbox には触れない。
 - **昇格先は project の skill**: promote は候補の project の作業ツリーで実行し、検証済み slug から組み立てた
-  `.claude/skills/<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
-  候補と現在地の project 不一致は拒否）。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
+  `.claude/skills/ref-<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
+  候補と現在地の project 不一致は拒否）。既定 slug は `ref-<id>`。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
   skill は常時注入されない（description マッチ時のみロード）ため、昇格しても context 予算を消費しない。
   旧方式（ULM_HOME/ref への md 追記 + SessionStart でのパス注入）は廃止。refs テーブルと `ulm ref add` は
   手動登録の正式規範ポインタ用として残る。
+- **promote --pr（agent 駆動の skill 更新）**: 承認済み候補を LLM に渡し、**実在 skill の slug 集合から**関連する
+  既存 skill を選ばせて更新（十分に関連するものが無ければ `ref-<slug>` を新規作成）し、PR を出す。設計の鉄則は
+  miner と同じ「LLM は読み取り専用で提案するだけ・書込先検証と git/gh 実行は ulm」。frontmatter は ulm が生成
+  （新規）または既存を保持（更新）し、LLM に frontmatter を作らせない。既存更新は checkSkillUpdateTarget で
+  `.claude/skills/<実在slug>/SKILL.md` に限定（symlink 拒否・通常ファイル限定）。候補本文は callLlm の前に
+  mine/capture と一様の再ゲート（deny パターン＋高エントロピー）で fail-closed に弾き、機密の外部送信を防ぐ。
+  --pr は dry-run でも LLM を呼ぶため、人間ゲート（TTY か --yes）を常に課す。git は失敗時に元ブランチへ復帰し、
+  ブランチ衝突は switch -C で冪等に再試行できる。
 - memory-recorder skill: 「条件付きで再利用できる知見」を見つけたら `ulm obs add --source claude` で記録するよう促す（記録は観測のみ。候補化は mine の仕事）。
 
 ## 7.5. ローカル Web UI（ulm web）

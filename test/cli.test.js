@@ -144,6 +144,59 @@ test('CLI: promote は project の .claude/skills に SKILL.md を生成する',
   }
 });
 
+test('CLI: promote は --name なしで ref- プレフィックスの skill を生成する', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'ref-prefix テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes'], { cwd: proj });
+    assert.equal(r.status, 0, r.stderr);
+    const slug = id.replace(/^cand-/, 'ref-');
+    const skillPath = join(proj, '.claude', 'skills', slug, 'SKILL.md');
+    assert.match(readFileSync(skillPath, 'utf8'), new RegExp(`^---\\nname: ${slug}\\n`));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --pr は非TTY+--yes なしで人間ゲートに掛かる（dry-run でも免除しない）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'pr ゲートテスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const denied = run(home, ['promote', id, '--pr', '--dry-run'], { cwd: proj });
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /人間の操作/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --pr は機密疑い候補を LLM 送出前に中止する（再ゲート・provider 不要）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '内部トークンは xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0 を使う'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--pr', '--dry-run', '--yes'], { cwd: proj });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /機密の疑い/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
 test('CLI: promote は候補と現在地の project 不一致を拒否する', () => {
   const home = freshHome();
   const projA = freshProject('proj-a');
