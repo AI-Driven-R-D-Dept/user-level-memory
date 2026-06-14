@@ -3,7 +3,7 @@
 // 実際の書込先は ulm が safepath で機械的に検証し、git/gh 操作も ulm が array 引数で実行する。
 // agent が更新先 skill を恣意的に選べないよう、選択肢は実在 skill の slug 集合に限定する。
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { checkSkillTarget, checkSkillUpdateTarget } from './safepath.js';
 import { callProvider, resolveProvider } from './miner.js';
@@ -11,9 +11,20 @@ import { compileGate, detectHighEntropy } from './gate.js';
 import { nowIso, shortDate } from './util.js';
 
 const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const REF_PREFIX = 'ref-'; // 更新対象は ulm が作った ref-* skill に限る（手書き skill を改変しない）
 const MAX_SKILLS = 40; // プロンプトに載せる既存 skill の上限
 const MAX_BODY_CHARS = 2000; // 既存 skill 本文の切り詰め上限（プロンプト肥大化防止）
 const MAX_PARSE_LENGTH = 512 * 1024;
+
+/**
+ * 外部（LLM・PR・git remote）へ出すテキストの再ゲート。mine/capture と一様の二条件
+ * （保存後追加の deny パターン + 高エントロピーな未知形式トークン）で機械的に機密を弾く。
+ * 「送る/書くもの = ゲート対象」を一箇所に集約し、将来フィールド追加でも漏れないようにする。
+ */
+export function gateHit(gate, text) {
+  const s = String(text ?? '');
+  return gate.match(s) || detectHighEntropy(s);
+}
 
 const SYSTEM_PROMPT = `あなたは承認済みの経験則(lesson)を Claude Code の agent skill 群へ反映するエディタです。
 ルール:
@@ -30,8 +41,9 @@ export function splitFrontmatter(content) {
   // 先頭の空白/改行を無視して frontmatter を判定する（body が改行始まりでもストリップを素通りさせない）
   const s = String(content ?? '').replace(/^\s+/, '');
   if (!s.startsWith('---')) return { frontmatter: null, body: s.trim() };
-  // 先頭 --- の次行以降から、行頭 --- の終端を探す
-  const m = s.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  // 開始 ---、（空でも可の）中身、ちょうど --- だけの終端行。終端は「--- + 任意の空白 + 行末」に限定し、
+  // `----`（4 本ダッシュ）を 3 本として誤マッチしない。中身ゼロの空 frontmatter も認識する。
+  const m = s.match(/^---[ \t]*\r?\n([\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/);
   if (!m) return { frontmatter: null, body: s.trim() };
   return { frontmatter: m[0].replace(/\s+$/, ''), body: s.slice(m[0].length).trim() };
 }
@@ -201,6 +213,7 @@ export function sanitizeRefSlug(raw) {
 export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } = {}) {
   const obj = extractJsonObject(text);
   const known = existingSlugs instanceof Set ? existingSlugs : new Set(existingSlugs || []);
+  if (typeof obj.body !== 'string') throw new Error('LLM 応答の body が文字列ではありません');
   const body = sanitizeText(splitFrontmatter(obj.body).body); // 誤って付けた frontmatter は剥がす
   if (!body.trim()) throw new Error('LLM 応答の body が空です');
   const description = oneline(obj.description).slice(0, 300);
@@ -252,22 +265,32 @@ export function renderUpdatedSkill(existingContent, body, candidate, description
   const { frontmatter } = splitFrontmatter(existingContent);
   let head = frontmatter || ['---', 'name: ' + (candidate.slug || 'skill'), '---'].join('\n');
   if (description) {
+    // 置換は必ず関数 replacer を使う: description は LLM 由来で、文字列置換だと $`/$'/$& 等の
+    // 置換パターンが展開され frontmatter に任意行（allowed-tools 等）を注入できてしまう（防御）。
     const line = `description: ${JSON.stringify(description)}`;
     head = /^description:\s*.*$/m.test(head)
-      ? head.replace(/^description:\s*.*$/m, line)
-      : head.replace(/^---\s*$/m, `---\n${line}`); // description 行が無ければ name 群の前に挿入
+      ? head.replace(/^description:\s*.*$/m, () => line)
+      : head.replace(/^---[ \t]*$/m, () => `---\n${line}`); // description 行が無ければ先頭 --- 直後へ挿入
   }
+  // 注: 注入の本丸（description の $ 置換展開）は上の関数 replacer で封じている。body 中の `---` は
+  // markdown の水平線であり frontmatter ではない（YAML frontmatter は先頭ブロックのみ）。
   return [head, '', body.trim(), '', provenanceLine(candidate), ''].join('\n');
 }
 
-/** git+gh 実行。array 引数のみ（shell 経由しない）。run は spawnSync 互換（テスト差し替え用） */
+/**
+ * git+gh 実行。array 引数のみ（shell 経由しない）。run は spawnSync 互換（テスト差し替え用）。
+ * 書込（content の SKILL.md 生成）はブランチ切替の「後」に行い、失敗時は作業ツリーを元に戻してから
+ * 元ブランチへ復帰する（ユーザーの作業ブランチに孤児ファイルを残さない）。
+ */
 export function runGitPr(
-  { projectRoot, file, branch, commitMessage, prTitle, prBody, push = true },
+  { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true },
   run = spawnSync
 ) {
+  // git 実行の薄いラッパ。spawnSync の error（ENOENT 等）は status より先に投げる（miner と同じ規約）。
   const git = (args) => {
     const r = run('git', ['-C', projectRoot, ...args], { encoding: 'utf8' });
-    return { status: r.status ?? 1, stdout: String(r.stdout || ''), stderr: String(r.stderr || ''), error: r.error };
+    if (r.error) throw new Error(`git ${args[0]} 実行に失敗: ${r.error.message}`);
+    return { status: r.status ?? 1, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') };
   };
   const inside = git(['rev-parse', '--is-inside-work-tree']);
   if (inside.status !== 0 || inside.stdout.trim() !== 'true') {
@@ -288,11 +311,19 @@ export function runGitPr(
     sw = git(['switch', '-C', branch]);
     if (sw.status !== 0) throw new Error(`ブランチ作成に失敗 (${branch}): ${sw.stderr.trim() || sw.stdout.trim()}`);
   }
+
+  // ブランチ切替「後」に書き込む。失敗時の巻き戻しのため、元の状態を控える。
+  const existedBefore = existsSync(file);
+  const origContent = existedBefore ? readFileSync(file, 'utf8') : null;
+  let committed = false;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, content);
   try {
     const add = git(['add', '--', file]);
     if (add.status !== 0) throw new Error(`git add に失敗: ${add.stderr.trim()}`);
     const commit = git(['commit', '-m', commitMessage]);
     if (commit.status !== 0) throw new Error(`git commit に失敗: ${commit.stderr.trim() || commit.stdout.trim()}`);
+    committed = true;
     if (!push) return { branch, prUrl: null, pushed: false };
 
     const remotes = git(['remote']);
@@ -304,21 +335,36 @@ export function runGitPr(
     if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
 
     const ghCheck = run('gh', ['--version'], { encoding: 'utf8' });
-    if ((ghCheck.status ?? 1) !== 0) {
+    if ((ghCheck.status ?? 1) !== 0 || ghCheck.error) {
       return { branch, prUrl: null, pushed: true, note: ['gh CLI が無いため PR は未作成（push 済み）', remoteNote].filter(Boolean).join(' / ') };
     }
     const pr = run('gh', ['pr', 'create', '--title', prTitle, '--body', prBody, '--head', branch], {
       cwd: projectRoot,
       encoding: 'utf8',
     });
+    if (pr.error) throw new Error(`gh pr create 実行に失敗（push は済み）: ${pr.error.message}`);
     if ((pr.status ?? 1) !== 0) {
       throw new Error(`gh pr create に失敗（push は済み）: ${String(pr.stderr || '').trim()}`);
     }
     const prUrl = String(pr.stdout || '').trim().split('\n').filter(Boolean).pop() || null;
     return { branch, prUrl, pushed: true, note: remoteNote };
   } finally {
-    // 成否に関わらずユーザーの作業ブランチへ戻す（commit 済みなので作業ツリーはクリーン）。
-    // PR ブランチはローカル/リモートに残るので情報は失われない。
+    // commit が成立していなければ、書込んだファイルを元に戻し index も掃除する
+    // （元ブランチへ孤児ファイル/ステージを持ち帰らない）。commit 済みなら変更は PR ブランチに
+    // 載っているので作業ツリーはクリーン。
+    if (!committed) {
+      try {
+        git(['reset', '-q', '--', file]);
+      } catch {
+        /* ベストエフォート */
+      }
+      try {
+        if (existedBefore) writeFileSync(file, origContent);
+        else if (existsSync(file)) unlinkSync(file);
+      } catch {
+        /* ベストエフォート */
+      }
+    }
     restore();
   }
 }
@@ -337,38 +383,46 @@ export async function promoteWithPr(
   const gitPr = deps.gitPr || runGitPr;
   const listSkills = deps.listSkills || listProjectSkills;
 
-  // 再ゲート（mine/capture と一様の不変条件）: 候補本文を外部 LLM・PR・git remote へ送る前に、
-  // 保存後に追加された deny パターン + 未フラグの高エントロピートークンを fail-closed で弾く。
-  // dry-run でも LLM を呼ぶため、このゲートは dry-run より前に置く（機密の外部送信を防ぐ）。
+  // 再ゲート①（入力側）: 候補本文 + origin を外部 LLM・PR・git remote へ送る前に、保存後追加の
+  // deny パターン + 高エントロピートークンを fail-closed で弾く。dry-run でも LLM を呼ぶため前段に置く。
+  // origin はマイナー/取込アダプタ由来の外部文字列なので必ず対象に含める。
   const gate = compileGate(config);
   const candText = [
     candidate.hypothesis,
     candidate.conditions,
+    candidate.origin,
     ...(candidate.counterexamples || []),
     ...(candidate.evidence || []),
   ]
     .filter(Boolean)
     .join('\n');
-  if (gate.match(candText) || detectHighEntropy(candText)) {
+  if (gateHit(gate, candText)) {
     throw new Error(
       `候補 ${candidate.id} に機密の疑いがあるテキストが含まれるため、外部 LLM/PR への送出を中止しました（promote --pr 不可）`
     );
   }
 
-  // provider を具体名に解決してログ/早期エラーを miner と揃える（auto のまま送らない / none は明確に失敗）
-  const prov = provider || resolveProvider(config);
+  // provider を具体名に解決してログ/早期エラーを miner と揃える（auto/不正値は resolve・none は明確に失敗）
+  let prov = provider;
+  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
   if (prov === 'none') {
     throw new Error(
       'LLM プロバイダが見つかりません: codex / opencode を入れるか config.miner.provider="openai" を明示してください'
     );
   }
 
-  const skills = listSkills(projectRoot);
-  const prompt = buildSkillUpdatePrompt(candidate, skills);
-  log(`関連 skill を判定中… (既存 ${skills.length} 件 / provider=${prov})`);
+  // 更新対象は ulm が作った ref-* skill のみ（手書き skill を改変しない）。さらに、外部 LLM へ渡す
+  // 既存 skill 本文/説明も再ゲート②し、機密を含む skill はプロンプトから除外（外部送出物=ゲート対象）。
+  const refSkills = listSkills(projectRoot).filter((s) => s.slug.startsWith(REF_PREFIX));
+  const safeSkills = refSkills.filter((s) => !gateHit(gate, `${s.description}\n${s.body}`));
+  if (safeSkills.length !== refSkills.length) {
+    log(`機密の疑いがある既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);
+  }
+  const prompt = buildSkillUpdatePrompt(candidate, safeSkills);
+  log(`関連 skill を判定中… (候補 ${safeSkills.length} 件 / provider=${prov})`);
   const text = await callLlm(prov, prompt, config, home);
   const parsed = parseSkillUpdateResponse(text, {
-    existingSlugs: new Set(skills.map((s) => s.slug)),
+    existingSlugs: new Set(safeSkills.map((s) => s.slug)),
     forceNewSlug: name,
   });
 
@@ -384,7 +438,7 @@ export async function promoteWithPr(
   } else {
     const chk = checkSkillUpdateTarget(parsed.slug, projectRoot);
     if (!chk.ok) throw new Error(`更新 skill 先を拒否: ${chk.reason}`);
-    const existing = skills.find((s) => s.slug === parsed.slug);
+    const existing = safeSkills.find((s) => s.slug === parsed.slug);
     path = chk.path;
     content = renderUpdatedSkill(existing ? existing.content : '', parsed.body, { ...candidate, slug: parsed.slug }, parsed.description);
     action = 'update';
@@ -398,7 +452,13 @@ export async function promoteWithPr(
     `- 仮説: ${oneline(candidate.hypothesis)}\n` +
     (candidate.conditions ? `- 条件: ${oneline(candidate.conditions)}\n` : '') +
     `- 出自: ${oneline(candidate.origin || 'unknown')}\n\n` +
-    `_ulm promote --pr による自動生成。マージ前にレビューしてください。_`;
+    `_ulm promote --pr による自動生成（body は LLM 生成・未承認）。マージ前にレビューしてください。_`;
+
+  // 再ゲート③（出力側）: remote/PR/コミット済みファイルへ出る最終バイト列（生成 content + PR 本文）を
+  // 書込・push 前に検査。LLM が機密をエコーした場合もここで fail-closed に止める。
+  if (gateHit(gate, `${content}\n${prBody}`)) {
+    throw new Error('生成された skill 本文または PR 本文に機密の疑いがあるため中止しました（外部送出前ゲート）');
+  }
 
   if (dryRun) {
     log(`[dry-run] ${action === 'create' ? '新規作成' : '既存更新'}: .claude/skills/${parsed.slug}/SKILL.md`);
@@ -409,17 +469,18 @@ export async function promoteWithPr(
     return { dryRun: true, action, slug: parsed.slug, path, branch, prTitle, content };
   }
 
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content);
   const res = gitPr({
     projectRoot,
     file: path,
+    content,
     branch,
     commitMessage: `skill(${parsed.slug}): ${parsed.prSummary}\n\n承認済み候補 ${candidate.id} を ulm promote --pr で反映。`,
     prTitle,
     prBody,
     push,
   });
-  store.markPromoted(candidate.id, path);
+  // 昇格の確定は「PR が作成できた」時だけ。push 済みでも PR 未作成（gh 不在等）は approved のまま残し、
+  // gh 導入後の再実行（switch -C で冪等）で PR を出せるようにする。
+  if (res.prUrl) store.markPromoted(candidate.id, path);
   return { action, slug: parsed.slug, path, branch: res.branch, prUrl: res.prUrl, pushed: res.pushed, note: res.note };
 }

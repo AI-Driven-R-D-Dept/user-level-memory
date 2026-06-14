@@ -98,6 +98,10 @@ export function checkSkillUpdateTarget(slug, projectRoot) {
   if (!SKILL_SLUG_RE.test(String(slug))) {
     return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
   }
+  // 更新は ulm が作った ref-* skill に限る（手書き・運用 skill を上書きさせない）
+  if (!String(slug).startsWith('ref-')) {
+    return { ok: false, reason: '既存 skill の更新は ref-* に限られます（手書き skill は更新対象外）' };
+  }
   const root = realpathish(resolve(projectRoot));
   const dir = join(root, '.claude', 'skills', slug);
   const target = join(dir, 'SKILL.md');

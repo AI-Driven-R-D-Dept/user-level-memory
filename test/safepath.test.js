@@ -138,6 +138,17 @@ test('safepath: checkSkillUpdateTarget は不正 slug を拒否（traversal 不�
   });
 });
 
+test('safepath: checkSkillUpdateTarget は非 ref- skill の更新を拒否（手書き skill 保護）', () => {
+  sandbox(({ work }) => {
+    const dir = join(work, '.claude', 'skills', 'memory-recorder');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: memory-recorder\n---\nx');
+    const r = checkSkillUpdateTarget('memory-recorder', work);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /ref-/);
+  });
+});
+
 test('safepath: checkSkillUpdateTarget は symlink 経由の書込を拒否', () => {
   sandbox(({ work, root }) => {
     const skillsDir = join(work, '.claude', 'skills');

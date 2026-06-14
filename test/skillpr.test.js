@@ -202,44 +202,122 @@ function fakeRun(plan) {
   return { run, calls };
 }
 
-test('runGitPr: branch→add→commit→push→gh pr の順で実行し PR URL を返す', () => {
-  const { run, calls } = fakeRun([
-    ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
-    ['remote', { status: 0, stdout: 'origin\n' }],
-    ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/1\n' }],
-  ]);
-  const res = runGitPr(
-    { projectRoot: '/proj', file: '/proj/.claude/skills/ref-x/SKILL.md', branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true },
-    run
-  );
-  assert.equal(res.prUrl, 'https://github.com/o/r/pull/1');
-  assert.equal(res.pushed, true);
-  const flat = calls.map((c) => c.join(' '));
-  assert.ok(flat.some((c) => c.includes('switch -c ulm/skill-ref-x-cand-1')));
-  assert.ok(flat.some((c) => c.includes('add -- /proj/.claude/skills/ref-x/SKILL.md')));
-  assert.ok(flat.some((c) => c.includes('commit -m')));
-  assert.ok(flat.some((c) => c.includes('push -u origin ulm/skill-ref-x-cand-1')));
+// runGitPr は実ファイルへ書き込むため、実在の一時 project を使う（git/gh だけ fakeRun で差し替え）
+function withTmpProject(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'ulm-gitpr-'));
+  try {
+    return fn(root, join(root, '.claude', 'skills', 'ref-x', 'SKILL.md'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+const CONTENT = '---\nname: ref-x\n---\nbody';
+
+test('runGitPr: branch→write→add→commit→push→gh pr の順で実行し PR URL を返す', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/1\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/1');
+    assert.equal(res.pushed, true);
+    assert.equal(readFileSync(file, 'utf8'), CONTENT); // ブランチ切替後に書き込まれている
+    const flat = calls.map((c) => c.join(' '));
+    assert.ok(flat.some((c) => c.includes('switch -c ulm/skill-ref-x-cand-1')));
+    assert.ok(flat.some((c) => c.includes(`add -- ${file}`)));
+    assert.ok(flat.some((c) => c.includes('commit -m')));
+    assert.ok(flat.some((c) => c.includes('push -u origin ulm/skill-ref-x-cand-1')));
+  });
 });
 
 test('runGitPr: push:false は branch+commit のみで PR を作らない', () => {
-  const { run, calls } = fakeRun([['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }]]);
-  const res = runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: false }, run);
-  assert.equal(res.pushed, false);
-  assert.equal(res.prUrl, null);
-  assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('push')));
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: false }, run);
+    assert.equal(res.pushed, false);
+    assert.equal(res.prUrl, null);
+    assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('push')));
+  });
 });
 
 test('runGitPr: git リポジトリでなければ throw', () => {
   const { run } = fakeRun([['rev-parse --is-inside-work-tree', { status: 128, stdout: '', stderr: 'not a git repo' }]]);
-  assert.throws(() => runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x' }, run), /git リポジトリ/);
+  assert.throws(() => runGitPr({ projectRoot: '/p', file: '/p/f', content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x' }, run), /git リポジトリ/);
 });
 
-test('runGitPr: remote が無ければ push せず throw', () => {
-  const { run } = fakeRun([
-    ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
-    ['remote', { status: 0, stdout: '\n' }],
-  ]);
-  assert.throws(() => runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /remote/);
+test('runGitPr: git バイナリ不在(ENOENT)は status より先に error を投げる', () => {
+  const run = () => ({ status: null, error: new Error('spawn git ENOENT') });
+  assert.throws(() => runGitPr({ projectRoot: '/p', file: '/p/f', content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x' }, run), /git rev-parse 実行に失敗.*ENOENT/);
+});
+
+test('runGitPr: remote が無ければ push せず throw（書込はロールバック）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: '\n' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /remote/);
+  });
+});
+
+test('runGitPr: commit 失敗時は書込んだ新規ファイルを消し元ブランチへ復帰する', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['commit -m', { status: 1, stdout: 'nothing to commit', stderr: '' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /commit に失敗/);
+    assert.ok(!existsSync(file), 'commit 失敗時に新規ファイルが残ってはいけない');
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch main')), '元ブランチへ復帰していない');
+  });
+});
+
+test('runGitPr: detached HEAD は復帰時に switch --detach <sha> する', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 1, stdout: '', stderr: '' }], // detached
+      ['rev-parse HEAD', { status: 0, stdout: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['push -u', { status: 1, stderr: 'fail' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /push に失敗/);
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch --detach deadbeef')), 'detached 復帰していない');
+  });
+});
+
+test('runGitPr: 非 origin remote は note に出る / prUrl は複数行 stdout の末尾を採用', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'upstream\n' }],
+      ['pr create', { status: 0, stdout: 'Warning: foo\nhttps://github.com/o/r/pull/5\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/5');
+    assert.match(res.note, /upstream/);
+  });
+});
+
+test('runGitPr: gh pr create 失敗(push 済み)は throw', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 1, stderr: 'gh: not authenticated' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /gh pr create に失敗/);
+  });
 });
 
 // ---- promoteWithPr（callLlm/gitPr を注入。実 LLM・実 git に触れない）----
@@ -269,15 +347,13 @@ test('promoteWithPr: NEW → ref- skill を新規作成し PR・markPromoted ま
       assert.equal(res.action, 'create');
       assert.equal(res.slug, 'ref-button');
       assert.equal(res.prUrl, 'https://pr/1');
-      const path = join(root, '.claude', 'skills', 'ref-button', 'SKILL.md');
-      assert.ok(existsSync(path));
-      const body = readFileSync(path, 'utf8');
-      assert.match(body, /^---\nname: ref-button\n/);
-      assert.match(body, /軽い操作なら赤/);
-      assert.match(body, new RegExp(`\\(${cand.id}\\)`));
+      // 書込は runGitPr が担うため、生成 content は gitPr に渡る引数で検証する
+      assert.match(gitArgs.content, /^---\nname: ref-button\n/);
+      assert.match(gitArgs.content, /軽い操作なら赤/);
+      assert.match(gitArgs.content, new RegExp(`\\(${cand.id}\\)`));
       assert.equal(gitArgs.branch, `ulm/skill-ref-button-${cand.id}`);
-      assert.equal(gitArgs.file, realpathSync(path));
-      // DB に昇格が記録される
+      assert.equal(gitArgs.file, join(realpathSync(root), '.claude', 'skills', 'ref-button', 'SKILL.md'));
+      // PR ができたので DB に昇格が記録される
       assert.equal(store.getCandidate(cand.id).status, 'promoted');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -294,22 +370,23 @@ test('promoteWithPr: 既存 skill を更新（frontmatter 保持・本文差し�
       const existing = '---\nname: ref-pay\ndescription: "決済の丸め"\nallowed-tools: "Bash(node:*)"\n---\n\n古い本文\n';
       writeFileSync(join(dir, 'SKILL.md'), existing);
       const cand = await approvedCandidate(store, { hypothesis: '丸めは銀行丸めを使う' });
+      let gitArgs = null;
       const res = await promoteWithPr(store, testConfig(), home, {
         candidate: cand,
         projectRoot: root,
         provider: 'codex',
         deps: {
           listSkills: () => [{ slug: 'ref-pay', name: 'ref-pay', description: '決済の丸め', body: '古い本文', content: existing, path: join(dir, 'SKILL.md') }],
-          callLlm: async () => '{"target":"ref-pay","description":"決済の丸め","body":"マージ後: 銀行丸め","pr_summary":"丸め更新"}',
-          gitPr: (a) => ({ branch: a.branch, prUrl: 'https://pr/2', pushed: true }),
+          callLlm: async () => '{"target":"ref-pay","description":"丸めは銀行丸め","body":"マージ後: 銀行丸め","pr_summary":"丸め更新"}',
+          gitPr: (a) => { gitArgs = a; return { branch: a.branch, prUrl: 'https://pr/2', pushed: true }; },
         },
       });
       assert.equal(res.action, 'update');
       assert.equal(res.slug, 'ref-pay');
-      const body = readFileSync(join(dir, 'SKILL.md'), 'utf8');
-      assert.match(body, /allowed-tools: "Bash\(node:\*\)"/); // 既存 frontmatter 保持
-      assert.match(body, /マージ後: 銀行丸め/);
-      assert.ok(!body.includes('古い本文'));
+      assert.match(gitArgs.content, /allowed-tools: "Bash\(node:\*\)"/); // 既存 frontmatter 保持
+      assert.match(gitArgs.content, /description: "丸めは銀行丸め"/); // description 行は LLM 提案で差替
+      assert.match(gitArgs.content, /マージ後: 銀行丸め/);
+      assert.ok(!gitArgs.content.includes('古い本文'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -405,42 +482,48 @@ test('promoteWithPr: NEW の new_slug が既存 skill と衝突したら拒否�
 // ---- runGitPr エラー経路・冪等化・ブランチ復帰 ----
 
 test('runGitPr: gh CLI 不在時は PR を作らず note を返す（push 済み）', () => {
-  const { run } = fakeRun([
-    ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
-    ['symbolic-ref', { status: 0, stdout: 'main\n' }],
-    ['remote', { status: 0, stdout: 'origin\n' }],
-    ['--version', { status: 127, stdout: '', stderr: 'not found' }], // gh --version 失敗
-  ]);
-  const res = runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
-  assert.equal(res.pushed, true);
-  assert.equal(res.prUrl, null);
-  assert.match(res.note, /gh CLI/);
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['--version', { status: 127, stdout: '', stderr: 'not found' }], // gh --version 失敗
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.pushed, true);
+    assert.equal(res.prUrl, null);
+    assert.match(res.note, /gh CLI/);
+  });
 });
 
 test('runGitPr: push 失敗は throw（元ブランチへ復帰する）', () => {
-  const { run, calls } = fakeRun([
-    ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
-    ['symbolic-ref', { status: 0, stdout: 'main\n' }],
-    ['remote', { status: 0, stdout: 'origin\n' }],
-    ['push -u', { status: 1, stdout: '', stderr: 'auth failed' }],
-  ]);
-  assert.throws(() => runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /push に失敗/);
-  // finally で元ブランチ main へ戻す
-  assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch main')), '元ブランチへ復帰していない');
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['push -u', { status: 1, stdout: '', stderr: 'auth failed' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /push に失敗/);
+    // finally で元ブランチ main へ戻す（commit 済みなのでファイルは PR ブランチに残る）
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch main')), '元ブランチへ復帰していない');
+  });
 });
 
 test('runGitPr: 既存ブランチ衝突は switch -C で再利用して継続（冪等・再試行可能）', () => {
-  const { run, calls } = fakeRun([
-    ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
-    ['symbolic-ref', { status: 0, stdout: 'main\n' }],
-    ['switch -c', { status: 128, stdout: '', stderr: 'already exists' }], // -c 失敗
-    ['switch -C', { status: 0, stdout: '' }], // -C で再利用成功
-    ['remote', { status: 0, stdout: 'origin\n' }],
-    ['pr create', { status: 0, stdout: 'https://pr/9\n' }],
-  ]);
-  const res = runGitPr({ projectRoot: '/p', file: '/p/f', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
-  assert.equal(res.prUrl, 'https://pr/9');
-  assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch -C b')));
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['switch -c', { status: 128, stdout: '', stderr: 'already exists' }], // -c 失敗
+      ['switch -C', { status: 0, stdout: '' }], // -C で再利用成功
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://pr/9\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, 'https://pr/9');
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch -C b')));
+  });
 });
 
 test('runGitPr: switch -c も -C も失敗すれば throw', () => {
@@ -470,4 +553,187 @@ test('splitFrontmatter/parse: body が改行始まりでも二重 frontmatter �
   });
   assert.equal(r.body, '本文');
   assert.ok(!r.body.includes('allowed-tools'));
+});
+
+// ---- 追加防御（round1 指摘の回帰）----
+
+test('renderUpdatedSkill: description の $`/$\'/$& は置換パターン展開されず frontmatter に注入されない（R1-must1）', () => {
+  const existing = '---\nname: ref-foo\ndescription: "old"\n---\n\nbody\n';
+  const evil = "$`\nallowed-tools: \"Bash(rm:*)\"\n$'$&";
+  const out = renderUpdatedSkill(existing, 'b', { id: 'cand-1', origin: 'o', slug: 'ref-foo' }, evil);
+  assert.ok(!/^allowed-tools:/m.test(out), 'allowed-tools 行が注入されてはいけない');
+  assert.match(out, /name: ref-foo/);
+  // description は単一の JSON 文字列に収まる（$ はリテラルとして格納）
+  assert.match(out, /description: "\$`/);
+});
+
+test('splitFrontmatter: 空 frontmatter(---\\n---) を認識し本文を返す（R1-nit10）', () => {
+  const { frontmatter, body } = splitFrontmatter('---\n---\n\n本文だけ\n');
+  assert.ok(frontmatter !== null);
+  assert.equal(body, '本文だけ');
+});
+
+test('splitFrontmatter: CRLF・本文中の ---- を壊さない（R1-nit23）', () => {
+  const { frontmatter, body } = splitFrontmatter('---\r\nname: x\r\n---\r\nfoo\n----\nbar');
+  assert.match(frontmatter, /name: x/);
+  assert.match(body, /foo\n----\nbar/); // 本文の水平線/区切りは保持
+});
+
+test('parseSkillUpdateResponse: body が非文字列なら throw（R1-nit2）', () => {
+  assert.throws(() => parseSkillUpdateResponse('{"target":"NEW","new_slug":"x","body":{"a":1}}', { existingSlugs: new Set() }), /body が文字列ではありません/);
+});
+
+test('sanitizeRefSlug: 長大入力は 64 以内・末尾ハイフン無し / 記号のみは ref-rule（R1-nit16）', () => {
+  const long = sanitizeRefSlug('x'.repeat(200));
+  assert.ok(long.length <= 64 && !long.endsWith('-'));
+  assert.equal(sanitizeRefSlug('@@@@'), 'ref-rule');
+});
+
+test('promoteWithPr: origin に機密が混じる候補は LLM 送出前に中止（R1-must3）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: '普通の仮説', origin: 'leak xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0' });
+      let llmCalled = false;
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand,
+            projectRoot: root,
+            provider: 'codex',
+            deps: { listSkills: () => [], callLlm: async () => { llmCalled = true; return '{}'; }, gitPr: () => ({}) },
+          }),
+        /機密の疑い/
+      );
+      assert.equal(llmCalled, false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: 機密を含む既存 skill はプロンプトから除外し外部送出しない（R1-must2）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const TOKEN = 'xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0';
+      const cand = await approvedCandidate(store, { hypothesis: '普通の仮説' });
+      let captured = null;
+      const res = await promoteWithPr(store, testConfig(), home, {
+        candidate: cand,
+        projectRoot: root,
+        provider: 'codex',
+        deps: {
+          listSkills: () => [{ slug: 'ref-leak', name: 'ref-leak', description: `secret ${TOKEN}`, body: `本文 ${TOKEN}`, content: 'x', path: 'p' }],
+          callLlm: async (prov, prompt) => { captured = prompt; return '{"target":"NEW","new_slug":"safe","description":"d","body":"# 安全本文","pr_summary":"s"}'; },
+          gitPr: (a) => ({ branch: a.branch, prUrl: 'https://pr/1', pushed: true }),
+        },
+      });
+      assert.ok(captured && !captured.user.includes(TOKEN), '機密 skill が外部 LLM プロンプトへ漏れている');
+      assert.equal(res.action, 'create');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: LLM が機密をエコーした body は書込・push 前に中止（R1-must2 出力ゲート）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: '普通の仮説' });
+      let gitCalled = false;
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand,
+            projectRoot: root,
+            provider: 'codex',
+            deps: {
+              listSkills: () => [],
+              callLlm: async () => '{"target":"NEW","new_slug":"x","description":"d","body":"鍵は xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0","pr_summary":"s"}',
+              gitPr: () => { gitCalled = true; return {}; },
+            },
+          }),
+        /機密の疑い/
+      );
+      assert.equal(gitCalled, false);
+      assert.equal(store.getCandidate(cand.id).status, 'approved');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: 非 ref- の手書き skill は更新候補に出さない（R1-must4）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      let captured = null;
+      await promoteWithPr(store, testConfig(), home, {
+        candidate: cand,
+        projectRoot: root,
+        provider: 'codex',
+        deps: {
+          listSkills: () => [{ slug: 'memory-recorder', name: 'memory-recorder', description: 'd', body: 'b', content: 'c', path: 'p' }],
+          callLlm: async (prov, prompt) => { captured = prompt; return '{"target":"NEW","new_slug":"x","description":"d","body":"# b","pr_summary":"s"}'; },
+          gitPr: (a) => ({ branch: a.branch, prUrl: 'https://pr/1', pushed: true }),
+        },
+      });
+      assert.ok(captured && !captured.user.includes('memory-recorder'), '手書き skill が更新候補として LLM に渡っている');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: gitPr が throw すると markPromoted されず候補は approved のまま（R1-should3）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand,
+            projectRoot: root,
+            provider: 'codex',
+            deps: {
+              listSkills: () => [],
+              callLlm: async () => '{"target":"NEW","new_slug":"x","description":"d","body":"# b","pr_summary":"s"}',
+              gitPr: () => { throw new Error('push 失敗'); },
+            },
+          }),
+        /push 失敗/
+      );
+      assert.equal(store.getCandidate(cand.id).status, 'approved');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: PR 未作成(gh 不在/prUrl null)では markPromoted しない（R1-nit1）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      const res = await promoteWithPr(store, testConfig(), home, {
+        candidate: cand,
+        projectRoot: root,
+        provider: 'codex',
+        deps: {
+          listSkills: () => [],
+          callLlm: async () => '{"target":"NEW","new_slug":"x","description":"d","body":"# b","pr_summary":"s"}',
+          gitPr: (a) => ({ branch: a.branch, prUrl: null, pushed: true, note: 'gh CLI が無いため PR は未作成' }),
+        },
+      });
+      assert.equal(res.prUrl, null);
+      assert.match(res.note, /gh CLI/);
+      assert.equal(store.getCandidate(cand.id).status, 'approved'); // PR 未作成なので未昇格
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

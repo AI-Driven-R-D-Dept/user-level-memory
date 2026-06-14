@@ -108,7 +108,7 @@ ulm mine                                          # 観測 → 仮説候補を i
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
 ulm approve <cand-id> --note "実際に踏んだ"        # 人間の操作
 ulm promote <cand-id> [--name <slug>]            # 承認済みを project の .claude/skills/ref-* へ skill 化（--name 省略時は ref-<id>）
-ulm promote <cand-id> --pr [--dry-run]           # agent が関連する既存 skill を更新（無ければ ref- 新規）し PR を出す
+ulm promote <cand-id> --pr [--provider P] [--dry-run]  # agent が関連する既存 ref-* skill を更新（無ければ ref- 新規）し PR を出す（実行すると push する）
 ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
 ulm web                                           # DB を閲覧・編集するローカル Web UI（127.0.0.1）
