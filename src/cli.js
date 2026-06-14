@@ -542,6 +542,11 @@ async function cmdPromote(args) {
     'dry-run': { type: 'boolean', default: false },
     yes: { type: 'boolean', default: false },
   }, { positionals: 1 });
+  // --dry-run / --provider は --pr 専用。ローカル生成パスで黙殺すると「dry-run のつもりが本書込・昇格確定」
+  // という取り違えを招くため、--pr 無しでの併用は明確に弾く。
+  if (!values.pr && (values['dry-run'] || values.provider !== undefined)) {
+    throw new UsageError('--dry-run / --provider は --pr と併用してください');
+  }
   // --pr は dry-run でも LLM を実呼び出しする（候補本文を外部送信しうる）ため、
   // 非対話エージェントによる無制限呼び出しを防ぐべく人間ゲートを常に課す。
   requireHuman(values, 'promote');
@@ -571,15 +576,24 @@ async function cmdPromote(args) {
       });
       if (r.dryRun) return 0;
       const what = r.action === 'create' ? '新規 skill 作成' : '既存 skill 更新';
-      console.log(`✓ ${c.id} → ${what}: .claude/skills/${r.slug}/SKILL.md`);
-      console.log(`  branch: ${r.branch}`);
-      if (r.prUrl) console.log(`  PR: ${r.prUrl}`);
-      else if (r.note) console.log(`  ${r.note}`);
+      // PR が作られたときだけ「昇格完了(✓)」。push 止まり（gh 不在等）は候補が approved のままなので、
+      // 完了と誤認させない語調にし、冪等な再実行を案内する。
+      if (r.prUrl) {
+        console.log(`✓ ${c.id} → ${what}: .claude/skills/${r.slug}/SKILL.md`);
+        console.log(`  branch: ${r.branch}`);
+        console.log(`  PR: ${r.prUrl}`);
+      } else {
+        console.log(`△ ${c.id} → ${what}を branch '${r.branch}' に commit しましたが PR は未作成です（候補は approved のまま）。`);
+        console.log('  gh CLI を入れて再実行すると PR を作成できます（ブランチは冪等に再利用）。');
+      }
+      if (r.note) console.log(`  ${r.note}`);
       return 0;
     }
 
-    // 既定（ローカル生成）: 候補1件をそのまま ref- skill として新規生成する
-    const slug = values.name ?? c.id.replace(/^cand-/, 'ref-');
+    // 既定（ローカル生成）: 候補1件をそのまま ref- skill として新規生成する。
+    // 昇格 skill は ref-* 名前空間に統一する（--name 指定でも ref- を強制。safepath でも再検証）。
+    let slug = values.name ?? c.id.replace(/^cand-/, 'ref-');
+    if (!slug.startsWith('ref-')) slug = `ref-${slug}`;
     const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 

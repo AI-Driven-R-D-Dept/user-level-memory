@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   extractJsonObject,
   sanitizeRefSlug,
@@ -637,34 +637,6 @@ test('promoteWithPr: 機密を含む既存 skill はプロンプトから除外�
   });
 });
 
-test('promoteWithPr: LLM が機密をエコーした body は書込・push 前に中止（R1-must2 出力ゲート）', async () => {
-  await withFreshStoreAsync(async (store, home) => {
-    const root = tmpProject();
-    try {
-      const cand = await approvedCandidate(store, { hypothesis: '普通の仮説' });
-      let gitCalled = false;
-      await assert.rejects(
-        () =>
-          promoteWithPr(store, testConfig(), home, {
-            candidate: cand,
-            projectRoot: root,
-            provider: 'codex',
-            deps: {
-              listSkills: () => [],
-              callLlm: async () => '{"target":"NEW","new_slug":"x","description":"d","body":"鍵は xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0","pr_summary":"s"}',
-              gitPr: () => { gitCalled = true; return {}; },
-            },
-          }),
-        /機密の疑い/
-      );
-      assert.equal(gitCalled, false);
-      assert.equal(store.getCandidate(cand.id).status, 'approved');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
 test('promoteWithPr: 非 ref- の手書き skill は更新候補に出さない（R1-must4）', async () => {
   await withFreshStoreAsync(async (store, home) => {
     const root = tmpProject();
@@ -736,4 +708,120 @@ test('promoteWithPr: PR 未作成(gh 不在/prUrl null)では markPromoted し�
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+// ---- round2 指摘の回帰 ----
+
+test('runGitPr: 既存ファイル更新→commit 失敗時は元の内容へ復元する（R2-should1）', () => {
+  withTmpProject((root, file) => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'ORIGINAL'); // 既存（update 経路相当）
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['commit -m', { status: 1, stdout: 'nothing to commit', stderr: '' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: 'NEW CONTENT', branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /commit に失敗/);
+    assert.equal(readFileSync(file, 'utf8'), 'ORIGINAL', 'commit 失敗時に元内容へ戻すべき');
+    const flat = calls.map((c) => c.join(' '));
+    assert.ok(flat.some((c) => c.includes('reset -q -- ')), 'index を掃除していない');
+    assert.ok(flat.some((c) => c.includes('switch main')), '元ブランチへ復帰していない');
+  });
+});
+
+test('runGitPr: gh pr create は prTitle/prBody を単一 array 要素として渡す（shell 非経由・R2-nit20）', () => {
+  withTmpProject((root, file) => {
+    const evil = '$(touch /tmp/x); 改行\ninjected';
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://pr/1\n' }],
+    ]);
+    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: evil, prBody: evil, push: true }, run);
+    const prCall = calls.find((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'create');
+    assert.ok(prCall, 'gh pr create が呼ばれていない');
+    const ti = prCall.indexOf('--title');
+    assert.equal(prCall[ti + 1], evil, 'prTitle が単一 arg として渡っていない（shell 解釈の恐れ）');
+    const bi = prCall.indexOf('--body');
+    assert.equal(prCall[bi + 1], evil);
+  });
+});
+
+test('promoteWithPr: 未対応 provider 名は明確に throw（R2-nit7）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      let llmCalled = false;
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand, projectRoot: root, provider: 'gemini',
+            deps: { listSkills: () => [], callLlm: async () => { llmCalled = true; return '{}'; }, gitPr: () => ({}) },
+          }),
+        /未対応のプロバイダ/
+      );
+      assert.equal(llmCalled, false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: provider が解決できない(none)と送出前に明確に失敗（R2-nit18）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h' });
+      let llmCalled = false;
+      await assert.rejects(
+        () =>
+          promoteWithPr(store, testConfig(), home, {
+            candidate: cand, projectRoot: root, // provider 未指定 → resolve
+            deps: {
+              resolveProvider: () => 'none',
+              listSkills: () => [],
+              callLlm: async () => { llmCalled = true; return '{}'; },
+              gitPr: () => ({}),
+            },
+          }),
+        /LLM プロバイダが見つかりません/
+      );
+      assert.equal(llmCalled, false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: prTitle は 120 字に切詰め / conditions の有無で prBody が変わる（R2-nit19）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'h', conditions: '' });
+      let a = null;
+      await promoteWithPr(store, testConfig(), home, {
+        candidate: cand, projectRoot: root, provider: 'codex',
+        deps: {
+          listSkills: () => [],
+          callLlm: async () => `{"target":"NEW","new_slug":"x","description":"d","body":"# b","pr_summary":"${'あ'.repeat(200)}"}`,
+          gitPr: (x) => { a = x; return { branch: x.branch, prUrl: 'https://pr/1', pushed: true }; },
+        },
+      });
+      assert.ok(a.prTitle.length <= 120, `prTitle が 120 字超: ${a.prTitle.length}`);
+      assert.ok(!a.prBody.includes('- 条件:'), 'conditions 空なら条件行は出さない');
+      assert.match(a.content, /本文生成 promote:codex:/); // 生成 provider/model を provenance に記録（R2-nit9）
+      assert.match(a.prBody, /本文生成: promote:codex:/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('renderUpdatedSkill: description 未指定なら既存 frontmatter の description を保持（R2-nit16）', () => {
+  const existing = '---\nname: ref-foo\ndescription: "OLD説明"\n---\n\n旧\n';
+  const out = renderUpdatedSkill(existing, '新本文', { id: 'cand-1', origin: 'o', slug: 'ref-foo' }, '');
+  assert.match(out, /description: "OLD説明"/);
+  assert.match(out, /新本文/);
 });

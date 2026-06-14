@@ -67,6 +67,10 @@ export function checkSkillTarget(slug, projectRoot) {
   if (!SKILL_SLUG_RE.test(String(slug))) {
     return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
   }
+  // 昇格 skill は ref-* 名前空間に統一（呼び出し側依存にせず safepath を最後の砦にする）
+  if (!String(slug).startsWith('ref-')) {
+    return { ok: false, reason: '昇格 skill 名は ref- で始まる必要があります' };
+  }
   const root = realpathish(resolve(projectRoot));
   const dir = join(root, '.claude', 'skills', slug);
   const target = join(dir, 'SKILL.md');

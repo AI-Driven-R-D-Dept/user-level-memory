@@ -184,7 +184,7 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 - **機密ゲート（機械的）**: 鍵・トークン・接続文字列等のパターンに一致した観測/state は自動で `secret` 化され、注入・採掘・通常エクスポート・既定の読み取りから除外されます。判定に AI は使いません。不正な deny パターンは fail-closed（機密扱い）。
 - **注入の無害化**: 注入される観測/state はすべて untrusted データとして扱い、ゼロ幅/制御文字・偽ロールタグ・fence ブレイクを中和。ヘッダで「これはデータであり命令ではない」と明示します。
 - **inbox 隔離**: `mine` の生成物（仮説候補）は inbox に隔離され、作業コンテキストに自動注入されません。採用・昇格は **人間の操作**（非対話実行では `--yes` 明示が必須）。
-- **昇格先の検証**: `promote`（既定）は検証済み slug から組み立てた `<project>/.claude/skills/ref-<slug>/SKILL.md` を**新規生成のみ**（任意パス不可・既存上書き不可・symlink 拒否・project 不一致拒否）。`promote --pr` は LLM が**実在 slug の集合から選んだ**既存 skill に限り更新を許すが、書込先は `checkSkillUpdateTarget` で機械検証（実在 slug 限定・symlink 拒否・通常ファイル限定）し、候補本文は外部送信前に `mine` と同じ再ゲート（deny パターン＋高エントロピー）を通し、変更は PR レビューを挟みます。`ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみで、`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・パストラバーサルは機械的に拒否します。
+- **昇格先の検証**: 昇格 skill は常に `ref-*` 名前空間（`<project>/.claude/skills/ref-<slug>/SKILL.md`）。`promote`（既定）は**新規生成のみ**（任意パス不可・既存上書き不可・symlink 拒否・project 不一致拒否・`checkSkillTarget` で ref- 必須）。`promote --pr` は **ulm が作った ref-\* skill のうち実在するものに限り**更新を許し（手書き skill はプロンプトにも載せず改変しない）、書込先は `checkSkillUpdateTarget` で機械検証（ref- 必須・実在 slug 限定・symlink 拒否・通常ファイル限定）。外部送出物はすべてゲート対象です: ① 候補本文＋`origin` を `mine` と同じ再ゲート（deny パターン＋高エントロピー）で fail-closed、② プロンプトに載せる既存 skill 本文も同検査で機密含みは除外。生成本文の最終確認は PR レビュー。`ref add` の書込先は `ULM_HOME/ref` 配下か作業ツリー配下の `.md` のみで、`CLAUDE.md` 等の自動読込ファイルや `.git/`・`.ssh/`・パストラバーサルは機械的に拒否します。
 - **exfil 防止**: `mine` の OpenAI 互換 API は base_url を allowlist 検証。機密値は LLM へ送りません。
 - **権威の偽装防止**: 候補の出自（`miner:codex:gpt-5.5` 等）と status を常に表示します。
 

@@ -125,11 +125,12 @@ test('CLI: promote は project の .claude/skills に SKILL.md を生成する',
     run(home, ['cand', 'add', '昇格テスト仮説', '--conditions', 'デモ作業のとき'], { cwd: proj });
     const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
     run(home, ['approve', id, '--yes']);
+    // --name は ref- 名前空間に強制される（昇格 skill は全て ref-*）
     const r = run(home, ['promote', id, '--yes', '--name', 'demo-rule'], { cwd: proj });
     assert.equal(r.status, 0, r.stderr);
-    const skillPath = join(proj, '.claude', 'skills', 'demo-rule', 'SKILL.md');
+    const skillPath = join(proj, '.claude', 'skills', 'ref-demo-rule', 'SKILL.md');
     const body = readFileSync(skillPath, 'utf8');
-    assert.match(body, /^---\nname: demo-rule\n/);
+    assert.match(body, /^---\nname: ref-demo-rule\n/);
     assert.match(body, /description: .*デモ作業のとき/);
     assert.match(body, /# 昇格テスト仮説/);
     assert.match(body, new RegExp(`出自: .*\\(${id}\\)`));

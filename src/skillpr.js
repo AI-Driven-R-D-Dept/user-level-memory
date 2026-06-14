@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { checkSkillTarget, checkSkillUpdateTarget } from './safepath.js';
-import { callProvider, resolveProvider } from './miner.js';
+import { callProvider, resolveProvider, providerModel } from './miner.js';
 import { compileGate, detectHighEntropy } from './gate.js';
 import { nowIso, shortDate } from './util.js';
 
@@ -234,14 +234,16 @@ export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } =
   return { isNew: false, slug: target, description, body, prSummary };
 }
 
-function provenanceLine(candidate) {
+function provenanceLine(candidate, genOrigin) {
   const origin = oneline(candidate.origin || 'unknown');
   const reviewed = shortDate(candidate.reviewed_at || nowIso());
-  return `- 出自: ${origin} / 承認 ${reviewed} / 昇格(PR) ${shortDate(nowIso())} (${candidate.id})`;
+  // candidate.origin（採掘出自）と、本文を書いた LLM（genOrigin）を別物として両方刻む（権威の区別）
+  const gen = genOrigin ? ` / 本文生成 ${oneline(genOrigin)}` : '';
+  return `- 出自: ${origin} / 承認 ${reviewed} / 昇格(PR) ${shortDate(nowIso())}${gen} (${candidate.id})`;
 }
 
 /** 新規 skill の SKILL.md を組み立てる（frontmatter は ulm が生成し、LLM には作らせない） */
-export function renderNewSkill(slug, description, body, candidate) {
+export function renderNewSkill(slug, description, body, candidate, genOrigin) {
   // description は発動条件。空だと skill がトリガされないので hypothesis→slug の順でフォールバック
   const desc = description || oneline(candidate.hypothesis).slice(0, 300) || slug;
   return [
@@ -252,7 +254,7 @@ export function renderNewSkill(slug, description, body, candidate) {
     '',
     body.trim(),
     '',
-    provenanceLine(candidate),
+    provenanceLine(candidate, genOrigin),
     '',
   ].join('\n');
 }
@@ -261,7 +263,7 @@ export function renderNewSkill(slug, description, body, candidate) {
  * 既存 skill を更新する。既存 frontmatter は保持し（allowed-tools 等を壊さない）、本文だけ差し替える。
  * description が渡された場合は frontmatter の description 行だけ差し替える（name 等は不変）。
  */
-export function renderUpdatedSkill(existingContent, body, candidate, description) {
+export function renderUpdatedSkill(existingContent, body, candidate, description, genOrigin) {
   const { frontmatter } = splitFrontmatter(existingContent);
   let head = frontmatter || ['---', 'name: ' + (candidate.slug || 'skill'), '---'].join('\n');
   if (description) {
@@ -274,7 +276,7 @@ export function renderUpdatedSkill(existingContent, body, candidate, description
   }
   // 注: 注入の本丸（description の $ 置換展開）は上の関数 replacer で封じている。body 中の `---` は
   // markdown の水平線であり frontmatter ではない（YAML frontmatter は先頭ブロックのみ）。
-  return [head, '', body.trim(), '', provenanceLine(candidate), ''].join('\n');
+  return [head, '', body.trim(), '', provenanceLine(candidate, genOrigin), ''].join('\n');
 }
 
 /**
@@ -286,9 +288,10 @@ export function runGitPr(
   { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true },
   run = spawnSync
 ) {
-  // git 実行の薄いラッパ。spawnSync の error（ENOENT 等）は status より先に投げる（miner と同じ規約）。
+  // git 実行の薄いラッパ。spawnSync の error（ENOENT/timeout/maxBuffer 等）は status より先に投げる
+  // （miner と同じ規約）。認証プロンプト待ちでのハングや巨大出力を有界化するため timeout/maxBuffer を付ける。
   const git = (args) => {
-    const r = run('git', ['-C', projectRoot, ...args], { encoding: 'utf8' });
+    const r = run('git', ['-C', projectRoot, ...args], { encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
     if (r.error) throw new Error(`git ${args[0]} 実行に失敗: ${r.error.message}`);
     return { status: r.status ?? 1, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') };
   };
@@ -301,8 +304,13 @@ export function runGitPr(
   const origBranch = origRef.status === 0 ? origRef.stdout.trim() : '';
   const origSha = origBranch ? '' : git(['rev-parse', 'HEAD']).stdout.trim();
   const restore = () => {
-    if (origBranch) git(['switch', origBranch]);
-    else if (origSha) git(['switch', '--detach', origSha]);
+    // 復帰失敗で元の例外（push 失敗等の根本原因）をマスクしないよう、ここは握りつぶす
+    try {
+      if (origBranch) git(['switch', origBranch]);
+      else if (origSha) git(['switch', '--detach', origSha]);
+    } catch {
+      /* ベストエフォート（元の例外を優先して伝播させる） */
+    }
   };
 
   // 既存ブランチがあれば現在 HEAD にリセットして再利用（push 失敗→再実行で衝突しないように冪等化）
@@ -334,12 +342,15 @@ export function runGitPr(
     const pushRes = git(['push', '-u', remote, branch]);
     if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
 
-    const ghCheck = run('gh', ['--version'], { encoding: 'utf8' });
+    const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000 });
     if ((ghCheck.status ?? 1) !== 0 || ghCheck.error) {
       return { branch, prUrl: null, pushed: true, note: ['gh CLI が無いため PR は未作成（push 済み）', remoteNote].filter(Boolean).join(' / ') };
     }
+    // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する
     const pr = run('gh', ['pr', 'create', '--title', prTitle, '--body', prBody, '--head', branch], {
       cwd: projectRoot,
+      env: { ...process.env, GH_PROMPT_DISABLED: '1' },
+      timeout: 120_000,
       encoding: 'utf8',
     });
     if (pr.error) throw new Error(`gh pr create 実行に失敗（push は済み）: ${pr.error.message}`);
@@ -402,9 +413,14 @@ export async function promoteWithPr(
     );
   }
 
-  // provider を具体名に解決してログ/早期エラーを miner と揃える（auto/不正値は resolve・none は明確に失敗）
+  // provider を具体名に解決する。明示された未対応名（タイプミス等）は黙って auto 解決へ落とさず明確に失敗。
+  // 空/未指定/'auto' のみ resolveProvider に回す。none は分かりやすいエラーにする（miner と揃える）。
+  const resolveProv = deps.resolveProvider || resolveProvider;
   let prov = provider;
-  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
+  if (prov && prov !== 'auto' && !['codex', 'opencode', 'openai'].includes(prov)) {
+    throw new Error(`未対応のプロバイダ: ${prov}（codex | opencode | openai のいずれかを指定してください）`);
+  }
+  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProv(config);
   if (prov === 'none') {
     throw new Error(
       'LLM プロバイダが見つかりません: codex / opencode を入れるか config.miner.provider="openai" を明示してください'
@@ -426,6 +442,9 @@ export async function promoteWithPr(
     forceNewSlug: name,
   });
 
+  // 本文を書いた LLM の出自（採掘出自 candidate.origin とは別物）。SKILL.md/PR/commit に刻んで権威を区別する。
+  const genOrigin = `promote:${prov}:${providerModel(prov, config)}`;
+
   let path;
   let content;
   let action;
@@ -433,14 +452,14 @@ export async function promoteWithPr(
     const chk = checkSkillTarget(parsed.slug, projectRoot);
     if (!chk.ok) throw new Error(`新規 skill 先を拒否: ${chk.reason}`);
     path = chk.path;
-    content = renderNewSkill(parsed.slug, parsed.description, parsed.body, candidate);
+    content = renderNewSkill(parsed.slug, parsed.description, parsed.body, candidate, genOrigin);
     action = 'create';
   } else {
     const chk = checkSkillUpdateTarget(parsed.slug, projectRoot);
     if (!chk.ok) throw new Error(`更新 skill 先を拒否: ${chk.reason}`);
     const existing = safeSkills.find((s) => s.slug === parsed.slug);
     path = chk.path;
-    content = renderUpdatedSkill(existing ? existing.content : '', parsed.body, { ...candidate, slug: parsed.slug }, parsed.description);
+    content = renderUpdatedSkill(existing ? existing.content : '', parsed.body, { ...candidate, slug: parsed.slug }, parsed.description, genOrigin);
     action = 'update';
   }
 
@@ -451,14 +470,14 @@ export async function promoteWithPr(
     `- 対象: \`.claude/skills/${parsed.slug}/SKILL.md\`\n` +
     `- 仮説: ${oneline(candidate.hypothesis)}\n` +
     (candidate.conditions ? `- 条件: ${oneline(candidate.conditions)}\n` : '') +
-    `- 出自: ${oneline(candidate.origin || 'unknown')}\n\n` +
+    `- 採掘出自: ${oneline(candidate.origin || 'unknown')}\n` +
+    `- 本文生成: ${genOrigin}\n\n` +
     `_ulm promote --pr による自動生成（body は LLM 生成・未承認）。マージ前にレビューしてください。_`;
 
-  // 再ゲート③（出力側）: remote/PR/コミット済みファイルへ出る最終バイト列（生成 content + PR 本文）を
-  // 書込・push 前に検査。LLM が機密をエコーした場合もここで fail-closed に止める。
-  if (gateHit(gate, `${content}\n${prBody}`)) {
-    throw new Error('生成された skill 本文または PR 本文に機密の疑いがあるため中止しました（外部送出前ゲート）');
-  }
+  // 出力側ゲートは設けない（fail-closed にしない）: 入口で候補(origin 含む)と既存 skill を既にゲート済みで、
+  // LLM は ULM_HOME 内・read-only サンドボックスで動き project の機密へアクセスできない。よって LLM 出力に
+  // 含まれうるのは git SHA や `API_KEY=...` の例示等であり、これらを機械的に全面拒否すると CI/秘密管理など
+  // 本機能の主要な昇格対象を塞いでしまう。生成本文の最終確認は人間の PR レビューに委ねる。
 
   if (dryRun) {
     log(`[dry-run] ${action === 'create' ? '新規作成' : '既存更新'}: .claude/skills/${parsed.slug}/SKILL.md`);
@@ -474,7 +493,7 @@ export async function promoteWithPr(
     file: path,
     content,
     branch,
-    commitMessage: `skill(${parsed.slug}): ${parsed.prSummary}\n\n承認済み候補 ${candidate.id} を ulm promote --pr で反映。`,
+    commitMessage: `skill(${parsed.slug}): ${parsed.prSummary}\n\n承認済み候補 ${candidate.id} を ulm promote --pr で反映。\n本文生成: ${genOrigin}`,
     prTitle,
     prBody,
     push,

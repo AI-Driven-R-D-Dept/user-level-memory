@@ -9,6 +9,9 @@ skill は常時コンテキストには読み込まれず、description（発動
 
 > 関連する**既存** skill を agent に更新させて PR を出したい場合は `ulm promote <id> --pr`（別経路）。この command は
 > 候補を1件ずつ新規 skill としてローカル生成する一括処理です。
+> `--pr` の注意: git リポジトリ・remote・gh CLI が前提（remote 無しは push 段で失敗、gh 無しは push まで＝候補は
+> approved のまま再実行可）。`--name` を付けると既存 skill との照合をスキップし常に新規 `ref-<slug>` を作る。
+> `--dry-run` でも LLM は実呼び出しする（生成プレビューのため）ので、内容確認には `--pr --dry-run` を使う。
 
 **この command の契約（厳守）:**
 - 対象は **status=approved の候補のみ**。inbox の候補を承認したり、rejected を復活させたりしません。
