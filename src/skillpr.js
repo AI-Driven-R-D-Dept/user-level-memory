@@ -186,7 +186,10 @@ const EXPECTED_KEYS = ['target', 'body', 'new_slug', 'description', 'pr_summary'
 export function extractJsonObject(text) {
   let s = String(text ?? '');
   if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
-  let budget = s.length * 2 + 65536;
+  // budget は総走査量の上限（O(n²) 防止）。先頭に未閉じ `{` が連なると各開始位置が末尾まで再走査して
+  // budget を食い潰し、末尾の本物 JSON を取り逃す。入力上限 512KB に対し十分大きい定数を足して
+  // 現実的なノイズ（前置きの散文・stray brace）を貫通できるようにしつつ、上限自体は保つ。
+  let budget = s.length * 2 + 16 * 1024 * 1024;
   let fallback;
   for (let i = s.indexOf('{'); i !== -1 && budget > 0; i = s.indexOf('{', i + 1)) {
     const { slice, scanned } = balancedObject(s, i, budget);
@@ -620,8 +623,9 @@ export async function promoteWithPr(
 
   // 出力側ゲートは設けない（fail-closed にしない）。前提: (1) 入口で候補(origin 含む)と既存 skill を再ゲート済み、
   // (2) LLM はファイル文脈を持たない — codex/opencode は「空の使い捨て一時ディレクトリ」を cwd に起動し（callCodex/
-  // callOpencode、ULM_HOME も project repo も読ませない）、openai はそもそも FS 非接触。よって LLM 出力に含まれうる
-  // のは git SHA や `API_KEY=...` の例示等で、これらを機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
+  // callOpencode、ULM_HOME も project repo も読ませない）、openai はそもそも FS 非接触、(3) env 由来の secret も
+  // sanitizedEnv() で LLM サブプロセスから除外済み。よって LLM 出力に含まれうるのは git SHA や `API_KEY=...` の
+  // 例示等で、これらを機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
   // 生成本文の最終確認は人間の PR レビューに委ねる（この設計判断はテストで固定。変更時はここの前提を見直すこと）。
 
   if (dryRun) {

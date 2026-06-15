@@ -85,7 +85,8 @@ export function extractJsonArray(text) {
   let s = String(text ?? '');
   if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
   let fallback;
-  let budget = s.length * 2 + 65536; // 総走査量を入力長の定数倍に制限（O(n²) 防止）
+  // 総走査量の上限（O(n²) 防止）。先頭の未閉じ `[` 連なりで末尾の本物配列を取り逃さないよう定数を大きく取る。
+  let budget = s.length * 2 + 16 * 1024 * 1024;
   for (let i = s.indexOf('['); i !== -1 && budget > 0; i = s.indexOf('[', i + 1)) {
     const { slice, scanned } = balancedArray(s, i, budget);
     budget -= scanned;
@@ -130,6 +131,19 @@ export function validateCandidates(raw, { knownObsIds, maxCandidates }) {
 
 // ---- プロバイダ ----
 
+// LLM サブプロセス(codex/opencode)へ渡す環境変数から、名前が機密っぽいものを除外する。
+// read-only サンドボックスでも自プロセスの env は読めるため、API キー等が env 経由で LLM に渡ると
+// 生成物（promote --pr では公開 PR）へ egress しうる。codex/opencode の認証はファイル(~/.codex 等)ベースで
+// env 依存ではないため、KEY/TOKEN/SECRET/PASSWORD/CRED 系を落としても通常は動作に影響しない。
+const SECRET_ENV_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CRED|AUTH|SESSION|COOKIE)/i;
+export function sanitizedEnv(env = process.env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (!SECRET_ENV_RE.test(k)) out[k] = v;
+  }
+  return out;
+}
+
 export function codexAvailable() {
   const r = spawnSync('codex', ['--version'], { encoding: 'utf8' });
   return r.status === 0;
@@ -153,6 +167,7 @@ function callOpencode(prompt, config, home) {
       encoding: 'utf8',
       timeout: 180_000,
       cwd: tmp,
+      env: sanitizedEnv(), // env 経由の secret を LLM サブプロセスへ渡さない
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
@@ -192,6 +207,7 @@ function callCodex(prompt, config, home) {
       input: `${prompt.system}\n\n${prompt.user}`,
       encoding: 'utf8',
       timeout: 180_000,
+      env: sanitizedEnv(), // env 経由の secret を LLM サブプロセスへ渡さない
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     if (r.error) throw new Error(`codex 実行に失敗: ${r.error.message}`);

@@ -48,6 +48,11 @@ test('extractJsonObject: 病的応答（{×N）でも有界時間', () => {
   assert.ok(Date.now() - t0 < 500);
 });
 
+test('extractJsonObject: 先頭の未閉じ { 連なりでも末尾の本物オブジェクトを取りこぼさない（R8-should2 budget 枯渇回帰）', () => {
+  const text = '{x'.repeat(300) + '{"target":"NEW","body":"real"}';
+  assert.deepEqual(extractJsonObject(text), { target: 'NEW', body: 'real' });
+});
+
 // ---- sanitizeRefSlug ----
 
 test('sanitizeRefSlug: ref- を付与し不正文字を正規化', () => {

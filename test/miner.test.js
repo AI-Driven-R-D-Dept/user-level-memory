@@ -1,7 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractJsonArray, validateCandidates, buildPrompt, gatherObservations, resolveProvider, providerModel, callProvider } from '../src/miner.js';
+import { extractJsonArray, validateCandidates, buildPrompt, gatherObservations, resolveProvider, providerModel, callProvider, sanitizedEnv } from '../src/miner.js';
 import { withFreshStore, testConfig } from './helpers.js';
+
+test('sanitizedEnv: KEY/TOKEN/SECRET 等の機密名 env を除外し、PATH 等は残す（LLM サブプロセスへの egress 防止）', () => {
+  const env = {
+    PATH: '/usr/bin',
+    HOME: '/home/u',
+    LANG: 'ja_JP.UTF-8',
+    OPENAI_API_KEY: 'sk-secret',
+    GH_TOKEN: 'ghp_secret',
+    AWS_SECRET_ACCESS_KEY: 'x',
+    MY_PASSWORD: 'p',
+    DB_CREDENTIAL: 'c',
+    SESSION_ID: 's',
+  };
+  const out = sanitizedEnv(env);
+  assert.equal(out.PATH, '/usr/bin');
+  assert.equal(out.HOME, '/home/u');
+  assert.equal(out.LANG, 'ja_JP.UTF-8');
+  for (const k of ['OPENAI_API_KEY', 'GH_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'MY_PASSWORD', 'DB_CREDENTIAL', 'SESSION_ID']) {
+    assert.ok(!(k in out), `${k} は除外すべき`);
+  }
+});
+
+test('extractJsonArray: 先頭の未閉じ [ 連なりでも末尾の本物配列を取りこぼさない（budget 枯渇回帰）', () => {
+  const text = '[x'.repeat(300) + '[{"hypothesis":"real"}]';
+  assert.deepEqual(extractJsonArray(text), [{ hypothesis: 'real' }]);
+});
 
 test('extractJsonArray: 素の配列', () => {
   assert.deepEqual(extractJsonArray('[{"a":1}]'), [{ a: 1 }]);
