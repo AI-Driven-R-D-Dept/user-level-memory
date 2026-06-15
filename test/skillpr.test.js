@@ -14,7 +14,9 @@ import {
   buildSkillUpdatePrompt,
   runGitPr,
   promoteWithPr,
+  gateHit,
 } from '../src/skillpr.js';
+import { compileGate } from '../src/gate.js';
 import { withFreshStoreAsync, testConfig } from './helpers.js';
 
 function tmpProject() {
@@ -984,4 +986,140 @@ test('parseSkillUpdateResponse: body の U+2028/U+2029 を除去（R4-nit15 行�
   const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body: `a${sep}b${par}c` }), { existingSlugs: new Set() });
   assert.ok(!r.body.includes(sep) && !r.body.includes(par), 'U+2028/U+2029 は除去すべき');
   assert.equal(r.body, 'abc');
+});
+
+// ---- round5 指摘の回帰 ----
+
+test('parseSkillUpdateResponse: 単独 CR(\\r) も body から除去（R5-nit1 / gate.js と整合）', () => {
+  const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body: 'line1\rfake\r# t' }), { existingSlugs: new Set() });
+  assert.ok(!r.body.includes('\r'), 'CR は除去すべき');
+});
+
+test('gateHit: deny/高エントロピーで true・正常は false・1MB 入力でも有界に返る（R5-nit12）', () => {
+  const gate = compileGate(testConfig());
+  assert.ok(!gateHit(gate, 'これは普通の日本語の観測です'));
+  assert.ok(gateHit(gate, 'key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX'));
+  const t0 = Date.now();
+  gateHit(gate, 'a'.repeat(3 * 1024 * 1024)); // キャップを超える巨大入力
+  assert.ok(Date.now() - t0 < 500, '1MB 切り詰めで有界時間に返るべき');
+});
+
+test('extractJsonObject: MAX_PARSE_LENGTH 境界（上限内は回収・超過は切り詰めで throw・R5-should8）', () => {
+  const json = '{"target":"NEW","body":"real"}';
+  assert.deepEqual(extractJsonObject(' '.repeat(511 * 1024) + json), { target: 'NEW', body: 'real' });
+  assert.throws(() => extractJsonObject(' '.repeat(513 * 1024) + json), /JSON オブジェクトが見つかりません/);
+});
+
+test('runGitPr: 既存 PR があると gh pr create 失敗を gh pr view で冪等成功扱いにする（R5-should2）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 1, stderr: 'a pull request for branch "b" already exists' }],
+      ['pr view', { status: 0, stdout: 'https://github.com/o/r/pull/7\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/7');
+    assert.match(res.note, /既存 PR/);
+  });
+});
+
+test('runGitPr: gh pr create が status0 だが stdout 空なら gh pr view で URL を補完（R5-should2）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: '' }],
+      ['pr view', { status: 0, stdout: 'https://github.com/o/r/pull/8\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/8');
+  });
+});
+
+test('runGitPr: 作業ツリー状態が確認できない(status 非0)なら fail-closed で中止（R5-nit4）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 128, stderr: 'fatal' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /状態を確認できませんでした/);
+    assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('switch -c')), 'dirty 不明時は switch しない');
+  });
+});
+
+test('runGitPr: .claude/ が gitignore された add 失敗は親切なエラー（R5-should6）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['add --', { status: 1, stderr: 'The following paths are ignored by one of your .gitignore files:\n.claude/skills/ref-x/SKILL.md' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /\.gitignore|ローカル生成/);
+  });
+});
+
+test('promoteWithPr: 実 runGitPr を通る結合（書込→PR→markPromoted・R5-should4）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const { run } = fakeRun([
+        ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+        ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+        ['status --porcelain', { status: 0, stdout: '' }],
+        ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+        ['remote', { status: 0, stdout: 'origin\n' }],
+        ['pr create', { status: 0, stdout: 'https://pr/e2e\n' }],
+      ]);
+      const cand = await approvedCandidate(store, { hypothesis: '結合テスト仮説' });
+      const res = await promoteWithPr(store, testConfig(), home, {
+        candidate: cand, projectRoot: root, provider: 'codex',
+        deps: {
+          listSkills: () => [],
+          callLlm: async () => '{"target":"NEW","new_slug":"e2e","description":"d","body":"# 結合本文","pr_summary":"s"}',
+          gitPr: (a) => runGitPr(a, run), // 実 runGitPr を通す（fake は git/gh のみ）
+        },
+      });
+      assert.equal(res.prUrl, 'https://pr/e2e');
+      const path = join(realpathSync(root), '.claude', 'skills', 'ref-e2e', 'SKILL.md');
+      assert.ok(existsSync(path), 'SKILL.md が実ファイルとして書かれている');
+      assert.match(readFileSync(path, 'utf8'), /name: ref-e2e/);
+      assert.match(readFileSync(path, 'utf8'), /結合本文/);
+      assert.equal(store.getCandidate(cand.id).status, 'promoted');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('promoteWithPr: 出力側ゲートは設けない設計を固定（API_KEY 例示の body は弾かない・R5-should1）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const root = tmpProject();
+    try {
+      const cand = await approvedCandidate(store, { hypothesis: 'CI で env を設定する' });
+      let gitArgs = null;
+      const res = await promoteWithPr(store, testConfig(), home, {
+        candidate: cand, projectRoot: root, provider: 'codex',
+        deps: {
+          listSkills: () => [],
+          // body に秘密「風」の例示（実シークレットではない）。入口がクリーンなら出力でブロックしない設計。
+          callLlm: async () => '{"target":"NEW","new_slug":"env","description":"d","body":"例: export API_KEY=your-key-here","pr_summary":"s"}',
+          gitPr: (a) => { gitArgs = a; return { branch: a.branch, prUrl: 'https://pr/1', pushed: true }; },
+        },
+      });
+      assert.equal(res.action, 'create');
+      assert.match(gitArgs.content, /API_KEY=your-key-here/, '出力側ゲートで正当な例示を弾かない（CI/秘密管理 lesson を塞がない）');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

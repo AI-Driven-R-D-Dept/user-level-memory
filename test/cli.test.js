@@ -198,6 +198,40 @@ test('CLI: promote --pr は機密疑い候補を LLM 送出前に中止する（
   }
 });
 
+test('CLI: ローカル promote も機密疑い候補は skill 生成前に再ゲートで中止（--pr と一貫・R5-should5）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '内部トークンは xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0 を使う'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes'], { cwd: proj }); // --pr 無しのローカル生成
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /機密の疑い/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --name 空文字は使い方エラー（R5-nit3）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '名前テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes', '--name', ''], { cwd: proj });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--name が空/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
 test('CLI: promote は候補と現在地の project 不一致を拒否する', () => {
   const home = freshHome();
   const projA = freshProject('proj-a');

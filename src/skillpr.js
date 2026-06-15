@@ -198,7 +198,7 @@ export function extractJsonObject(text) {
 /** 制御文字を落とす（改行・タブは残す）。frontmatter/本文への注入素材を無害化 */
 function sanitizeText(s) {
   // eslint-disable-next-line no-control-regex
-  return String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029]/g, '');
+  return String(s ?? '').replace(/[\u0000-\u0008\u000B-\u001F\u007F\u2028\u2029]/g, '');
 }
 
 function oneline(s) {
@@ -232,9 +232,13 @@ export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } =
   // 型ガード: target/new_slug を String() で黙って文字列化すると配列 ['ref-foo'] が 'ref-foo' に化けて
   // UPDATE 扱いで通ってしまう。body と同様に契約違反の応答は明示 throw する。
   if (typeof obj.body !== 'string') throw new Error('LLM 応答の body が文字列ではありません');
-  for (const k of ['target', 'new_slug']) {
-    if (obj[k] !== undefined && obj[k] !== null && typeof obj[k] !== 'string') {
-      throw new Error(`LLM 応答の ${k} が文字列ではありません`);
+  // target/new_slug は --name（forceNewSlug）未指定時のみ検証。--name 指定時は両者を無視して slug を決めるので、
+  // LLM が無関係なフィールドに非文字列を返しても明示指定の新規作成を失敗させない。
+  if (!forceNewSlug) {
+    for (const k of ['target', 'new_slug']) {
+      if (obj[k] !== undefined && obj[k] !== null && typeof obj[k] !== 'string') {
+        throw new Error(`LLM 応答の ${k} が文字列ではありません`);
+      }
     }
   }
   const body = sanitizeText(stripLeadingFrontmatter(obj.body)); // 誤付与 frontmatter は連続ブロックでも剥がす
@@ -347,9 +351,13 @@ export function runGitPr(
   if (git(['rev-parse', '--verify', '--quiet', 'HEAD']).status !== 0) {
     throw new Error('promote --pr には最低1つのコミットがあるリポジトリが必要です（HEAD が未確定）');
   }
-  // 対象 SKILL.md にユーザーの未コミット変更があると、switch 往復でその編集が失われる。fail-closed で守る。
+  // 対象 SKILL.md にユーザーの未コミット変更があると、switch 往復でその編集が失われる。fail-closed で守る
+  // （状態を確認できない＝status 非0 のときも、誤って書き潰さないよう中止する）。
   const dirty = git(['status', '--porcelain', '--', file]);
-  if (dirty.status === 0 && dirty.stdout.trim()) {
+  if (dirty.status !== 0) {
+    throw new Error(`作業ツリーの状態を確認できませんでした: ${dirty.stderr.trim()}`);
+  }
+  if (dirty.stdout.trim()) {
     throw new Error(`対象ファイルに未コミットの変更があります: ${file}（commit/stash してから再実行してください）`);
   }
   // 失敗時にユーザーの作業ブランチへ戻せるよう、元ブランチ（detached なら commit SHA）を控える
@@ -423,10 +431,27 @@ export function runGitPr(
       encoding: 'utf8',
     });
     if (pr.error) throw new Error(`gh pr create 実行に失敗（push は済み）: ${pr.error.message}`);
+    // 既存 PR の URL を引く（branch 指定）。再実行や stdout 空でも『到達済みの成功状態』を冪等に成功扱いにする。
+    const lookupExistingPr = () => {
+      const v = run('gh', ['pr', 'view', branch, '--json', 'url', '-q', '.url'], {
+        cwd: projectRoot,
+        env: { ...process.env, GH_PROMPT_DISABLED: '1' },
+        timeout: 30_000,
+        maxBuffer: 16 * 1024 * 1024,
+        encoding: 'utf8',
+      });
+      return (v.status ?? 1) === 0 ? String(v.stdout || '').trim() || null : null;
+    };
     if ((pr.status ?? 1) !== 0) {
+      // 同一 head ブランチに PR が既存なら gh は非0 を返す。その場合は既存 PR を成功として扱う（冪等再実行）。
+      if (/already exists/i.test(pr.stderr)) {
+        const existing = lookupExistingPr();
+        if (existing) return { branch, prUrl: existing, pushed: true, note: ['既存 PR を再利用しました', remoteNote].filter(Boolean).join(' / ') };
+      }
       throw new Error(`gh pr create に失敗（push は済み）: ${String(pr.stderr || '').trim()}`);
     }
-    const prUrl = String(pr.stdout || '').trim().split('\n').filter(Boolean).pop() || null;
+    // status0 でも stdout が空（既存 PR 再利用・設定差）なら view で URL を補完する。
+    const prUrl = String(pr.stdout || '').trim().split('\n').filter(Boolean).pop() || lookupExistingPr();
     return { branch, prUrl, pushed: true, note: remoteNote };
   } finally {
     // ブランチを切替えたのに commit が成立していなければ、書込んだファイルを元に戻し index も掃除して

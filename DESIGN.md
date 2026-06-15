@@ -180,7 +180,9 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
   inbox には触れない。
 - **昇格先は project の skill**: promote は候補の project の作業ツリーで実行し、検証済み slug から組み立てた
   `.claude/skills/ref-<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
-  候補と現在地の project 不一致は拒否）。既定 slug は `ref-<id>`。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
+  候補と現在地の project 不一致は拒否）。ただし **project を持たない候補（global / 横断観測由来）は不一致チェックの対象外**で、
+  実行中のリポジトリの `.claude/skills/ref-*` へ昇格する（横断知見はどの作業ツリーにも置けてよい、という意図）。
+  既定 slug は `ref-<id>`。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
   skill は常時注入されない（description マッチ時のみロード）ため、昇格しても context 予算を消費しない。
   旧方式（ULM_HOME/ref への md 追記 + SessionStart でのパス注入）は廃止。refs テーブルと `ulm ref add` は
   手動登録の正式規範ポインタ用として残る。
