@@ -143,25 +143,36 @@ export function opencodeAvailable() {
 function callOpencode(prompt, config, home) {
   // opencode run: ヘッドレス1回実行。--agent plan は読み取り専用エージェント（ファイル編集ツール無効）。
   // 認証・課金は opencode CLI 側（OpenCode Go 等のサブスク）に乗るため、ulm は API キーを扱わない。
-  // 応答本文は stdout、バナー類は stderr に出る。cwd は ULM_HOME（リポジトリの文脈を読ませない）。
-  const r = spawnSync('opencode', ['run', '--agent', 'plan', '-m', config.miner.opencode_model], {
-    input: `${prompt.system}\n\n${prompt.user}`,
-    encoding: 'utf8',
-    timeout: 180_000,
-    cwd: home,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
-  const out = String(r.stdout || '').trim();
-  if (r.status !== 0 || !out) {
-    throw new Error(
-      `opencode から応答が得られませんでした (exit=${r.status})${r.stderr ? `: ${String(r.stderr).slice(-400)}` : ''}`
-    );
+  // 応答本文は stdout、バナー類は stderr に出る。cwd は「空の使い捨て一時ディレクトリ」にする: ULM_HOME を
+  // cwd にすると read-only でも memory.db / export/*.secret.jsonl を読めてしまい生成物経由で流出しうる。
+  void home;
+  const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
+  try {
+    const r = spawnSync('opencode', ['run', '--agent', 'plan', '-m', config.miner.opencode_model], {
+      input: `${prompt.system}\n\n${prompt.user}`,
+      encoding: 'utf8',
+      timeout: 180_000,
+      cwd: tmp,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
+    const out = String(r.stdout || '').trim();
+    if (r.status !== 0 || !out) {
+      throw new Error(
+        `opencode から応答が得られませんでした (exit=${r.status})${r.stderr ? `: ${String(r.stderr).slice(-400)}` : ''}`
+      );
+    }
+    return out;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
-  return out;
 }
 
 function callCodex(prompt, config, home) {
+  // 作業ディレクトリは「空の使い捨て一時ディレクトリ」にする。ULM_HOME を cwd にすると read-only サンドボックスでも
+  // memory.db / export/*.secret.jsonl（平文の機密控え）を LLM が読めてしまい、生成物経由で外部流出しうる。
+  // プロンプトに必要なデータは全て stdin で渡るため、LLM にファイル文脈は不要（プロジェクト repo も読ませない）。
+  void home;
   const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
   const outFile = join(tmp, 'last-message.txt');
   try {
@@ -171,7 +182,7 @@ function callCodex(prompt, config, home) {
       '--ephemeral',
       '-s', 'read-only',
       '--color', 'never',
-      '-C', home,
+      '-C', tmp,
       '-o', outFile,
       '-m', config.miner.model,
       '-c', `model_reasoning_effort=${JSON.stringify(config.miner.reasoning_effort)}`,

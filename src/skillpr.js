@@ -75,6 +75,15 @@ function readFrontmatterField(frontmatter, field) {
  */
 export function listProjectSkills(projectRoot, { prefix = '' } = {}) {
   const dir = join(projectRoot, '.claude', 'skills');
+  // 読み取り側にも symlink ガードを適用: .claude / .claude/skills 自体が symlink なら作業ツリー外の内容を
+  // 読み込んで LLM へ送りかねないので、書込側 checkSkillTarget と対称に拒否する（空配列を返す）。
+  for (const p of [join(projectRoot, '.claude'), dir]) {
+    try {
+      if (lstatSync(p).isSymbolicLink()) return [];
+    } catch {
+      /* 未存在は readdir 側で空配列になる */
+    }
+  }
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -261,15 +270,17 @@ export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } =
   return { isNew: false, slug: target, description, body, prSummary };
 }
 
-/** body 先頭に紛れた frontmatter ブロックを、連続していても無くなるまで剥がす（注入の冪等防御） */
+/** body 先頭に紛れた frontmatter ブロックを、無くなるまで剥がす（真の fixpoint・注入の冪等防御）。
+ *  各反復で out は必ず短くなる（先頭ブロックを除去）ため停止する。長さが縮まなければ安全側で打ち切る。 */
 function stripLeadingFrontmatter(s) {
   let out = String(s ?? '');
-  for (let i = 0; i < 5; i++) {
+  for (;;) {
     const r = splitFrontmatter(out);
     if (r.frontmatter === null) return out.trim();
-    out = r.body;
+    const next = r.body;
+    if (next.length >= out.length) return next.trim(); // 縮まない異常時のバックストップ（無限ループ防止）
+    out = next;
   }
-  return out.trim();
 }
 
 /** 過去 promote が付けた provenance 行（`- 出自: … (cand-…)`）を本文から除去（更新の度の蓄積防止） */
@@ -351,13 +362,15 @@ export function runGitPr(
   if (git(['rev-parse', '--verify', '--quiet', 'HEAD']).status !== 0) {
     throw new Error('promote --pr には最低1つのコミットがあるリポジトリが必要です（HEAD が未確定）');
   }
-  // 対象 SKILL.md にユーザーの未コミット変更があると、switch 往復でその編集が失われる。fail-closed で守る
-  // （状態を確認できない＝status 非0 のときも、誤って書き潰さないよう中止する）。
+  // 対象 SKILL.md にユーザーの「追跡済みファイルの未コミット手編集」があると switch 往復で失われるので守る。
+  // 一方、未追跡（??）はローカル生成 ulm promote が作った未コミット ref- skill 等で、更新と矛盾しないため許す。
+  // status 自体が失敗（非0）なら状態不明として fail-closed で中止する。
   const dirty = git(['status', '--porcelain', '--', file]);
   if (dirty.status !== 0) {
     throw new Error(`作業ツリーの状態を確認できませんでした: ${dirty.stderr.trim()}`);
   }
-  if (dirty.stdout.trim()) {
+  const trackedChanges = dirty.stdout.split('\n').filter((l) => l.length > 0 && !l.startsWith('??'));
+  if (trackedChanges.length) {
     throw new Error(`対象ファイルに未コミットの変更があります: ${file}（commit/stash してから再実行してください）`);
   }
   // 失敗時にユーザーの作業ブランチへ戻せるよう、元ブランチ（detached なら commit SHA）を控える
@@ -422,8 +435,11 @@ export function runGitPr(
     if ((ghCheck.status ?? 1) !== 0 || ghCheck.error) {
       return { branch, prUrl: null, pushed: true, note: ['gh CLI が無いため PR は未作成（push 済み）', remoteNote].filter(Boolean).join(' / ') };
     }
-    // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する
-    const pr = run('gh', ['pr', 'create', '--title', prTitle, '--body', prBody, '--head', branch], {
+    // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する。
+    // base は分岐元ブランチ（origBranch）を明示する。現在ブランチ != 既定ブランチのとき PR base がずれて差分が
+    // 膨らむのを防ぐ。detached（origBranch 空）のときは gh 既定に委ねる。
+    const baseArgs = origBranch ? ['--base', origBranch] : [];
+    const pr = run('gh', ['pr', 'create', '--title', prTitle, '--body', prBody, '--head', branch, ...baseArgs], {
       cwd: projectRoot,
       env: { ...process.env, GH_PROMPT_DISABLED: '1' },
       timeout: 120_000,
@@ -535,7 +551,9 @@ export async function promoteWithPr(
   // prefix を渡して MAX_SKILLS 打ち切りの前に ref-* へ絞る（手書き skill が 40 件埋めても ref- が飢餓しない）。
   // injected listSkills（テスト）は prefix を無視しうるため、保険で .filter も残す（二重）。
   const refSkills = name ? [] : listSkills(projectRoot, { prefix: REF_PREFIX }).filter((s) => s.slug.startsWith(REF_PREFIX));
-  const safeSkills = refSkills.filter((s) => !gateHit(gate, s.content));
+  // gateHit は 1MB に切り詰めて判定するため、それを超える巨大 skill は再ゲートが全体を覆えない。
+  // update 経路は frontmatter を逐語転写するので、1MB 超の既存 skill は fail-closed で候補から除外する。
+  const safeSkills = refSkills.filter((s) => String(s.content || '').length <= 1024 * 1024 && !gateHit(gate, s.content));
   if (safeSkills.length !== refSkills.length) {
     log(`機密の疑いがある既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);
   }
@@ -579,10 +597,11 @@ export async function promoteWithPr(
     `- 本文生成: ${genOrigin}\n\n` +
     `_ulm promote --pr による自動生成（body は LLM 生成・未承認）。マージ前にレビューしてください。_`;
 
-  // 出力側ゲートは設けない（fail-closed にしない）: 入口で候補(origin 含む)と既存 skill を既にゲート済みで、
-  // LLM は ULM_HOME 内・read-only サンドボックスで動き project の機密へアクセスできない。よって LLM 出力に
-  // 含まれうるのは git SHA や `API_KEY=...` の例示等であり、これらを機械的に全面拒否すると CI/秘密管理など
-  // 本機能の主要な昇格対象を塞いでしまう。生成本文の最終確認は人間の PR レビューに委ねる。
+  // 出力側ゲートは設けない（fail-closed にしない）。前提: (1) 入口で候補(origin 含む)と既存 skill を再ゲート済み、
+  // (2) LLM はファイル文脈を持たない — codex/opencode は「空の使い捨て一時ディレクトリ」を cwd に起動し（callCodex/
+  // callOpencode、ULM_HOME も project repo も読ませない）、openai はそもそも FS 非接触。よって LLM 出力に含まれうる
+  // のは git SHA や `API_KEY=...` の例示等で、これらを機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
+  // 生成本文の最終確認は人間の PR レビューに委ねる（この設計判断はテストで固定。変更時はここの前提を見直すこと）。
 
   if (dryRun) {
     log(`[dry-run] ${action === 'create' ? '新規作成' : '既存更新'}: .claude/skills/${parsed.slug}/SKILL.md`);

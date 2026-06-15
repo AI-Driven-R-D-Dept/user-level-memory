@@ -1123,3 +1123,72 @@ test('promoteWithPr: 出力側ゲートは設けない設計を固定（API_KEY 
     }
   });
 });
+
+// ---- round6 指摘の回帰 ----
+
+test('runGitPr: 未追跡(??)の対象ファイルは dirty 扱いしない（ローカル生成 skill の更新を詰まらせない・R6-should1）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '?? .claude/skills/ref-x/SKILL.md\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://pr/u\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, 'https://pr/u');
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('switch -c')), '未追跡なら処理を続行すべき');
+  });
+});
+
+test('runGitPr: 追跡済みファイルの未コミット手編集は dirty として中止（R6-should1）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: ' M .claude/skills/ref-x/SKILL.md\n' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /未コミットの変更/);
+    assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('switch -c')));
+  });
+});
+
+test('runGitPr: gh pr create に分岐元 origBranch を --base として明示する（R6-nit）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '' }],
+      ['symbolic-ref', { status: 0, stdout: 'develop\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://pr/1\n' }],
+    ]);
+    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    const prCall = calls.find((c) => c[0] === 'gh' && c[2] === 'create');
+    const bi = prCall.indexOf('--base');
+    assert.ok(bi !== -1 && prCall[bi + 1] === 'develop', 'PR base に分岐元ブランチを明示すべき');
+  });
+});
+
+test('parseSkillUpdateResponse: 6 連続 frontmatter ブロックも全て剥がす（R6-nit 真の fixpoint）', () => {
+  const blocks = '---\na\n---\n'.repeat(6); // 実改行で 6 ブロック
+  const body = `${blocks}# 実本文`;
+  const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body }), { existingSlugs: new Set() });
+  assert.equal(r.body, '# 実本文');
+});
+
+test('listProjectSkills: .claude/skills 自体が symlink なら読み取らない（R6-nit 読み取り側 symlink ガード）', () => {
+  const root = tmpProject();
+  const outside = tmpProject();
+  try {
+    mkdirSync(join(outside, 'ref-evil'), { recursive: true });
+    writeFileSync(join(outside, 'ref-evil', 'SKILL.md'), '---\nname: ref-evil\n---\nx');
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    symlinkSync(outside, join(root, '.claude', 'skills')); // skills を作業ツリー外へ向ける
+    assert.deepEqual(listProjectSkills(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
