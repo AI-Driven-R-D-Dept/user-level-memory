@@ -13,7 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
-import { promoteWithPr, gateHit } from './skillpr.js';
+import { promoteWithPr, gateHit, sanitizeRefSlug } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -604,8 +604,8 @@ async function cmdPromote(args) {
     if (gateHit(compileGate(config), candText)) {
       throw new Error(`候補 ${c.id} に機密の疑いがあるテキストが含まれるため skill 生成を中止しました`);
     }
-    let slug = values.name ?? c.id.replace(/^cand-/, 'ref-');
-    if (!slug.startsWith('ref-')) slug = `ref-${slug}`;
+    // slug 正規化は --pr 経路と同一規則（sanitizeRefSlug）に揃える: 同じ --name 値で経路により成否が割れない。
+    const slug = values.name ? sanitizeRefSlug(values.name) : c.id.replace(/^cand-/, 'ref-');
     const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 

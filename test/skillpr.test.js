@@ -490,7 +490,7 @@ test('runGitPr: gh CLI 不在時は PR を作らず note を返す（push 済み
       ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
       ['symbolic-ref', { status: 0, stdout: 'main\n' }],
       ['remote', { status: 0, stdout: 'origin\n' }],
-      ['--version', { status: 127, stdout: '', stderr: 'not found' }], // gh --version 失敗
+      ['--version', { error: { code: 'ENOENT', message: 'spawn gh ENOENT' } }], // gh 不在（ENOENT）
     ]);
     const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
     assert.equal(res.pushed, true);
@@ -1190,5 +1190,52 @@ test('listProjectSkills: .claude/skills 自体が symlink なら読み取らな�
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// ---- round7 指摘の回帰 ----
+
+test('runGitPr: gh は在るが --version 異常終了は ENOENT と区別したメッセージ（R7-nit3）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['rev-parse --verify --quiet HEAD', { status: 0, stdout: 'abc\n' }],
+      ['status --porcelain', { status: 0, stdout: '' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['--version', { status: 1, stdout: '', stderr: 'broken config' }], // gh は在るが失敗（ENOENT ではない）
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
+    assert.equal(res.prUrl, null);
+    assert.match(res.note, /gh --version が失敗/);
+    assert.ok(!/gh CLI が無い/.test(res.note), 'ENOENT と混同しない');
+  });
+});
+
+test('parseSkillUpdateResponse: prSummary は 120 字に cap される（commit subject 肥大防止・R7-nit5）', () => {
+  const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body: '# b', pr_summary: 'あ'.repeat(300) }), { existingSlugs: new Set() });
+  assert.ok(r.prSummary.length <= 120, `prSummary が 120 字超: ${r.prSummary.length}`);
+});
+
+test('parseSkillUpdateResponse: 先頭ダッシュ間の制御文字で frontmatter 剥がしを回避できない（R7-nit2 sanitize 先行）', () => {
+  // 先頭 '-' と '--' の間に NUL を挟む。sanitize で除去後 '---\n...---' になり剥がされるべき。
+  const body = '-' + String.fromCharCode(0) + '--\nname: evil\nallowed-tools: x\n---\n本文';
+  const r = parseSkillUpdateResponse(JSON.stringify({ target: 'NEW', new_slug: 'x', body }), { existingSlugs: new Set() });
+  assert.equal(r.body, '本文');
+  assert.ok(!r.body.includes('allowed-tools'));
+});
+
+test('listProjectSkills: 1MB 超の SKILL.md は読み込まず除外（OOM 防止・R7-nit4）', () => {
+  const root = tmpProject();
+  try {
+    const skills = join(root, '.claude', 'skills');
+    mkdirSync(join(skills, 'ref-big'), { recursive: true });
+    writeFileSync(join(skills, 'ref-big', 'SKILL.md'), '---\nname: ref-big\n---\n' + 'x'.repeat(1024 * 1024 + 10));
+    mkdirSync(join(skills, 'ref-ok'), { recursive: true });
+    writeFileSync(join(skills, 'ref-ok', 'SKILL.md'), '---\nname: ref-ok\n---\n小');
+    const out = listProjectSkills(root, { prefix: 'ref-' });
+    assert.deepEqual(out.map((s) => s.slug), ['ref-ok']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

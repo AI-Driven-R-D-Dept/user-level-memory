@@ -104,7 +104,10 @@ export function listProjectSkills(projectRoot, { prefix = '' } = {}) {
     const path = join(skillDir, 'SKILL.md');
     if (!existsSync(path)) continue;
     try {
-      if (lstatSync(path).isSymbolicLink()) continue;
+      const st = lstatSync(path);
+      if (st.isSymbolicLink()) continue;
+      // 読み込み前にサイズ上限を確認: 巨大ファイルの全読み（OOM/ストール）を防ぐ。下流の 1MB 除外と同値。
+      if (st.size > 1024 * 1024) continue;
     } catch {
       continue;
     }
@@ -250,10 +253,12 @@ export function parseSkillUpdateResponse(text, { existingSlugs, forceNewSlug } =
       }
     }
   }
-  const body = sanitizeText(stripLeadingFrontmatter(obj.body)); // 誤付与 frontmatter は連続ブロックでも剥がす
+  // sanitize を先に行う: 制御文字を先頭ダッシュ間に挟んで frontmatter 判定をすり抜ける手を封じる（剥がしの冪等性）。
+  const body = stripLeadingFrontmatter(sanitizeText(obj.body));
   if (!body.trim()) throw new Error('LLM 応答の body が空です');
   const description = oneline(obj.description).slice(0, 300);
-  const prSummary = oneline(obj.pr_summary) || oneline(obj.description).slice(0, 80) || 'skill を更新';
+  // prSummary は PR タイトルと commit subject の双方に入るため、両方を一律有界化するためここで cap する。
+  const prSummary = (oneline(obj.pr_summary) || oneline(obj.description).slice(0, 80) || 'skill を更新').slice(0, 120);
 
   // --name で新規を強制
   if (forceNewSlug) {
@@ -373,17 +378,29 @@ export function runGitPr(
   if (trackedChanges.length) {
     throw new Error(`対象ファイルに未コミットの変更があります: ${file}（commit/stash してから再実行してください）`);
   }
-  // 失敗時にユーザーの作業ブランチへ戻せるよう、元ブランチ（detached なら commit SHA）を控える
+  // 失敗時にユーザーの作業ブランチへ戻せるよう、元ブランチ（detached なら commit SHA）を控える。
+  // 復帰先を特定できないと switch 往復後に置き去りになるため、switch する前に fail-closed で確定させる。
   const origRef = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const origBranch = origRef.status === 0 ? origRef.stdout.trim() : '';
-  const origSha = origBranch ? '' : git(['rev-parse', 'HEAD']).stdout.trim();
+  let origSha = '';
+  if (!origBranch) {
+    const sha = git(['rev-parse', 'HEAD']);
+    if (sha.status !== 0 || !sha.stdout.trim()) throw new Error('復帰先の HEAD を特定できませんでした（promote --pr 中止）');
+    origSha = sha.stdout.trim();
+  }
   const restore = () => {
-    // 復帰失敗で元の例外（push 失敗等の根本原因）をマスクしないよう、ここは握りつぶす
+    // 復帰失敗で元の例外（push 失敗等の根本原因）をマスクしないよう throw はしない。ただし置き去りは重大なので
+    // 戻せなかったときは必ず stderr に警告する（無音 no-op にしない）。
+    let failed = '';
     try {
-      if (origBranch) git(['switch', origBranch]);
-      else if (origSha) git(['switch', '--detach', origSha]);
-    } catch {
-      /* ベストエフォート（元の例外を優先して伝播させる） */
+      const sw = origBranch ? git(['switch', origBranch]) : git(['switch', '--detach', origSha]);
+      if (sw.status !== 0) failed = sw.stderr.trim();
+    } catch (e) {
+      failed = e.message;
+    }
+    if (failed) {
+      // eslint-disable-next-line no-console
+      console.error(`⚠ 元ブランチ '${origBranch || origSha}' へ戻せませんでした。手動で git switch してください: ${failed}`);
     }
   };
 
@@ -432,8 +449,12 @@ export function runGitPr(
     if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
 
     const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
-    if ((ghCheck.status ?? 1) !== 0 || ghCheck.error) {
-      return { branch, prUrl: null, pushed: true, note: ['gh CLI が無いため PR は未作成（push 済み）', remoteNote].filter(Boolean).join(' / ') };
+    if (ghCheck.error || (ghCheck.status ?? 1) !== 0) {
+      // ENOENT（真の不在）と「gh は在るが --version が異常終了」を区別して原因診断を助ける
+      const why = ghCheck.error?.code === 'ENOENT'
+        ? 'gh CLI が無いため'
+        : `gh --version が失敗（${(ghCheck.error?.message || ghCheck.stderr || '異常終了').toString().trim()}）のため`;
+      return { branch, prUrl: null, pushed: true, note: [`${why}PR は未作成（push 済み）`, remoteNote].filter(Boolean).join(' / ') };
     }
     // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する。
     // base は分岐元ブランチ（origBranch）を明示する。現在ブランチ != 既定ブランチのとき PR base がずれて差分が

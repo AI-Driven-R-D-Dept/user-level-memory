@@ -23,6 +23,6 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" inbox
    - 承認: `node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" approve <id> --note "<理由>"`
    - 却下: `node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" reject <id> --note "<理由>"`
    - 条件を磨く: `node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" cand edit <id> --conditions "<狭めた条件>"`
-   - skill へ昇格（承認済みのみ）: `node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" promote <id> --name <slug>`
-4. promote は project の skill（`.claude/skills/<slug>/SKILL.md`）への昇格です。検証済み slug から組み立てたパスのみ生成され、任意パスへの書込・既存 skill の上書きは機械的に拒否されます。
+   - skill へ昇格（承認済みのみ）: `node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" promote <id> [--name <slug>]`（`ref-` は自動付与。省略時は `ref-<id>`）
+4. promote は project の skill（`.claude/skills/ref-<slug>/SKILL.md`）への昇格です。検証済み slug から組み立てたパスのみ生成され、任意パスへの書込・既存 skill の上書きは機械的に拒否されます（既存 skill の更新は `promote --pr` 経路でのみ・実在 ref-* skill に限り可能）。
 5. approved が複数溜まっている場合は、`/ulm:promote` で一括昇格できることを案内する（人間の判断は approve で済んでいるため、昇格は機械的処理でよい）。

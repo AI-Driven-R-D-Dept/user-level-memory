@@ -194,9 +194,11 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
   frontmatter を作らせない（description は関数 replacer で差し替え、`$` 置換展開による注入を封じる）。
   - **ゲート（送るもの=ゲート対象）**: ① callLlm の前に候補本文＋`origin` を mine/capture と一様の再ゲート（deny
     パターン＋高エントロピー）で fail-closed に弾く。② プロンプトに載せる既存 ref-\* skill 本文/説明も同じ条件で検査し、
-    機密を含む skill は除外（外部送出しない）。出力側は fail-closed にしない（入力を既にゲート済みで、LLM は
-    ULM_HOME 内 read-only サンドボックスで動き project の機密へアクセスできないため。git SHA や `API_KEY=...` 例の
-    全面拒否で本機能の主要対象＝CI/秘密管理 lesson を塞がない）。生成本文の最終確認は人間の PR レビュー。
+    機密を含む skill は除外（外部送出しない）。出力側は fail-closed にしない。理由は、入力を既にゲート済みで、かつ
+    LLM がファイル文脈を一切持たないため: codex/opencode は**空の使い捨て一時ディレクトリ**を cwd に起動し（ULM_HOME も
+    project repo も読ませない。ULM_HOME を cwd にすると read-only でも memory.db / export/*.secret.jsonl を読めて流出する）、
+    openai はそもそも FS 非接触。よって出力に含まれうるのは git SHA や `API_KEY=...` の例示等で、これらの全面拒否は
+    主要対象＝CI/秘密管理 lesson を塞ぐため避ける。生成本文の最終確認は人間の PR レビュー。
   - **前提と状態**: --pr は git リポジトリ・remote・gh CLI を前提とする。remote が無いと（LLM 呼び出し後の）push 段で
     失敗、gh が無いと push まで（候補は approved のまま・gh 導入後に冪等再実行で PR を出せる）。昇格の確定（promoted）
     は **PR が作成できたときだけ**。`--name` 併用時は既存照合をスキップし常に新規 `ref-<slug>` を作る。本文を書いた

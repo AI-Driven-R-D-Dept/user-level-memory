@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,24 +251,22 @@ test('CLI: promote は候補と現在地の project 不一致を拒否する', (
   }
 });
 
-test('CLI: promote は不正な skill 名と既存 skill への上書きを拒否する', () => {
+test('CLI: promote は --name を ref- slug に正規化し traversal を無害化、既存は上書き拒否', () => {
   const home = freshHome();
   const proj = freshProject('demo-proj');
   try {
     run(home, ['init']);
-    run(home, ['cand', 'add', 'slug検証その1'], { cwd: proj });
-    run(home, ['cand', 'add', 'slug検証その2'], { cwd: proj });
+    for (let i = 0; i < 3; i++) run(home, ['cand', 'add', `slug検証その${i}`], { cwd: proj });
     const ids = JSON.parse(run(home, ['inbox', '--json']).stdout).map((c) => c.id);
     for (const id of ids) run(home, ['approve', id, '--yes']);
-    // 不正 slug（traversal・大文字・空白）はすべて拒否
-    for (const bad of ['../escape', 'Bad Name', 'UPPER']) {
-      const r = run(home, ['promote', ids[0], '--yes', '--name', bad], { cwd: proj });
-      assert.equal(r.status, 1, `slug "${bad}" が通ってしまった`);
-      assert.match(r.stderr, /skill 名は/);
-    }
+    // traversal/大文字/空白入りの --name は --pr 経路と同じく sanitizeRefSlug で安全な ref-* に正規化される
+    const r0 = run(home, ['promote', ids[0], '--yes', '--name', '../Bad Name'], { cwd: proj });
+    assert.equal(r0.status, 0, r0.stderr);
+    assert.ok(existsSync(join(proj, '.claude', 'skills', 'ref-bad-name', 'SKILL.md')), 'ref-bad-name に正規化されるべき');
+    assert.ok(!existsSync(join(dirname(proj), 'escape')), '親ディレクトリへ脱出してはいけない');
     // 同名 skill が既にある場合は上書きせず拒否
-    assert.equal(run(home, ['promote', ids[0], '--yes', '--name', 'same-name'], { cwd: proj }).status, 0);
-    const r2 = run(home, ['promote', ids[1], '--yes', '--name', 'same-name'], { cwd: proj });
+    assert.equal(run(home, ['promote', ids[1], '--yes', '--name', 'dup'], { cwd: proj }).status, 0);
+    const r2 = run(home, ['promote', ids[2], '--yes', '--name', 'dup'], { cwd: proj });
     assert.equal(r2.status, 1);
     assert.match(r2.stderr, /既に存在します/);
   } finally {
