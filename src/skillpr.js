@@ -190,7 +190,8 @@ export function extractJsonObject(text) {
   // budget を食い潰し、末尾の本物 JSON を取り逃す。入力上限 512KB に対し十分大きい定数を足して
   // 現実的なノイズ（前置きの散文・stray brace）を貫通できるようにしつつ、上限自体は保つ。
   let budget = s.length * 2 + 16 * 1024 * 1024;
-  let fallback;
+  let keyed; // 期待キーは持つが body（本命の必須キー）を欠くオブジェクト（次点）
+  let fallback; // 期待キーも持たない非空オブジェクト（最後の砦）
   for (let i = s.indexOf('{'); i !== -1 && budget > 0; i = s.indexOf('{', i + 1)) {
     const { slice, scanned } = balancedObject(s, i, budget);
     budget -= scanned;
@@ -202,10 +203,13 @@ export function extractJsonObject(text) {
       continue; // 次の { を試す
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-    // 期待キーを持つオブジェクトを優先（散文中の {} や空オブジェクトを先取りして本物を取り逃さない）
-    if (EXPECTED_KEYS.some((k) => k in parsed)) return parsed;
+    // 本命（parseSkillUpdateResponse の契約 = body:string を持つ）を最優先で採用する。前置きの装飾
+    // オブジェクト（例 {"description":"…"}）を先取りして後続の本物を取り逃す偽陰性を防ぐ。
+    if (typeof parsed.body === 'string') return parsed;
+    if (keyed === undefined && EXPECTED_KEYS.some((k) => k in parsed)) keyed = parsed;
     if (fallback === undefined && Object.keys(parsed).length > 0) fallback = parsed;
   }
+  if (keyed !== undefined) return keyed;
   if (fallback !== undefined) return fallback;
   throw new Error('レスポンスに JSON オブジェクトが見つかりません');
 }
@@ -216,7 +220,7 @@ function sanitizeText(s) {
   return String(s ?? '').replace(/[\u0000-\u0008\u000B-\u001F\u007F\u2028\u2029]/g, '');
 }
 
-function oneline(s) {
+export function oneline(s) {
   if (typeof s !== 'string') return ''; // 非文字列(オブジェクト等)は空扱い: "[object Object]" の混入を防ぐ
   return sanitizeText(s).replace(/\s+/g, ' ').trim();
 }
@@ -358,7 +362,14 @@ export function runGitPr(
   // git 実行の薄いラッパ。spawnSync の error（ENOENT/timeout/maxBuffer 等）は status より先に投げる
   // （miner と同じ規約）。認証プロンプト待ちでのハングや巨大出力を有界化するため timeout/maxBuffer を付ける。
   const git = (args) => {
-    const r = run('git', ['-C', projectRoot, ...args], { encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+    // GIT_TERMINAL_PROMPT=0: 資格情報の無い https remote 等で認証プロンプト待ちに入りハングするのを防ぐ
+    // （gh の GH_PROMPT_DISABLED と対称）。不足時は即座に非0で失敗し、push エラーに原因が出る（fail-fast）。
+    const r = run('git', ['-C', projectRoot, ...args], {
+      encoding: 'utf8',
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
     if (r.error) throw new Error(`git ${args[0]} 実行に失敗: ${r.error.message}`);
     return { status: r.status ?? 1, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') };
   };
@@ -412,6 +423,7 @@ export function runGitPr(
   let existedBefore = false;
   let origContent = null;
   let committed = false;
+  let onSigint = null;
   try {
     let sw = git(['switch', '-c', branch]);
     if (sw.status !== 0) {
@@ -419,6 +431,15 @@ export function runGitPr(
       if (sw.status !== 0) throw new Error(`ブランチ作成に失敗 (${branch}): ${sw.stderr.trim() || sw.stdout.trim()}`);
     }
     switched = true;
+    // push/PR 作成中（最も中断されやすいネットワーク待ち区間）の Ctrl-C で finally の復帰が飛ばないようにする。
+    // SIGINT リスナーがあると Node は既定の即時終了をせず、走行中の spawnSync が子の終了で戻り、通常のエラー
+    // 経路で finally→restore に入る（ユーザーを ulm/skill-* ブランチに置き去りにしない）。2 回目の Ctrl-C は
+    // once なので既定動作（強制終了）に戻る。
+    onSigint = () => {
+      // eslint-disable-next-line no-console
+      console.error(`\n⚠ 中断を受けました。元ブランチ '${origBranch || origSha}' へ戻します…`);
+    };
+    process.once('SIGINT', onSigint);
 
     // ブランチ切替「後」に書き込む。書込み自体が失敗（read-only/ディスクフル等）しても finally で
     // 必ず復帰できるよう、状態の控えと write を try の内側に置く。
@@ -449,7 +470,15 @@ export function runGitPr(
     // --force-with-lease: ulm が作る ulm/skill-* ブランチに限る前提で、再実行（switch -C でローカルを作り直し）時の
     // non-fast-forward を安全に上書きする（remote が想定 ref と一致する場合のみ force。他者の更新は壊さない）。
     const pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
-    if (pushRes.status !== 0) throw new Error(`git push に失敗: ${pushRes.stderr.trim()}`);
+    if (pushRes.status !== 0) {
+      const e = pushRes.stderr.trim();
+      // --force-with-lease の lease 不一致（remote が想定 ref と違う）は、冪等再実行のはずが不可解な失敗に見える。
+      // ulm/skill-* は ulm 専用名前空間なので、fetch 後の再実行か当該ブランチ削除で解消できる旨を添える。
+      const hint = /stale info|force[- ]with[- ]lease|fetch first|non-fast-forward|rejected/i.test(e)
+        ? `（リモート '${remote}/${branch}' が想定と異なります。'git -C ${projectRoot} fetch ${remote}' 後に再実行するか、ulm 専用ブランチなら 'git push ${remote} --delete ${branch}' で削除してから再実行してください）`
+        : '';
+      throw new Error(`git push に失敗: ${e}${hint}`);
+    }
 
     const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
     if (ghCheck.error || (ghCheck.status ?? 1) !== 0) {
@@ -498,6 +527,7 @@ export function runGitPr(
     // から元ブランチへ復帰する（孤児ファイル/ステージを持ち帰らない・ユーザーを ulm ブランチに残さない）。
     // commit 済みなら変更は PR ブランチに載っているので作業ツリーはクリーン。switch 前の失敗では何もしない。
     if (switched) {
+      if (onSigint) process.removeListener('SIGINT', onSigint);
       if (!committed) {
         try {
           git(['reset', '-q', '--', file]);

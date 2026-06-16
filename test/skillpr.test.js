@@ -53,6 +53,17 @@ test('extractJsonObject: 先頭の未閉じ { 連なりでも末尾の本物オ�
   assert.deepEqual(extractJsonObject(text), { target: 'NEW', body: 'real' });
 });
 
+test('extractJsonObject: 本物より前に期待キー入りの装飾オブジェクトがあっても body を持つ本物を返す（BUG-3）', () => {
+  // 前置きに {"description":"…"}（EXPECTED_KEYS 一致だが body 無し）があると旧実装は先頭を採用し、
+  // body 欠落で失敗していた。body:string を持つ後続の本物を優先採用する。
+  const text = 'まず説明します:\n{"description":"前置きの説明"}\n実際の出力:\n{"target":"NEW","description":"d","body":"real"}';
+  assert.deepEqual(extractJsonObject(text), { target: 'NEW', description: 'd', body: 'real' });
+});
+
+test('extractJsonObject: body を持つオブジェクトが無ければ期待キー入りオブジェクトを返す（keyed フォールバック）', () => {
+  assert.deepEqual(extractJsonObject('{"description":"d only"}'), { description: 'd only' });
+});
+
 // ---- sanitizeRefSlug ----
 
 test('sanitizeRefSlug: ref- を付与し不正文字を正規化', () => {

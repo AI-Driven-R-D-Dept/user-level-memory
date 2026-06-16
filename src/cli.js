@@ -13,7 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
-import { promoteWithPr, gateHit, sanitizeRefSlug } from './skillpr.js';
+import { promoteWithPr, gateHit, sanitizeRefSlug, oneline } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -609,8 +609,8 @@ async function cmdPromote(args) {
     const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 
-    // description = 発動条件。skill は常時注入されず、ここのマッチで初めて本文がロードされる
-    const oneline = (s) => String(s).replace(/\s+/g, ' ').trim();
+    // description = 発動条件。skill は常時注入されず、ここのマッチで初めて本文がロードされる。
+    // 正規化/サニタイズは skillpr の oneline（制御文字・U+2028/2029 除去込み）に統一する（--pr 経路と同じ防御）。
     const description = oneline([c.conditions, c.hypothesis].filter(Boolean).join(' — ')).slice(0, 300);
     const skill = [
       '---',
@@ -620,8 +620,8 @@ async function cmdPromote(args) {
       '',
       `# ${oneline(c.hypothesis)}`,
       '',
-      ...(c.conditions ? [`- 条件: ${c.conditions}`] : []),
-      ...c.counterexamples.map((x) => `- 反例: ${x}`),
+      ...(c.conditions ? [`- 条件: ${oneline(c.conditions)}`] : []),
+      ...c.counterexamples.map((x) => `- 反例: ${oneline(x)}`),
       ...(c.evidence.length ? [`- 根拠: ${c.evidence.join(', ')}`] : []),
       `- 出自: ${c.origin} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
       '',

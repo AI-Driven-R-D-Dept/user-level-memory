@@ -215,6 +215,27 @@ test('CLI: ローカル promote も機密疑い候補は skill 生成前に再�
   }
 });
 
+test('CLI: promote --dry-run / --provider は --pr 無しだと使い方エラー（TEST-1）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'pr 配線テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    // パース段ガード（cli.js）は requireHuman・候補取得より前に発火する。--pr 無しでの併用を明確に弾く。
+    const r1 = run(home, ['promote', id, '--yes', '--dry-run'], { cwd: proj });
+    assert.equal(r1.status, 2);
+    assert.match(r1.stderr, /--dry-run \/ --provider は --pr/);
+    const r2 = run(home, ['promote', id, '--yes', '--provider', 'codex'], { cwd: proj });
+    assert.equal(r2.status, 2);
+    assert.match(r2.stderr, /--dry-run \/ --provider は --pr/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
 test('CLI: promote --name 空文字は使い方エラー（R5-nit3）', () => {
   const home = freshHome();
   const proj = freshProject('demo-proj');
