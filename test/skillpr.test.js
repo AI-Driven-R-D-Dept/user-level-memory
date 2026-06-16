@@ -428,9 +428,11 @@ test('runGitPr: 同じ skill を更新する別候補は警告し、接頭辞被
       ['remote', { status: 0, stdout: 'origin\n' }],
       ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/7\n' }],
     ]);
-    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-pay-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1', slug: 'ref-pay', log: (m) => logs.push(m) }, run);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-pay-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1', slug: 'ref-pay', log: (m) => logs.push(m) }, run);
     assert.ok(logs.some((m) => m.includes('ref-pay') && m.includes('cand-2')), '同一 skill の別候補 PR 警告が出ていない');
     assert.ok(!logs.some((m) => m.includes('ref-pay-rate')), '接頭辞被り(ref-pay-rate)を誤警告してはいけない');
+    // OPS-3: 警告は log だけでなく戻り値 note にも合流し、成功表示の隣で見えること
+    assert.match(res.note, /ref-pay.*未マージ/);
   });
 });
 

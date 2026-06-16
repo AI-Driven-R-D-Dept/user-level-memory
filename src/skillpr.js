@@ -286,15 +286,21 @@ function provenanceLine(candidate, genOrigin) {
   return `- 出自: ${origin} / 承認 ${reviewed} / 昇格(PR) ${shortDate(nowIso())}${gen} (${candidate.id})`;
 }
 
+/**
+ * SKILL.md の frontmatter ヘッダ（name 行 + JSON.stringify した description 行 + --- 囲み）を機械生成して
+ * 配列で返す。frontmatter は『LLM/agent に書かせず ulm が生成する』安全前提の出力面なので、両 promote 経路
+ * （--pr / ローカル生成）で 1 箇所に集約し、description クオート等の防御が drift しないようにする。
+ */
+export function renderFrontmatterHead(slug, description) {
+  return ['---', `name: ${slug}`, `description: ${JSON.stringify(description)}`, '---'];
+}
+
 /** 新規 skill の SKILL.md を組み立てる（frontmatter は ulm が生成し、LLM には作らせない） */
 export function renderNewSkill(slug, description, body, candidate, genOrigin) {
   // description は発動条件。空だと skill がトリガされないので hypothesis→slug の順でフォールバック
   const desc = description || oneline(candidate.hypothesis).slice(0, 300) || slug;
   return [
-    '---',
-    `name: ${slug}`,
-    `description: ${JSON.stringify(desc)}`,
-    '---',
+    ...renderFrontmatterHead(slug, desc),
     '',
     body.trim(),
     '',
@@ -449,13 +455,12 @@ export function runGitPr(
     if (!remoteList.length) throw new Error('push 先の remote がありません（branch+commit までは完了）');
     const remote = remoteList.includes('origin') ? 'origin' : remoteList[0];
     const remoteNote = remote === 'origin' ? undefined : `origin が無いため remote '${remote}' へ push しました`;
-    // 同一候補の再実行で LLM が別 slug を選ぶと branch 名（slug 依存）が変わり、前回 push 済みの
-    // ulm/skill-*-<cand> が remote に孤児として残る。今回と異なる既存ブランチを検出したら掃除を促す
-    // （slug は LLM 非決定なので固定は保証せず、最低限ハマりを可視化する）。
     // 再実行/並行で生じた関連ブランチを検出し、掃除（同一候補・別 slug の孤児）/逐次化（別候補・同一 skill の
     // ロストアップデート）を促す。glob は前方一致しか効かず接頭辞被り（ref-pay vs ref-pay-rate）を誤検出するため、
     // ulm/skill-* を広めに取得し ref をクライアント側で <slug>-<candidateId> に厳密分解して照合する
     // （candidate.id = cand-<hex6>。slug 内のハイフンは末尾の cand- 確定パターンにより貪欲 (.+) で正しく吸収される）。
+    // 検出した警告は log だけでなく warnings に積み、戻り値 note にも合流させて成功表示の隣で見落とされないようにする。
+    const warnings = [];
     if (candidateId || slug) {
       const heads = git(['ls-remote', '--heads', remote, 'refs/heads/ulm/skill-*']);
       if (heads.status === 0) {
@@ -466,12 +471,13 @@ export function runGitPr(
           const m = re.exec(ref);
           if (!m) continue;
           if (candidateId && m[2] === candidateId) {
-            log(`⚠ 同じ候補の別ブランチ '${ref}' が remote に残っています（前回と異なる skill 選択）。不要なら掃除: git push ${remote} --delete ${ref}`);
+            warnings.push(`⚠ 同じ候補の別ブランチ '${ref}' が remote に残っています（前回と異なる skill 選択）。不要なら掃除: git push ${remote} --delete ${ref}`);
           } else if (slug && m[1] === slug) {
-            log(`⚠ 同じ skill '${slug}' を更新する別 PR ブランチ '${ref}' が remote に未マージで残っています。後発 PR は先発の更新を含まないため、先にマージ/リベースしてから再実行してください。`);
+            warnings.push(`⚠ 同じ skill '${slug}' を更新する別 PR ブランチ '${ref}' が remote に未マージで残っています。後発 PR は先発の更新を含まないため、先にマージ/リベースしてから再実行してください。`);
           }
         }
       }
+      for (const w of warnings) log(w);
     }
     // --force-with-lease: ulm が作る ulm/skill-* ブランチに限る前提で、再実行（switch -C でローカルを作り直し）時の
     // non-fast-forward を安全に上書きする（remote が想定 ref と一致する場合のみ force。他者の更新は壊さない）。
@@ -492,7 +498,7 @@ export function runGitPr(
       const why = ghCheck.error?.code === 'ENOENT'
         ? 'gh CLI が無いため'
         : `gh --version が失敗（${(ghCheck.error?.message || ghCheck.stderr || '異常終了').toString().trim()}）のため`;
-      return { branch, prUrl: null, pushed: true, note: [`${why}PR は未作成（push 済み）`, remoteNote].filter(Boolean).join(' / ') };
+      return { branch, prUrl: null, pushed: true, note: [`${why}PR は未作成（push 済み）`, remoteNote, ...warnings].filter(Boolean).join(' / ') };
     }
     // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する。
     // base は分岐元ブランチ（origBranch）を明示する。現在ブランチ != 既定ブランチのとき PR base がずれて差分が
@@ -525,14 +531,14 @@ export function runGitPr(
       // 同一 head ブランチに PR が既存なら gh は非0 を返す。その場合は既存 PR を成功として扱う（冪等再実行）。
       if (/already exists/i.test(pr.stderr)) {
         const existing = lookupExistingPr();
-        if (existing) return { branch, prUrl: existing, pushed: true, note: ['既存 PR を再利用しました', remoteNote].filter(Boolean).join(' / ') };
+        if (existing) return { branch, prUrl: existing, pushed: true, note: ['既存 PR を再利用しました', remoteNote, ...warnings].filter(Boolean).join(' / ') };
         // PR は既存だが gh pr view が一過性失敗で URL を返せなかった。「作成失敗」ではないので throw せず、
         // prUrl=null（markPromoted されず候補は approved のまま）で冪等再実行を促す。
         return {
           branch,
           prUrl: null,
           pushed: true,
-          note: [`同名 head の PR は既に存在します（URL 取得に失敗。PR 作成自体は完了済みの可能性大。'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote].filter(Boolean).join(' / '),
+          note: [`同名 head の PR は既に存在します（URL 取得に失敗。PR 作成自体は完了済みの可能性大。'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote, ...warnings].filter(Boolean).join(' / '),
         };
       }
       throw new Error(`gh pr create に失敗（push は済み）: ${String(pr.stderr || '').trim()}`);
@@ -546,10 +552,10 @@ export function runGitPr(
         branch,
         prUrl: null,
         pushed: true,
-        note: [`PR 作成自体は完了済みの可能性大ですが URL を取得できませんでした（'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote].filter(Boolean).join(' / '),
+        note: [`PR 作成自体は完了済みの可能性大ですが URL を取得できませんでした（'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote, ...warnings].filter(Boolean).join(' / '),
       };
     }
-    return { branch, prUrl, pushed: true, note: remoteNote };
+    return { branch, prUrl, pushed: true, note: [remoteNote, ...warnings].filter(Boolean).join(' / ') || undefined };
   } finally {
     // ブランチを切替えたのに commit が成立していなければ、書込んだファイルを元に戻し index も掃除して
     // から元ブランチへ復帰する（孤児ファイル/ステージを持ち帰らない・ユーザーを ulm ブランチに残さない）。

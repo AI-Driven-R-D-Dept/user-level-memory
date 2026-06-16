@@ -13,7 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
-import { promoteWithPr, gateHit, sanitizeRefSlug, oneline, candidateGateText } from './skillpr.js';
+import { promoteWithPr, gateHit, sanitizeRefSlug, oneline, candidateGateText, renderFrontmatterHead } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -615,10 +615,7 @@ async function cmdPromote(args) {
     // 正規化/サニタイズは skillpr の oneline（制御文字・U+2028/2029 除去込み）に統一する（--pr 経路と同じ防御）。
     const description = oneline([c.conditions, c.hypothesis].filter(Boolean).join(' — ')).slice(0, 300);
     const skill = [
-      '---',
-      `name: ${slug}`,
-      `description: ${JSON.stringify(description)}`,
-      '---',
+      ...renderFrontmatterHead(slug, description),
       '',
       `# ${oneline(c.hypothesis)}`,
       '',
