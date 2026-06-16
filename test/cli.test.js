@@ -236,6 +236,23 @@ test('CLI: promote --dry-run / --provider は --pr 無しだと使い方エラ�
   }
 });
 
+test('CLI: promote --pr --provider 空文字は使い方エラー（ROB-3）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'provider 空テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes', '--pr', '--provider', ''], { cwd: proj });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--provider が空/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
 test('CLI: promote --name 空文字は使い方エラー（R5-nit3）', () => {
   const home = freshHome();
   const proj = freshProject('demo-proj');

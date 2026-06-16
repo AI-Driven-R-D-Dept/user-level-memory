@@ -44,12 +44,12 @@ export function buildPrompt(observations, maxCandidates) {
 }
 
 /**
- * ある位置の `[` から対応する `]` までのバランスの取れた部分文字列を返す（なければ slice:null）。
+ * ある位置の open から対応する close までのバランス部分文字列を返す（なければ slice:null）。array/object 共用。
  * budget: この呼び出しで走査してよい最大文字数。`scanned` に実走査量を返し、呼び出し側が
- * 総走査量を入力長の定数倍に抑える（`[`×N 入力での O(n²) 爆発を防ぐ）。
+ * 総走査量を入力長の定数倍に抑える（open×N 入力での O(n²) 爆発を防ぐ）。
  * @returns {{slice: string|null, scanned: number}}
  */
-function balancedArray(s, start, budget) {
+export function balancedBracket(s, start, budget, open, close) {
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -63,8 +63,8 @@ function balancedArray(s, start, budget) {
       continue;
     }
     if (c === '"') inStr = true;
-    else if (c === '[') depth++;
-    else if (c === ']') {
+    else if (c === open) depth++;
+    else if (c === close) {
       depth--;
       if (depth === 0) return { slice: s.slice(start, i + 1), scanned: i - start + 1 };
     }
@@ -72,23 +72,22 @@ function balancedArray(s, start, budget) {
   return { slice: null, scanned: limit - start };
 }
 
-// LLM 応答は信頼できない外部入力。無上限だと `[`×N 等で CPU/メモリ事故になるため上限を設ける。
+// LLM 応答は信頼できない外部入力。無上限だと open×N 等で CPU/メモリ事故になるため上限を設ける。
 export const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする（skillpr も共用）
 
 /**
- * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
- * 散文中の `[1, 2, 3]` を誤って掴まないよう、「オブジェクトを含む配列」を優先する。
- * 全 `[` 位置を順に試し、object を含む最初の配列を返す。なければ最初に parse できた配列。
- * 入力長と総走査量を有界化し、病的応答（`[`×N）でも線形時間に収める。
+ * LLM 応答から、コードフェンス・前後文を許容しつつ JSON をバランス走査で取り出す共通骨格（array/object 共用）。
+ * 入力長(MAX_PARSE_LENGTH)と総走査量(budget)を有界化し、病的応答（open×N）でも線形時間に収める。
+ * accept(parsed) が undefined 以外を返したら即採用。採用ポリシ（配列優先/オブジェクト優先）だけ呼び出し側が渡す。
+ * @returns {*} 採用値、またはどの位置でも採用されなければ undefined
  */
-export function extractJsonArray(text) {
+export function scanBalanced(text, open, close, accept) {
   let s = String(text ?? '');
   if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
-  let fallback;
-  // 総走査量の上限（O(n²) 防止）。先頭の未閉じ `[` 連なりで末尾の本物配列を取り逃さないよう定数を大きく取る。
+  // 総走査量の上限（O(n²) 防止）。先頭の未閉じ open 連なりで末尾の本物 JSON を取り逃さないよう定数を大きく取る。
   let budget = s.length * 2 + 16 * 1024 * 1024;
-  for (let i = s.indexOf('['); i !== -1 && budget > 0; i = s.indexOf('[', i + 1)) {
-    const { slice, scanned } = balancedArray(s, i, budget);
+  for (let i = s.indexOf(open); i !== -1 && budget > 0; i = s.indexOf(open, i + 1)) {
+    const { slice, scanned } = balancedBracket(s, i, budget, open, close);
     budget -= scanned;
     if (!slice) continue;
     let parsed;
@@ -97,10 +96,25 @@ export function extractJsonArray(text) {
     } catch {
       continue;
     }
-    if (!Array.isArray(parsed)) continue;
-    if (parsed.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return parsed; // 候補らしい配列
-    if (fallback === undefined) fallback = parsed;
+    const r = accept(parsed);
+    if (r !== undefined) return r;
   }
+  return undefined;
+}
+
+/**
+ * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
+ * 散文中の `[1, 2, 3]` を誤って掴まないよう「オブジェクトを含む配列」を優先し、なければ最初に parse できた配列。
+ */
+export function extractJsonArray(text) {
+  let fallback;
+  const found = scanBalanced(text, '[', ']', (parsed) => {
+    if (!Array.isArray(parsed)) return undefined;
+    if (parsed.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return parsed; // 候補らしい配列を優先
+    if (fallback === undefined) fallback = parsed;
+    return undefined;
+  });
+  if (found !== undefined) return found;
   if (fallback !== undefined) return fallback;
   throw new Error('レスポンスに JSON 配列が見つかりません');
 }
@@ -184,9 +198,10 @@ function callOpencode(prompt, config, home) {
 }
 
 function callCodex(prompt, config, home) {
-  // 作業ディレクトリは「空の使い捨て一時ディレクトリ」にする。ULM_HOME を cwd にすると read-only サンドボックスでも
-  // memory.db / export/*.secret.jsonl（平文の機密控え）を LLM が読めてしまい、生成物経由で外部流出しうる。
-  // プロンプトに必要なデータは全て stdin で渡るため、LLM にファイル文脈は不要（プロジェクト repo も読ませない）。
+  // 作業ディレクトリは「空の使い捨て一時ディレクトリ」にする。ULM_HOME を cwd にすると、相対参照や既定の読込範囲で
+  // memory.db / export/*.secret.jsonl（平文の機密控え）が拾われやすい。プロンプトに必要なデータは全て stdin で渡る
+  // ため LLM にファイル文脈を与える必要は無い。ただし read-only サンドボックスは『書込』のみ禁止で『読込』は塞がない
+  // ため、cwd を空 tmp にするのは相対参照と既定読込範囲を狭める緩和であって、絶対パスでの read を不可能にはしない。
   void home;
   const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
   const outFile = join(tmp, 'last-message.txt');

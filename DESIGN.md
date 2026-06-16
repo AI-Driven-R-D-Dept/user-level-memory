@@ -205,6 +205,10 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
     LLM の provider/model は `本文生成` として SKILL.md/PR/commit に刻み、採掘出自（candidate.origin）と区別する。
   - --pr は dry-run でも LLM を呼ぶ（生成プレビューのため）。よって人間ゲート（TTY か --yes）を常に課す。git は成否に
     関わらず元ブランチへ復帰し、commit 不成立時は書込んだファイルを巻き戻す。ブランチ衝突は switch -C で冪等に再試行。
+  - **同一 skill への並行 --pr 更新は逐次化する**: 同じ ref-* skill を複数の承認済み候補が --pr 更新すると、後発 PR は
+    先発 PR の更新を含まない旧本文から分岐するため、両者をマージするとロストアップデート/コンフリクトになる。ulm は
+    push 前に同一 slug の未マージブランチを検出して警告するに留める（slug は LLM 非決定で固定できないため）。運用上は
+    先行 PR をマージ/リベースしてから次の候補を昇格すること。
 - memory-recorder skill: 「条件付きで再利用できる知見」を見つけたら `ulm obs add --source claude` で記録するよう促す（記録は観測のみ。候補化は mine の仕事）。
 
 ## 7.5. ローカル Web UI（ulm web）

@@ -552,6 +552,10 @@ async function cmdPromote(args) {
   if (values.name !== undefined && !values.name.trim()) {
     throw new UsageError('--name が空です');
   }
+  // 空の --provider も黙って auto 解決に落とさず弾く（--name と対称。指定したつもりが別 provider になる取り違え防止）。
+  if (values.provider !== undefined && !values.provider.trim()) {
+    throw new UsageError('--provider が空です');
+  }
   // --pr は dry-run でも LLM を実呼び出しする（候補本文を外部送信しうる）ため、
   // 非対話エージェントによる無制限呼び出しを防ぐべく人間ゲートを常に課す。
   requireHuman(values, 'promote');

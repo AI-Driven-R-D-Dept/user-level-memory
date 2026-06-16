@@ -401,6 +401,52 @@ test('runGitPr: 新規作成の rollback で空ディレクトリを残さない
   });
 });
 
+test('runGitPr: switch 失敗でも SIGINT リスナーをリークしない（ROB-1）', () => {
+  withTmpProject((root, file) => {
+    const before = process.listenerCount('SIGINT');
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['switch', { status: 1, stderr: 'cannot switch' }], // -c も -C も失敗
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /ブランチ作成に失敗/);
+    assert.equal(process.listenerCount('SIGINT'), before, 'SIGINT リスナーが残ってはいけない');
+  });
+});
+
+test('runGitPr: 同じ skill を更新する別候補ブランチが remote にあれば逐次化警告（ROB-2）', () => {
+  withTmpProject((root, file) => {
+    const logs = [];
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      // slug 検出（同一 skill・別候補）— 'remote' より前に具体マッチを置く
+      ['ls-remote --heads origin refs/heads/ulm/skill-ref-pay-', { status: 0, stdout: 'abc\trefs/heads/ulm/skill-ref-pay-cand-2\n' }],
+      ['ls-remote --heads origin', { status: 0, stdout: '' }], // candidateId 用 stale（該当なし）
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/7\n' }],
+    ]);
+    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-pay-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1', slug: 'ref-pay', log: (m) => logs.push(m) }, run);
+    assert.ok(logs.some((m) => m.includes('ref-pay') && m.includes('別 PR') && m.includes('cand-2')), '同一 skill の別候補 PR 警告が出ていない');
+  });
+});
+
+test('runGitPr: gh pr create 成功でも URL 不明なら作成済み扱いで note を返す（R11-BUG-1）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: '' }], // 成功だが URL 空
+      ['pr view', { status: 1, stdout: '', stderr: 'transient' }], // 補完も失敗
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run);
+    assert.equal(res.prUrl, null);
+    assert.equal(res.pushed, true);
+    assert.match(res.note, /URL を取得できませんでした/);
+  });
+});
+
 test('runGitPr: gh pr create 失敗(push 済み)は throw', () => {
   withTmpProject((root, file) => {
     const { run } = fakeRun([

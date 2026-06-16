@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync, unlinkSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { checkSkillTarget, checkSkillUpdateTarget } from './safepath.js';
-import { callProvider, resolveProvider, providerModel, isKnownProvider, PROVIDERS, MAX_PARSE_LENGTH } from './miner.js';
+import { callProvider, resolveProvider, providerModel, isKnownProvider, PROVIDERS, scanBalanced } from './miner.js';
 import { compileGate, detectHighEntropy } from './gate.js';
 import { nowIso, shortDate } from './util.js';
 
@@ -170,60 +170,23 @@ export function buildSkillUpdatePrompt(candidate, skills) {
   };
 }
 
-/** ある位置の `{` から対応する `}` までのバランス部分文字列を返す（miner.balancedArray の object 版） */
-function balancedObject(s, start, budget) {
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  const limit = Math.min(s.length, start + Math.max(0, budget));
-  for (let i = start; i < limit; i++) {
-    const c = s[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth++;
-    else if (c === '}') {
-      depth--;
-      if (depth === 0) return { slice: s.slice(start, i + 1), scanned: i - start + 1 };
-    }
-  }
-  return { slice: null, scanned: limit - start };
-}
-
 // 期待キー: これらを含むオブジェクトを優先採用する（散文中の {} を誤って掴まないため。miner と同思想）
 const EXPECTED_KEYS = ['target', 'body', 'new_slug', 'description', 'pr_summary'];
 
 /** レスポンスから最初に parse できる JSON オブジェクトを取り出す（コードフェンス・前後文を許容・有界） */
 export function extractJsonObject(text) {
-  let s = String(text ?? '');
-  if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
-  // budget は総走査量の上限（O(n²) 防止）。先頭に未閉じ `{` が連なると各開始位置が末尾まで再走査して
-  // budget を食い潰し、末尾の本物 JSON を取り逃す。入力上限 512KB に対し十分大きい定数を足して
-  // 現実的なノイズ（前置きの散文・stray brace）を貫通できるようにしつつ、上限自体は保つ。
-  let budget = s.length * 2 + 16 * 1024 * 1024;
   let keyed; // 期待キーは持つが body（本命の必須キー）を欠くオブジェクト（次点）
   let fallback; // 期待キーも持たない非空オブジェクト（最後の砦）
-  for (let i = s.indexOf('{'); i !== -1 && budget > 0; i = s.indexOf('{', i + 1)) {
-    const { slice, scanned } = balancedObject(s, i, budget);
-    budget -= scanned;
-    if (!slice) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(slice);
-    } catch {
-      continue; // 次の { を試す
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+  const found = scanBalanced(text, '{', '}', (parsed) => {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     // 本命（parseSkillUpdateResponse の契約 = body:string を持つ）を最優先で採用する。前置きの装飾
     // オブジェクト（例 {"description":"…"}）を先取りして後続の本物を取り逃す偽陰性を防ぐ。
     if (typeof parsed.body === 'string') return parsed;
     if (keyed === undefined && EXPECTED_KEYS.some((k) => k in parsed)) keyed = parsed;
     if (fallback === undefined && Object.keys(parsed).length > 0) fallback = parsed;
-  }
+    return undefined;
+  });
+  if (found !== undefined) return found;
   if (keyed !== undefined) return keyed;
   if (fallback !== undefined) return fallback;
   throw new Error('レスポンスに JSON オブジェクトが見つかりません');
@@ -371,7 +334,7 @@ export function renderUpdatedSkill(existingContent, body, candidate, description
  * 元ブランチへ復帰する（ユーザーの作業ブランチに孤児ファイルを残さない）。
  */
 export function runGitPr(
-  { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true, candidateId = '', log = () => {} },
+  { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true, candidateId = '', slug = '', log = () => {} },
   run = spawnSync
 ) {
   // git 実行の薄いラッパ。spawnSync の error（ENOENT/timeout/maxBuffer 等）は status より先に投げる
@@ -441,21 +404,22 @@ export function runGitPr(
   let committed = false;
   let onSigint = null;
   try {
+    // SIGINT 保護は「最初の switch -c を含む」全 spawnSync 区間をカバーする必要がある（switch 中の Ctrl-C でも
+    // 置き去りを防ぐ）。リスナーがあると Node は既定の即時終了をせず、走行中の spawnSync が子の終了で戻り、
+    // 通常のエラー経路で finally→restore に入る。2 回目の Ctrl-C は once なので既定動作（強制終了）に戻る。
+    // 登録は switch より「前」、解除は switched 非依存で finally 冒頭（switch 失敗時のリスナーリーク防止）。
+    onSigint = () => {
+      // eslint-disable-next-line no-console
+      console.error(`\n⚠ 中断を受けました。元ブランチ '${origBranch || origSha}' へ戻します…`);
+    };
+    process.once('SIGINT', onSigint);
+
     let sw = git(['switch', '-c', branch]);
     if (sw.status !== 0) {
       sw = git(['switch', '-C', branch]);
       if (sw.status !== 0) throw new Error(`ブランチ作成に失敗 (${branch}): ${sw.stderr.trim() || sw.stdout.trim()}`);
     }
     switched = true;
-    // push/PR 作成中（最も中断されやすいネットワーク待ち区間）の Ctrl-C で finally の復帰が飛ばないようにする。
-    // SIGINT リスナーがあると Node は既定の即時終了をせず、走行中の spawnSync が子の終了で戻り、通常のエラー
-    // 経路で finally→restore に入る（ユーザーを ulm/skill-* ブランチに置き去りにしない）。2 回目の Ctrl-C は
-    // once なので既定動作（強制終了）に戻る。
-    onSigint = () => {
-      // eslint-disable-next-line no-console
-      console.error(`\n⚠ 中断を受けました。元ブランチ '${origBranch || origSha}' へ戻します…`);
-    };
-    process.once('SIGINT', onSigint);
 
     // ブランチ切替「後」に書き込む。書込み自体が失敗（read-only/ディスクフル等）しても finally で
     // 必ず復帰できるよう、状態の控えと write を try の内側に置く。
@@ -495,6 +459,19 @@ export function runGitPr(
           const ref = (ln.split('\t')[1] || '').replace(/^refs\/heads\//, '').trim();
           if (ref && ref !== branch) {
             log(`⚠ 同じ候補の別ブランチ '${ref}' が remote に残っています（前回と異なる skill 選択）。不要なら掃除: git push ${remote} --delete ${ref}`);
+          }
+        }
+      }
+    }
+    // 別候補が同一 skill(slug) を更新中の未マージブランチがあると、後発 PR は先発の更新を含まずロストアップデート
+    // になる（両者とも origBranch から分岐し existing.content が古い）。検出したら逐次化（先にマージ/リベース）を促す。
+    if (slug) {
+      const sameSkill = git(['ls-remote', '--heads', remote, `refs/heads/ulm/skill-${slug}-*`]);
+      if (sameSkill.status === 0) {
+        for (const ln of sameSkill.stdout.split('\n')) {
+          const ref = (ln.split('\t')[1] || '').replace(/^refs\/heads\//, '').trim();
+          if (ref && ref !== branch) {
+            log(`⚠ 同じ skill '${slug}' を更新する別 PR ブランチ '${ref}' が remote に未マージで残っています。後発 PR は先発の更新を含まないため、先にマージ/リベースしてから再実行してください。`);
           }
         }
       }
@@ -565,13 +542,24 @@ export function runGitPr(
     }
     // status0 でも stdout が空（既存 PR 再利用・設定差）なら view で URL を補完する。
     const prUrl = String(pr.stdout || '').trim().split('\n').filter(Boolean).pop() || lookupExistingPr();
+    if (!prUrl) {
+      // gh は成功(status 0)を返したが URL を特定できなかった。「未作成」ではなく「作成済み・URL不明」として伝える
+      // （markPromoted は prUrl がある時のみ＝現状維持。再実行で already exists 経由に自己修復する）。
+      return {
+        branch,
+        prUrl: null,
+        pushed: true,
+        note: [`PR 作成自体は完了済みの可能性大ですが URL を取得できませんでした（'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote].filter(Boolean).join(' / '),
+      };
+    }
     return { branch, prUrl, pushed: true, note: remoteNote };
   } finally {
     // ブランチを切替えたのに commit が成立していなければ、書込んだファイルを元に戻し index も掃除して
     // から元ブランチへ復帰する（孤児ファイル/ステージを持ち帰らない・ユーザーを ulm ブランチに残さない）。
     // commit 済みなら変更は PR ブランチに載っているので作業ツリーはクリーン。switch 前の失敗では何もしない。
+    // SIGINT リスナーは switched に依存せず必ず解除する（switch 失敗で switched=false でもリークしない）。
+    if (onSigint) process.removeListener('SIGINT', onSigint);
     if (switched) {
-      if (onSigint) process.removeListener('SIGINT', onSigint);
       if (!committed) {
         try {
           git(['reset', '-q', '--', file]);
@@ -581,8 +569,10 @@ export function runGitPr(
         try {
           if (existedBefore) writeFileSync(file, origContent);
           else if (existsSync(file)) unlinkSync(file);
-        } catch {
-          /* ベストエフォート */
+        } catch (e) {
+          // 復元失敗を無音にしない: 元ブランチに LLM 生成内容が混入したまま残りうるため手動復旧を促す。
+          // eslint-disable-next-line no-console
+          console.error(`⚠ 元ファイル内容の復元に失敗しました: ${file}（'git -C ${projectRoot} checkout -- ${file}' で戻してください）: ${e.message}`);
         }
         // 新規 skill 経路で mkdir が作ったディレクトリ（ref-<slug>/ 等）を掃除する。createdDir は
         // 今回新規作成した最上位パスのみなので、元からあった .claude/skills は消さない。
@@ -702,11 +692,13 @@ export async function promoteWithPr(
     `_ulm promote --pr による自動生成（body は LLM 生成・未承認）。マージ前にレビューしてください。_`;
 
   // 出力側ゲートは設けない（fail-closed にしない）。前提: (1) 入口で候補(origin 含む)と既存 skill を再ゲート済み、
-  // (2) LLM はファイル文脈を持たない — codex/opencode は「空の使い捨て一時ディレクトリ」を cwd に起動し（callCodex/
-  // callOpencode、ULM_HOME も project repo も読ませない）、openai はそもそも FS 非接触、(3) env 由来の secret も
-  // sanitizedEnv() で LLM サブプロセスから除外済み。よって LLM 出力に含まれうるのは git SHA や `API_KEY=...` の
-  // 例示等で、これらを機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
-  // 生成本文の最終確認は人間の PR レビューに委ねる（この設計判断はテストで固定。変更時はここの前提を見直すこと）。
+  // (2) codex/opencode は「空の使い捨て一時ディレクトリ」を cwd に起動し、ULM_HOME 直下（memory.db/export の平文
+  // 機密控え）の相対参照を空にする。ただし read-only サンドボックスは『書込』のみ禁止で『読込』は塞がないため、
+  // 汚染候補由来のプロンプトインジェクションが絶対パス（例 ~/.codex/auth.json）を読ませる余地は残る（openai は FS
+  // 非接触）。(3) env 由来の secret は sanitizedEnv() で除外済み。よって残る漏洩面は『能動的な絶対パス read を本文へ
+  // 混入』のみで、実害は低い（能動的 exfiltration が要り、最終防壁の人間 PR レビューで気付ける）。一方 LLM 出力には
+  // git SHA や `API_KEY=...` の例示が正当に含まれうるため、機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
+  // 以上のトレードオフから生成本文の最終確認は人間の PR レビューに委ねる（この設計判断はテストで固定。変更時は要見直し）。
 
   if (dryRun) {
     log(`[dry-run] ${action === 'create' ? '新規作成' : '既存更新'}: .claude/skills/${parsed.slug}/SKILL.md`);
@@ -727,6 +719,7 @@ export async function promoteWithPr(
     prBody,
     push,
     candidateId: candidate.id,
+    slug: parsed.slug,
     log,
   });
   // 昇格の確定は「PR が作成できた」時だけ。push 済みでも PR 未作成（gh 不在等）は approved のまま残し、
