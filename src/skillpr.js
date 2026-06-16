@@ -452,25 +452,22 @@ export function runGitPr(
     // 同一候補の再実行で LLM が別 slug を選ぶと branch 名（slug 依存）が変わり、前回 push 済みの
     // ulm/skill-*-<cand> が remote に孤児として残る。今回と異なる既存ブランチを検出したら掃除を促す
     // （slug は LLM 非決定なので固定は保証せず、最低限ハマりを可視化する）。
-    if (candidateId) {
-      const stale = git(['ls-remote', '--heads', remote, `refs/heads/ulm/skill-*-${candidateId}`]);
-      if (stale.status === 0) {
-        for (const ln of stale.stdout.split('\n')) {
+    // 再実行/並行で生じた関連ブランチを検出し、掃除（同一候補・別 slug の孤児）/逐次化（別候補・同一 skill の
+    // ロストアップデート）を促す。glob は前方一致しか効かず接頭辞被り（ref-pay vs ref-pay-rate）を誤検出するため、
+    // ulm/skill-* を広めに取得し ref をクライアント側で <slug>-<candidateId> に厳密分解して照合する
+    // （candidate.id = cand-<hex6>。slug 内のハイフンは末尾の cand- 確定パターンにより貪欲 (.+) で正しく吸収される）。
+    if (candidateId || slug) {
+      const heads = git(['ls-remote', '--heads', remote, 'refs/heads/ulm/skill-*']);
+      if (heads.status === 0) {
+        const re = /^ulm\/skill-(.+)-(cand-[0-9a-f]+)$/;
+        for (const ln of heads.stdout.split('\n')) {
           const ref = (ln.split('\t')[1] || '').replace(/^refs\/heads\//, '').trim();
-          if (ref && ref !== branch) {
+          if (!ref || ref === branch) continue;
+          const m = re.exec(ref);
+          if (!m) continue;
+          if (candidateId && m[2] === candidateId) {
             log(`⚠ 同じ候補の別ブランチ '${ref}' が remote に残っています（前回と異なる skill 選択）。不要なら掃除: git push ${remote} --delete ${ref}`);
-          }
-        }
-      }
-    }
-    // 別候補が同一 skill(slug) を更新中の未マージブランチがあると、後発 PR は先発の更新を含まずロストアップデート
-    // になる（両者とも origBranch から分岐し existing.content が古い）。検出したら逐次化（先にマージ/リベース）を促す。
-    if (slug) {
-      const sameSkill = git(['ls-remote', '--heads', remote, `refs/heads/ulm/skill-${slug}-*`]);
-      if (sameSkill.status === 0) {
-        for (const ln of sameSkill.stdout.split('\n')) {
-          const ref = (ln.split('\t')[1] || '').replace(/^refs\/heads\//, '').trim();
-          if (ref && ref !== branch) {
+          } else if (slug && m[1] === slug) {
             log(`⚠ 同じ skill '${slug}' を更新する別 PR ブランチ '${ref}' が remote に未マージで残っています。後発 PR は先発の更新を含まないため、先にマージ/リベースしてから再実行してください。`);
           }
         }
@@ -695,8 +692,9 @@ export async function promoteWithPr(
   // (2) codex/opencode は「空の使い捨て一時ディレクトリ」を cwd に起動し、ULM_HOME 直下（memory.db/export の平文
   // 機密控え）の相対参照を空にする。ただし read-only サンドボックスは『書込』のみ禁止で『読込』は塞がないため、
   // 汚染候補由来のプロンプトインジェクションが絶対パス（例 ~/.codex/auth.json）を読ませる余地は残る（openai は FS
-  // 非接触）。(3) env 由来の secret は sanitizedEnv() で除外済み。よって残る漏洩面は『能動的な絶対パス read を本文へ
-  // 混入』のみで、実害は低い（能動的 exfiltration が要り、最終防壁の人間 PR レビューで気付ける）。一方 LLM 出力には
+  // 非接触）。(3) env 由来の secret は sanitizedEnv() が名前＋接続文字列ヒューリスティックで除外（網羅は保証しない）。
+  // よって残る漏洩面は『能動的な絶対パス read や名前が無害な機密 env を本文へ混入』のみで、実害は低い（能動的
+  // exfiltration が要り、最終防壁の人間 PR レビューで気付ける）。一方 LLM 出力には
   // git SHA や `API_KEY=...` の例示が正当に含まれうるため、機械的に全面拒否すると CI/秘密管理など主要な昇格対象を塞ぐ。
   // 以上のトレードオフから生成本文の最終確認は人間の PR レビューに委ねる（この設計判断はテストで固定。変更時は要見直し）。
 

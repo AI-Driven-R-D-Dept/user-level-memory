@@ -155,6 +155,16 @@ test('safepath: checkSkillUpdateTarget は未存在でも ok（exists:false）',
   });
 });
 
+test('safepath: checkSkillUpdateTarget は SKILL.md がディレクトリなら拒否（fail-closed・TEST-1）', () => {
+  sandbox(({ work }) => {
+    // SKILL.md の位置を実ディレクトリにして、非通常ファイルへの上書き誘発を弾けるか
+    mkdirSync(join(work, '.claude', 'skills', 'ref-dir', 'SKILL.md'), { recursive: true });
+    const r = checkSkillUpdateTarget('ref-dir', work);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /通常ファイルではない/);
+  });
+});
+
 test('safepath: checkSkillUpdateTarget は不正 slug を拒否（traversal 不能）', () => {
   sandbox(({ work }) => {
     for (const bad of ['../escape', 'Bad Name', 'UPPER', 'a/b']) {

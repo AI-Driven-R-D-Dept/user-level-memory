@@ -24,6 +24,22 @@ test('sanitizedEnv: KEY/TOKEN/SECRET 等の機密名 env を除外し、PATH 等
   }
 });
 
+test('sanitizedEnv: 接続文字列系（DATABASE_URL/DSN/WEBHOOK/URI/CONNECTION）も名前で除外する（SEC-1）', () => {
+  const env = {
+    PATH: '/usr/bin',
+    DATABASE_URL: 'postgres://u:p@h/db',
+    SENTRY_DSN: 'https://k@sentry.io/1',
+    SLACK_WEBHOOK_URL: 'https://hooks.slack.com/x',
+    MONGO_URI: 'mongodb://u:p@h',
+    REDIS_CONNECTION: 'redis://h',
+  };
+  const out = sanitizedEnv(env);
+  assert.equal(out.PATH, '/usr/bin'); // 無害な env は温存
+  for (const k of ['DATABASE_URL', 'SENTRY_DSN', 'SLACK_WEBHOOK_URL', 'MONGO_URI', 'REDIS_CONNECTION']) {
+    assert.ok(!(k in out), `${k} は除外すべき`);
+  }
+});
+
 test('extractJsonArray: 先頭の未閉じ [ 連なりでも末尾の本物配列を取りこぼさない（budget 枯渇回帰）', () => {
   const text = '[x'.repeat(300) + '[{"hypothesis":"real"}]';
   assert.deepEqual(extractJsonArray(text), [{ hypothesis: 'real' }]);

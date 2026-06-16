@@ -148,8 +148,11 @@ export function validateCandidates(raw, { knownObsIds, maxCandidates }) {
 // LLM サブプロセス(codex/opencode)へ渡す環境変数から、名前が機密っぽいものを除外する。
 // read-only サンドボックスでも自プロセスの env は読めるため、API キー等が env 経由で LLM に渡ると
 // 生成物（promote --pr では公開 PR）へ egress しうる。codex/opencode の認証はファイル(~/.codex 等)ベースで
-// env 依存ではないため、KEY/TOKEN/SECRET/PASSWORD/CRED 系を落としても通常は動作に影響しない。
-const SECRET_ENV_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CRED|AUTH|SESSION|COOKIE)/i;
+// env 依存ではないため、これらを落としても通常は動作に影響しない。
+// 接続文字列系（DATABASE_URL/REDIS_URL/MONGO_URI/*_DSN/SENTRY_DSN/*_WEBHOOK_URL 等）は値に資格情報を埋め込むが
+// 名前に KEY/TOKEN 等を含まないため、URL/URI/DSN/WEBHOOK/CONNECTION も対象に加える（名前ヒューリスティック。
+// 名前が無害で値だけ機密な env は捕捉できない＝網羅は保証しない。最終防壁は人間の PR レビュー）。
+const SECRET_ENV_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CRED|AUTH|SESSION|COOKIE|DSN|URI|URL|WEBHOOK|CONNECTION)/i;
 export function sanitizedEnv(env = process.env) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {

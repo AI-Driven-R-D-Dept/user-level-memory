@@ -414,20 +414,23 @@ test('runGitPr: switch 失敗でも SIGINT リスナーをリークしない（R
   });
 });
 
-test('runGitPr: 同じ skill を更新する別候補ブランチが remote にあれば逐次化警告（ROB-2）', () => {
+test('runGitPr: 同じ skill を更新する別候補は警告し、接頭辞被りは誤警告しない（ROB-2 厳密照合）', () => {
   withTmpProject((root, file) => {
     const logs = [];
     const { run } = fakeRun([
       ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
       ['symbolic-ref', { status: 0, stdout: 'main\n' }],
-      // slug 検出（同一 skill・別候補）— 'remote' より前に具体マッチを置く
-      ['ls-remote --heads origin refs/heads/ulm/skill-ref-pay-', { status: 0, stdout: 'abc\trefs/heads/ulm/skill-ref-pay-cand-2\n' }],
-      ['ls-remote --heads origin', { status: 0, stdout: '' }], // candidateId 用 stale（該当なし）
+      // 単一の ulm/skill-* 取得をクライアント側で厳密分解する。別候補(cand-2)と接頭辞被り(ref-pay-rate)を混在させる
+      ['ls-remote --heads origin refs/heads/ulm/skill-', {
+        status: 0,
+        stdout: 'a\trefs/heads/ulm/skill-ref-pay-cand-2\nb\trefs/heads/ulm/skill-ref-pay-rate-cand-9\n',
+      }],
       ['remote', { status: 0, stdout: 'origin\n' }],
       ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/7\n' }],
     ]);
     runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-pay-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1', slug: 'ref-pay', log: (m) => logs.push(m) }, run);
-    assert.ok(logs.some((m) => m.includes('ref-pay') && m.includes('別 PR') && m.includes('cand-2')), '同一 skill の別候補 PR 警告が出ていない');
+    assert.ok(logs.some((m) => m.includes('ref-pay') && m.includes('cand-2')), '同一 skill の別候補 PR 警告が出ていない');
+    assert.ok(!logs.some((m) => m.includes('ref-pay-rate')), '接頭辞被り(ref-pay-rate)を誤警告してはいけない');
   });
 });
 
