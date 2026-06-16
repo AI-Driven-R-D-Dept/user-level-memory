@@ -221,11 +221,19 @@ test('buildSkillUpdatePrompt: 命令禁止を明示し candidate/skills を data
 
 function fakeRun(plan) {
   const calls = [];
+  const seen = new Map(); // match ごとの呼び出し回数（res が配列なら順に消費。同一コマンドの再試行検証用）
   const run = (cmd, args) => {
     calls.push([cmd, ...args]);
     const key = `${cmd} ${args.join(' ')}`;
     for (const [match, res] of plan) {
-      if (key.includes(match)) return res;
+      if (key.includes(match)) {
+        if (Array.isArray(res)) {
+          const i = seen.get(match) || 0;
+          seen.set(match, i + 1);
+          return res[Math.min(i, res.length - 1)]; // 末尾要素で飽和
+        }
+        return res;
+      }
     }
     return { status: 0, stdout: '', stderr: '' };
   };
@@ -433,6 +441,38 @@ test('runGitPr: 同じ skill を更新する別候補は警告し、接頭辞被
     assert.ok(!logs.some((m) => m.includes('ref-pay-rate')), '接頭辞被り(ref-pay-rate)を誤警告してはいけない');
     // OPS-3: 警告は log だけでなく戻り値 note にも合流し、成功表示の隣で見えること
     assert.match(res.note, /ref-pay.*未マージ/);
+  });
+});
+
+test('runGitPr: stale info 失敗時に ulm/skill-* は fetch して force-with-lease を自己修復する（OPS-1）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['push --force-with-lease', [
+        { status: 1, stderr: '! [rejected] (stale info)' }, // 1回目: remote-tracking 無しで失敗
+        { status: 0, stdout: '' }, // 2回目: fetch 後は成功
+      ]],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/11\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/11');
+    const flat = calls.map((c) => c.join(' '));
+    assert.ok(flat.some((c) => c.includes('fetch origin ulm/skill-ref-x-cand-1')), 'stale info 後に fetch していない');
+  });
+});
+
+test('runGitPr: 非 ulm ブランチの push 失敗は自己修復せず即 throw（OPS-1 名前空間ガード）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['push --force-with-lease', { status: 1, stderr: '! [rejected] (stale info)' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'other-branch', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run), /push に失敗/);
+    assert.ok(!calls.map((c) => c.join(' ')).some((c) => c.includes('fetch')), 'ulm 名前空間外で fetch してはいけない');
   });
 });
 

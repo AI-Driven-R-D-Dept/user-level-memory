@@ -481,7 +481,15 @@ export function runGitPr(
     }
     // --force-with-lease: ulm が作る ulm/skill-* ブランチに限る前提で、再実行（switch -C でローカルを作り直し）時の
     // non-fast-forward を安全に上書きする（remote が想定 ref と一致する場合のみ force。他者の更新は壊さない）。
-    const pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
+    let pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
+    if (pushRes.status !== 0 && /stale info|fetch first|non-fast-forward|rejected/i.test(pushRes.stderr) && /^ulm\/skill-/.test(branch)) {
+      // remote-tracking ref が無い環境（別マシン/fresh clone/prune 後・初回 fetch 前）では force-with-lease の
+      // lease 基準（refs/remotes/<remote>/<branch>）を作れず stale info で必ず失敗する。ulm 専用名前空間に限り
+      // 1 回だけ fetch して remote-tracking ref を作り直し、force-with-lease を貼り直して自己修復する
+      // （他者ブランチは巻き込まない・リトライは1回限りで無限ループにしない）。
+      git(['fetch', remote, branch]);
+      pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
+    }
     if (pushRes.status !== 0) {
       const e = pushRes.stderr.trim();
       // --force-with-lease の lease 不一致（remote が想定 ref と違う）は、冪等再実行のはずが不可解な失敗に見える。

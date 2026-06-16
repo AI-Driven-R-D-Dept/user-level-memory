@@ -621,8 +621,8 @@ async function cmdPromote(args) {
       '',
       ...(c.conditions ? [`- 条件: ${oneline(c.conditions)}`] : []),
       ...c.counterexamples.map((x) => `- 反例: ${oneline(x)}`),
-      ...(c.evidence.length ? [`- 根拠: ${c.evidence.join(', ')}`] : []),
-      `- 出自: ${c.origin} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
+      ...(c.evidence.length ? [`- 根拠: ${c.evidence.map(oneline).filter(Boolean).join(', ')}`] : []),
+      `- 出自: ${oneline(c.origin || 'unknown')} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
       '',
     ].join('\n');
     mkdirSync(dirname(check.path), { recursive: true });
