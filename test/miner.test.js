@@ -40,6 +40,24 @@ test('sanitizedEnv: 接続文字列系（DATABASE_URL/DSN/WEBHOOK/URI/CONNECTION
   }
 });
 
+test('sanitizedEnv: PAT 系は _ 区切りで除外し PATH/PATTERN は誤除外しない（SEC-2）', () => {
+  const env = {
+    PATH: '/usr/bin',
+    PATTERN: 'x',
+    PATCH_DIR: '/tmp',
+    GH_PAT: 'ghp_x',
+    GITHUB_PAT: 'y',
+    PAT: 'z',
+  };
+  const out = sanitizedEnv(env);
+  assert.equal(out.PATH, '/usr/bin'); // 部分一致で誤除外しない
+  assert.equal(out.PATTERN, 'x');
+  assert.equal(out.PATCH_DIR, '/tmp');
+  for (const k of ['GH_PAT', 'GITHUB_PAT', 'PAT']) {
+    assert.ok(!(k in out), `${k} は除外すべき`);
+  }
+});
+
 test('extractJsonArray: 先頭の未閉じ [ 連なりでも末尾の本物配列を取りこぼさない（budget 枯渇回帰）', () => {
   const text = '[x'.repeat(300) + '[{"hypothesis":"real"}]';
   assert.deepEqual(extractJsonArray(text), [{ hypothesis: 'real' }]);

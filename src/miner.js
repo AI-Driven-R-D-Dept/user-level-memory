@@ -153,10 +153,13 @@ export function validateCandidates(raw, { knownObsIds, maxCandidates }) {
 // 名前に KEY/TOKEN 等を含まないため、URL/URI/DSN/WEBHOOK/CONNECTION も対象に加える（名前ヒューリスティック。
 // 名前が無害で値だけ機密な env は捕捉できない＝網羅は保証しない。最終防壁は人間の PR レビュー）。
 const SECRET_ENV_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CRED|AUTH|SESSION|COOKIE|DSN|URI|URL|WEBHOOK|CONNECTION)/i;
+// PAT（personal access token）は _ 区切りの独立トークンとしてのみ弾く（GH_PAT/GITHUB_PAT/PAT）。
+// 部分一致だと PATH/PATTERN/PATCH を誤除外して codex 実行を壊すため、語境界を _／先頭末尾に限定する。
+const SECRET_ENV_TOKEN_RE = /(^|_)PAT(_|$)/i;
 export function sanitizedEnv(env = process.env) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {
-    if (!SECRET_ENV_RE.test(k)) out[k] = v;
+    if (!SECRET_ENV_RE.test(k) && !SECRET_ENV_TOKEN_RE.test(k)) out[k] = v;
   }
   return out;
 }
@@ -225,6 +228,7 @@ function callCodex(prompt, config, home) {
       input: `${prompt.system}\n\n${prompt.user}`,
       encoding: 'utf8',
       timeout: 180_000,
+      cwd: tmp, // OS レベル cwd も空 tmp に固定（-C tmp と二重化。callOpencode と対称・相対参照リスク低減）
       env: sanitizedEnv(), // env 経由の secret を LLM サブプロセスへ渡さない
       stdio: ['pipe', 'ignore', 'pipe'],
     });

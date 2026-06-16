@@ -402,12 +402,28 @@ export function runGitPr(
     }
   };
 
+  // 並行 promote --pr が同一 repo の作業ツリー/HEAD を奪い合うのを防ぐ排他ロック（atomic な mkdir）。
+  // .git 配下に置き作業ツリーへ混入させない。既存ロックがあれば即 throw（人間ゲートをすり抜ける並列/loop 対策）。
+  // .git が無い等（worktree/テスト）はベストエフォートで省略する（本番は上の rev-parse で git repo と確認済み）。
+  const lockDir = join(projectRoot, '.git', 'ulm-promote.lock');
+  let lockHeld = false;
+  try {
+    mkdirSync(lockDir);
+    lockHeld = true;
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      throw new Error(`別の ulm promote --pr が同一リポジトリで実行中の可能性があります（${lockDir}）。完了後に再実行するか、孤児なら手動で当該ディレクトリを削除してください`);
+    }
+    /* ENOENT 等はロック省略 */
+  }
+
   // 既存ブランチがあれば現在 HEAD にリセットして再利用（push 失敗→再実行で衝突しないように冪等化）
   let switched = false;
   let existedBefore = false;
   let origContent = null;
   let createdDir;
   let committed = false;
+  let pushed = false;
   let onSigint = null;
   try {
     // SIGINT 保護は「最初の switch -c を含む」全 spawnSync 区間をカバーする必要がある（switch 中の Ctrl-C でも
@@ -434,6 +450,13 @@ export function runGitPr(
     // mkdirSync(recursive) は新規作成した最上位パスのみ返す（既存なら undefined）。rollback 時に
     // 今回作ったディレクトリだけ掃除でき、元からあった .claude/skills は消さずに済む。
     createdDir = mkdirSync(dirname(file), { recursive: true });
+    // 検証(promoteWithPr の safepath)から switch を挟んでいるため、書込直前に対象自身の symlink を再チェックして
+    // 経路差し替え(TOCTOU)で作業ツリー外へ書かせない（resolveSkillPath と同判定の最小複製・fail-closed）。
+    try {
+      if (lstatSync(file).isSymbolicLink()) throw new Error(`シンボリックリンクへの書込は拒否します: ${file}`);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e; // 未存在(新規)は許可。評価不能は fail-closed。
+    }
     writeFileSync(file, content);
 
     const add = git(['add', '--', file]);
@@ -476,6 +499,10 @@ export function runGitPr(
             warnings.push(`⚠ 同じ skill '${slug}' を更新する別 PR ブランチ '${ref}' が remote に未マージで残っています。後発 PR は先発の更新を含まないため、先にマージ/リベースしてから再実行してください。`);
           }
         }
+      } else {
+        // 検出に使う ls-remote 自体が失敗（ネットワーク/権限/タイムアウト）したことを可視化する。
+        // 「チェックして綺麗だった」と「チェック自体が落ちた」を区別できるようにする（push 自体には影響しない）。
+        log('ℹ 関連ブランチの確認(ls-remote)に失敗したため、孤児/競合ブランチ検出はスキップしました（push 自体には影響しません）');
       }
       for (const w of warnings) log(w);
     }
@@ -499,6 +526,7 @@ export function runGitPr(
         : '';
       throw new Error(`git push に失敗: ${e}${hint}`);
     }
+    pushed = true; // リモートにコミットが載った（finally でローカルブランチを安全に掃除できる）
 
     const ghCheck = run('gh', ['--version'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
     if (ghCheck.error || (ghCheck.status ?? 1) !== 0) {
@@ -594,6 +622,24 @@ export function runGitPr(
         }
       }
       restore();
+      // push 済みなら作成したローカル ulm/skill-* ブランチを掃除する（リモートに載っているので情報は失われない・
+      // 候補ごとに別名で溜まり続けるのを防ぐ）。restore() 後＝current でなくなった後なので -D 可能。detached や
+      // 戻り先と同名のときはスキップ（force-with-lease 自己修復は remote-tracking ref ベースで実体に依らず無関係）。
+      if (committed && pushed && origBranch && branch !== origBranch) {
+        try {
+          git(['branch', '-D', branch]);
+        } catch {
+          /* ベストエフォート */
+        }
+      }
+    }
+    // 排他ロックは switched に依存せず必ず解放する（取得していたときのみ）。
+    if (lockHeld) {
+      try {
+        rmSync(lockDir, { recursive: true, force: true });
+      } catch {
+        /* ベストエフォート */
+      }
     }
   }
 }

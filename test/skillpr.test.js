@@ -65,6 +65,17 @@ test('extractJsonObject: body を持つオブジェクトが無ければ期待�
   assert.deepEqual(extractJsonObject('{"description":"d only"}'), { description: 'd only' });
 });
 
+// ---- SKILL_SLUG_RE drift 検知 ----
+
+test('safepath/skillpr: SKILL_SLUG_RE 定義が drift していない（DUP-2）', () => {
+  // safepath は「最後の砦」として意図的に独立定義する設計なので共有 import はせず、片側だけの変更を機械検知する。
+  const re = /SKILL_SLUG_RE = (\/.*\/);/;
+  const a = readFileSync(new URL('../src/safepath.js', import.meta.url), 'utf8').match(re);
+  const b = readFileSync(new URL('../src/skillpr.js', import.meta.url), 'utf8').match(re);
+  assert.ok(a && b, 'SKILL_SLUG_RE 定義が見つからない');
+  assert.equal(a[1], b[1], 'safepath と skillpr の SKILL_SLUG_RE が drift している');
+});
+
 // ---- candidateGateText ----
 
 test('candidateGateText: egress 対象フィールドを集約し空を落とす（DUP-1）', () => {
@@ -441,6 +452,53 @@ test('runGitPr: 同じ skill を更新する別候補は警告し、接頭辞被
     assert.ok(!logs.some((m) => m.includes('ref-pay-rate')), '接頭辞被り(ref-pay-rate)を誤警告してはいけない');
     // OPS-3: 警告は log だけでなく戻り値 note にも合流し、成功表示の隣で見えること
     assert.match(res.note, /ref-pay.*未マージ/);
+  });
+});
+
+test('runGitPr: 既存ロックがあれば並行実行を弾く（OPS-1 排他ロック）', () => {
+  withTmpProject((root, file) => {
+    mkdirSync(join(root, '.git'), { recursive: true });
+    mkdirSync(join(root, '.git', 'ulm-promote.lock')); // 先行プロセスのロックを模す
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run), /実行中/);
+  });
+});
+
+test('runGitPr: 正常完了で排他ロックを解放し、push 済みローカルブランチを掃除する（OPS-1/OPS-2）', () => {
+  withTmpProject((root, file) => {
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/1\n' }],
+    ]);
+    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run);
+    assert.ok(!existsSync(join(root, '.git', 'ulm-promote.lock')), 'ロックが解放されていない');
+    assert.ok(calls.map((c) => c.join(' ')).some((c) => c.includes('branch -D ulm/skill-ref-x-cand-1')), 'push 済みローカルブランチを掃除していない');
+  });
+});
+
+test('runGitPr: 元ブランチへの復帰失敗は無音にせず警告する（GAP-1）', () => {
+  withTmpProject((root, file) => {
+    const errs = [];
+    const orig = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      const { run } = fakeRun([
+        ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+        ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+        ['commit -m', { status: 1, stdout: 'nothing to commit', stderr: '' }], // commit 失敗 → restore へ
+        ['switch main', { status: 1, stderr: 'cannot switch back' }], // 復帰も失敗
+      ]);
+      assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /commit に失敗/);
+    } finally {
+      console.error = orig;
+    }
+    assert.ok(errs.some((m) => m.includes('戻せませんでした')), 'restore 失敗の警告が出ていない');
   });
 });
 
