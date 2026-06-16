@@ -3,10 +3,10 @@
 // 実際の書込先は ulm が safepath で機械的に検証し、git/gh 操作も ulm が array 引数で実行する。
 // agent が更新先 skill を恣意的に選べないよう、選択肢は実在 skill の slug 集合に限定する。
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, existsSync, unlinkSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { checkSkillTarget, checkSkillUpdateTarget } from './safepath.js';
-import { callProvider, resolveProvider, providerModel } from './miner.js';
+import { callProvider, resolveProvider, providerModel, isKnownProvider, PROVIDERS, MAX_PARSE_LENGTH } from './miner.js';
 import { compileGate, detectHighEntropy } from './gate.js';
 import { nowIso, shortDate } from './util.js';
 
@@ -14,7 +14,6 @@ const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const REF_PREFIX = 'ref-'; // 更新対象は ulm が作った ref-* skill に限る（手書き skill を改変しない）
 const MAX_SKILLS = 40; // プロンプトに載せる既存 skill の上限
 const MAX_BODY_CHARS = 2000; // 既存 skill 本文の切り詰め上限（プロンプト肥大化防止）
-const MAX_PARSE_LENGTH = 512 * 1024;
 
 /**
  * 外部（LLM・PR・git remote）へ出すテキストの再ゲート。mine/capture と一様の二条件
@@ -26,6 +25,22 @@ export function gateHit(gate, text) {
   // gate.match のバックストップ（1MB）相当で切り詰めてから両判定に渡す。
   const s = String(text ?? '').slice(0, 1024 * 1024);
   return gate.match(s) || detectHighEntropy(s);
+}
+
+/**
+ * 候補から「外部 LLM / PR / skill へ egress するテキスト」を組み立てる単一の真実源。
+ * gateHit と対で使い、フィールド追加時も両 promote 経路（--pr / ローカル生成）でゲート対象が揃うようにする。
+ */
+export function candidateGateText(candidate) {
+  return [
+    candidate.hypothesis,
+    candidate.conditions,
+    candidate.origin,
+    ...(candidate.counterexamples || []),
+    ...(candidate.evidence || []),
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 const SYSTEM_PROMPT = `あなたは承認済みの経験則(lesson)を Claude Code の agent skill 群へ反映するエディタです。
@@ -356,7 +371,7 @@ export function renderUpdatedSkill(existingContent, body, candidate, description
  * 元ブランチへ復帰する（ユーザーの作業ブランチに孤児ファイルを残さない）。
  */
 export function runGitPr(
-  { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true },
+  { projectRoot, file, content, branch, commitMessage, prTitle, prBody, push = true, candidateId = '', log = () => {} },
   run = spawnSync
 ) {
   // git 実行の薄いラッパ。spawnSync の error（ENOENT/timeout/maxBuffer 等）は status より先に投げる
@@ -422,6 +437,7 @@ export function runGitPr(
   let switched = false;
   let existedBefore = false;
   let origContent = null;
+  let createdDir;
   let committed = false;
   let onSigint = null;
   try {
@@ -445,7 +461,9 @@ export function runGitPr(
     // 必ず復帰できるよう、状態の控えと write を try の内側に置く。
     existedBefore = existsSync(file);
     origContent = existedBefore ? readFileSync(file, 'utf8') : null;
-    mkdirSync(dirname(file), { recursive: true });
+    // mkdirSync(recursive) は新規作成した最上位パスのみ返す（既存なら undefined）。rollback 時に
+    // 今回作ったディレクトリだけ掃除でき、元からあった .claude/skills は消さずに済む。
+    createdDir = mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, content);
 
     const add = git(['add', '--', file]);
@@ -467,6 +485,20 @@ export function runGitPr(
     if (!remoteList.length) throw new Error('push 先の remote がありません（branch+commit までは完了）');
     const remote = remoteList.includes('origin') ? 'origin' : remoteList[0];
     const remoteNote = remote === 'origin' ? undefined : `origin が無いため remote '${remote}' へ push しました`;
+    // 同一候補の再実行で LLM が別 slug を選ぶと branch 名（slug 依存）が変わり、前回 push 済みの
+    // ulm/skill-*-<cand> が remote に孤児として残る。今回と異なる既存ブランチを検出したら掃除を促す
+    // （slug は LLM 非決定なので固定は保証せず、最低限ハマりを可視化する）。
+    if (candidateId) {
+      const stale = git(['ls-remote', '--heads', remote, `refs/heads/ulm/skill-*-${candidateId}`]);
+      if (stale.status === 0) {
+        for (const ln of stale.stdout.split('\n')) {
+          const ref = (ln.split('\t')[1] || '').replace(/^refs\/heads\//, '').trim();
+          if (ref && ref !== branch) {
+            log(`⚠ 同じ候補の別ブランチ '${ref}' が remote に残っています（前回と異なる skill 選択）。不要なら掃除: git push ${remote} --delete ${ref}`);
+          }
+        }
+      }
+    }
     // --force-with-lease: ulm が作る ulm/skill-* ブランチに限る前提で、再実行（switch -C でローカルを作り直し）時の
     // non-fast-forward を安全に上書きする（remote が想定 ref と一致する場合のみ force。他者の更新は壊さない）。
     const pushRes = git(['push', '--force-with-lease', '-u', remote, branch]);
@@ -491,7 +523,11 @@ export function runGitPr(
     // GH_PROMPT_DISABLED で対話プロンプト化を防ぎ、timeout でハングを有界化する。
     // base は分岐元ブランチ（origBranch）を明示する。現在ブランチ != 既定ブランチのとき PR base がずれて差分が
     // 膨らむのを防ぐ。detached（origBranch 空）のときは gh 既定に委ねる。
-    const baseArgs = origBranch ? ['--base', origBranch] : [];
+    // base(origBranch) が remote に無いと gh pr create が --base 不在で失敗し、push 済みブランチが孤児化する。
+    // 未push の feature ブランチから昇格する一般的フローを壊さないよう、remote に在るときだけ --base を付け、
+    // 無ければ gh 既定（リポジトリ既定ブランチ）に委ねる。
+    const baseOnRemote = origBranch && git(['ls-remote', '--exit-code', '--heads', remote, origBranch]).status === 0;
+    const baseArgs = baseOnRemote ? ['--base', origBranch] : [];
     const pr = run('gh', ['pr', 'create', '--title', prTitle, '--body', prBody, '--head', branch, ...baseArgs], {
       cwd: projectRoot,
       env: { ...process.env, GH_PROMPT_DISABLED: '1' },
@@ -516,6 +552,14 @@ export function runGitPr(
       if (/already exists/i.test(pr.stderr)) {
         const existing = lookupExistingPr();
         if (existing) return { branch, prUrl: existing, pushed: true, note: ['既存 PR を再利用しました', remoteNote].filter(Boolean).join(' / ') };
+        // PR は既存だが gh pr view が一過性失敗で URL を返せなかった。「作成失敗」ではないので throw せず、
+        // prUrl=null（markPromoted されず候補は approved のまま）で冪等再実行を促す。
+        return {
+          branch,
+          prUrl: null,
+          pushed: true,
+          note: [`同名 head の PR は既に存在します（URL 取得に失敗。PR 作成自体は完了済みの可能性大。'gh pr view ${branch}' で確認するか再実行してください）`, remoteNote].filter(Boolean).join(' / '),
+        };
       }
       throw new Error(`gh pr create に失敗（push は済み）: ${String(pr.stderr || '').trim()}`);
     }
@@ -537,6 +581,13 @@ export function runGitPr(
         try {
           if (existedBefore) writeFileSync(file, origContent);
           else if (existsSync(file)) unlinkSync(file);
+        } catch {
+          /* ベストエフォート */
+        }
+        // 新規 skill 経路で mkdir が作ったディレクトリ（ref-<slug>/ 等）を掃除する。createdDir は
+        // 今回新規作成した最上位パスのみなので、元からあった .claude/skills は消さない。
+        try {
+          if (!existedBefore && createdDir) rmSync(createdDir, { recursive: true, force: true });
         } catch {
           /* ベストエフォート */
         }
@@ -564,15 +615,7 @@ export async function promoteWithPr(
   // deny パターン + 高エントロピートークンを fail-closed で弾く。dry-run でも LLM を呼ぶため前段に置く。
   // origin はマイナー/取込アダプタ由来の外部文字列なので必ず対象に含める。
   const gate = compileGate(config);
-  const candText = [
-    candidate.hypothesis,
-    candidate.conditions,
-    candidate.origin,
-    ...(candidate.counterexamples || []),
-    ...(candidate.evidence || []),
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const candText = candidateGateText(candidate);
   if (gateHit(gate, candText)) {
     throw new Error(
       `候補 ${candidate.id} に機密の疑いがあるテキストが含まれるため、外部 LLM/PR への送出を中止しました（promote --pr 不可）`
@@ -583,10 +626,10 @@ export async function promoteWithPr(
   // 空/未指定/'auto' のみ resolveProvider に回す。none は分かりやすいエラーにする（miner と揃える）。
   const resolveProv = deps.resolveProvider || resolveProvider;
   let prov = provider;
-  if (prov && prov !== 'auto' && !['codex', 'opencode', 'openai'].includes(prov)) {
-    throw new Error(`未対応のプロバイダ: ${prov}（codex | opencode | openai のいずれかを指定してください）`);
+  if (prov && prov !== 'auto' && !isKnownProvider(prov)) {
+    throw new Error(`未対応のプロバイダ: ${prov}（${PROVIDERS.join(' | ')} のいずれかを指定してください）`);
   }
-  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProv(config);
+  if (!isKnownProvider(prov)) prov = resolveProv(config);
   if (prov === 'none') {
     throw new Error(
       'LLM プロバイダが見つかりません: codex / opencode を入れるか config.miner.provider="openai" を明示してください'
@@ -607,9 +650,16 @@ export async function promoteWithPr(
   const refSkills = name ? [] : listSkills(projectRoot, { prefix: REF_PREFIX }).filter((s) => s.slug.startsWith(REF_PREFIX));
   // gateHit は 1MB に切り詰めて判定するため、それを超える巨大 skill は再ゲートが全体を覆えない。
   // update 経路は frontmatter を逐語転写するので、1MB 超の既存 skill は fail-closed で候補から除外する。
-  const safeSkills = refSkills.filter((s) => String(s.content || '').length <= 1024 * 1024 && !gateHit(gate, s.content));
+  // body が MAX_BODY_CHARS を超える skill は LLM にプロンプトで切り詰めて渡すため、update すると見えない末尾が
+  // 黙って脱落しうる。そういう skill は update 候補から除外して新規作成へ倒す（既存内容の暗黙喪失を防ぐ）。
+  const safeSkills = refSkills.filter(
+    (s) =>
+      String(s.content || '').length <= 1024 * 1024 &&
+      String(s.body || '').length <= MAX_BODY_CHARS &&
+      !gateHit(gate, s.content)
+  );
   if (safeSkills.length !== refSkills.length) {
-    log(`機密の疑いがある既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);
+    log(`機密の疑い・本文過大（>${MAX_BODY_CHARS}字）の既存 skill ${refSkills.length - safeSkills.length} 件をプロンプトから除外しました`);
   }
   const prompt = buildSkillUpdatePrompt(candidate, safeSkills);
   log(`関連 skill を判定中… (候補 ${safeSkills.length} 件 / provider=${prov})`);
@@ -676,6 +726,8 @@ export async function promoteWithPr(
     prTitle,
     prBody,
     push,
+    candidateId: candidate.id,
+    log,
   });
   // 昇格の確定は「PR が作成できた」時だけ。push 済みでも PR 未作成（gh 不在等）は approved のまま残し、
   // gh 導入後の再実行（switch -C で冪等）で PR を出せるようにする。

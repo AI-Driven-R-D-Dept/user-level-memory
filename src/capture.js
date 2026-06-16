@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { compileGate, detectHighEntropy } from './gate.js';
 import { hypothesisHash } from './ids.js';
-import { buildPrompt, extractJsonArray, resolveProvider, callProvider, providerModel, gatherObservations } from './miner.js';
+import { buildPrompt, extractJsonArray, resolveProvider, callProvider, providerModel, gatherObservations, isKnownProvider } from './miner.js';
 
 const MAX_TRANSCRIPT_CHARS = 12_000; // LLM に渡す抜粋の上限
 // 近似重複対策で LLM に見せる既存観測の上限。表層類似(trigram)も埋め込み cosine も
@@ -208,7 +208,7 @@ export async function capture(store, config, home, { transcriptPath, project, pr
   const max = config.capture?.max_per_session ?? 3;
   // 'auto' は具体名（codex→opencode、無ければ none）に確定させる。meta/出力に 'auto' を残さない
   let prov = provider || config.capture?.provider || 'auto';
-  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
+  if (!isKnownProvider(prov)) prov = resolveProvider(config);
   // 言い換え重複の抑制: 既存観測（機密ゲート済み・project+global）をデータとして見せ、
   // 同義の再出力を LLM 側で抑止する（正規化ハッシュの完全一致 dedup は保存時の保険として残す）
   const knownObs = gatherObservations(store, config, { project, days: EXISTING_OBS_DAYS, limit: EXISTING_OBS_LIMIT });

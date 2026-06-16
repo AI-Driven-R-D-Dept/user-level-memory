@@ -73,7 +73,7 @@ function balancedArray(s, start, budget) {
 }
 
 // LLM 応答は信頼できない外部入力。無上限だと `[`×N 等で CPU/メモリ事故になるため上限を設ける。
-const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする
+export const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする（skillpr も共用）
 
 /**
  * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
@@ -317,9 +317,13 @@ async function callOpenAi(prompt, config) {
  * @param {{codex?: () => boolean, opencode?: () => boolean}} avail テスト用の可用性チェック差し替え
  * @returns {'codex'|'opencode'|'openai'|'none'}
  */
+/** 対応する LLM プロバイダの単一の真実源（追加・改名時はここだけ変える。経路間 drift を防ぐ）。 */
+export const PROVIDERS = ['codex', 'opencode', 'openai'];
+export const isKnownProvider = (p) => PROVIDERS.includes(p);
+
 export function resolveProvider(config, avail = {}) {
   const p = config.miner.provider;
-  if (p === 'codex' || p === 'openai' || p === 'opencode') return p;
+  if (isKnownProvider(p)) return p;
   if ((avail.codex ?? codexAvailable)()) return 'codex';
   if ((avail.opencode ?? opencodeAvailable)()) return 'opencode';
   return 'none';
@@ -332,7 +336,7 @@ export function providerModel(provider, config) {
 
 /** 指定プロバイダで {system,user} プロンプトを実行し応答テキストを返す（mine/capture 共用） */
 export async function callProvider(provider, prompt, config, home, avail = {}) {
-  const prov = ['codex', 'opencode', 'openai'].includes(provider) ? provider : resolveProvider(config, avail);
+  const prov = isKnownProvider(provider) ? provider : resolveProvider(config, avail);
   if (prov === 'codex') return callCodex(prompt, config, home);
   if (prov === 'opencode') return callOpencode(prompt, config, home);
   if (prov === 'openai') return await callOpenAi(prompt, config);
@@ -355,7 +359,7 @@ export async function mine(store, config, home, { project, days, limit, provider
   const prompt = buildPrompt(obs, maxCandidates);
   // 'auto' 等は具体名に確定させる（log / origin に 'auto' を残さない）
   let prov = provider || 'auto';
-  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
+  if (!isKnownProvider(prov)) prov = resolveProvider(config);
 
   if (dryRun) {
     log(`[dry-run] provider=${prov} 観測 ${obs.length} 件を送信予定。ペイロード:`);

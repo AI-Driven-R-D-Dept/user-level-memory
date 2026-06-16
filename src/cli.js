@@ -13,7 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
-import { promoteWithPr, gateHit, sanitizeRefSlug, oneline } from './skillpr.js';
+import { promoteWithPr, gateHit, sanitizeRefSlug, oneline, candidateGateText } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -598,9 +598,7 @@ async function cmdPromote(args) {
     // 既定（ローカル生成）: 候補1件をそのまま ref- skill として新規生成する。
     // 昇格 skill は ref-* 名前空間に統一する（--name 指定でも ref- を強制。safepath でも再検証）。
     // 自動ロードされる .claude/skills へ書く前に、--pr 入口と同じ二条件で候補本文を再ゲートする（egress=ゲート対象）。
-    const candText = [c.hypothesis, c.conditions, c.origin, ...(c.counterexamples || []), ...(c.evidence || [])]
-      .filter(Boolean)
-      .join('\n');
+    const candText = candidateGateText(c);
     if (gateHit(compileGate(config), candText)) {
       throw new Error(`候補 ${c.id} に機密の疑いがあるテキストが含まれるため skill 生成を中止しました`);
     }

@@ -15,6 +15,7 @@ import {
   runGitPr,
   promoteWithPr,
   gateHit,
+  candidateGateText,
 } from '../src/skillpr.js';
 import { compileGate } from '../src/gate.js';
 import { withFreshStoreAsync, testConfig } from './helpers.js';
@@ -62,6 +63,17 @@ test('extractJsonObject: 本物より前に期待キー入りの装飾オブジ�
 
 test('extractJsonObject: body を持つオブジェクトが無ければ期待キー入りオブジェクトを返す（keyed フォールバック）', () => {
   assert.deepEqual(extractJsonObject('{"description":"d only"}'), { description: 'd only' });
+});
+
+// ---- candidateGateText ----
+
+test('candidateGateText: egress 対象フィールドを集約し空を落とす（DUP-1）', () => {
+  const t = candidateGateText({ hypothesis: 'H', conditions: '', origin: 'O', counterexamples: ['X'], evidence: ['e1'] });
+  assert.match(t, /H/);
+  assert.match(t, /O/);
+  assert.match(t, /X/);
+  assert.match(t, /e1/);
+  assert.ok(!t.includes('\n\n'), 'filter(Boolean) で空 conditions が落ち連続改行にならない');
 });
 
 // ---- sanitizeRefSlug ----
@@ -324,6 +336,68 @@ test('runGitPr: 非 origin remote は note に出る / prUrl は複数行 stdout
     const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run);
     assert.equal(res.prUrl, 'https://github.com/o/r/pull/5');
     assert.match(res.note, /upstream/);
+  });
+});
+
+test('runGitPr: base(元ブランチ)が remote に無ければ --base を付けない（OPS-1）', () => {
+  withTmpProject((root, file) => {
+    const { run, calls } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'feature-x\n' }],
+      // 具体マッチを 'remote'（ls-remote にも部分一致する）より前に置く
+      ['ls-remote --exit-code --heads origin feature-x', { status: 2, stdout: '', stderr: '' }], // base 未push
+      ['ls-remote --heads origin', { status: 0, stdout: '' }], // stale 検出（該当なし）
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/9\n' }],
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1' }, run);
+    assert.equal(res.prUrl, 'https://github.com/o/r/pull/9');
+    const prCall = calls.map((c) => c.join(' ')).find((c) => c.includes('pr create'));
+    assert.ok(prCall && !prCall.includes('--base'), 'base 未push なら --base を付けない');
+  });
+});
+
+test('runGitPr: 同じ候補の別 slug ブランチが remote にあれば警告ログを出す（OPS-2）', () => {
+  withTmpProject((root, file) => {
+    const logs = [];
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['ls-remote --heads origin refs/heads/ulm/skill-', { status: 0, stdout: 'abc123\trefs/heads/ulm/skill-old-cand-1\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 0, stdout: 'https://github.com/o/r/pull/3\n' }],
+    ]);
+    runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-new-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true, candidateId: 'cand-1', log: (m) => logs.push(m) }, run);
+    assert.ok(logs.some((m) => m.includes('ulm/skill-old-cand-1') && m.includes('別ブランチ')), '孤児ブランチ警告が出ていない');
+  });
+});
+
+test('runGitPr: 既存 PR ありで URL 取得に失敗しても throw せず冪等再実行を促す（BUG-3）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['remote', { status: 0, stdout: 'origin\n' }],
+      ['pr create', { status: 1, stdout: '', stderr: 'a pull request for branch already exists' }],
+      ['pr view', { status: 1, stdout: '', stderr: 'transient' }], // URL 取得失敗
+    ]);
+    const res = runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'ulm/skill-ref-x-cand-1', commitMessage: 'm', prTitle: 't', prBody: 'b', push: true }, run);
+    assert.equal(res.prUrl, null);
+    assert.equal(res.pushed, true);
+    assert.match(res.note, /既に存在/);
+  });
+});
+
+test('runGitPr: 新規作成の rollback で空ディレクトリを残さない（BUG-1）', () => {
+  withTmpProject((root, file) => {
+    const { run } = fakeRun([
+      ['rev-parse --is-inside-work-tree', { status: 0, stdout: 'true\n' }],
+      ['symbolic-ref', { status: 0, stdout: 'main\n' }],
+      ['commit -m', { status: 1, stdout: 'nothing to commit', stderr: '' }],
+    ]);
+    assert.throws(() => runGitPr({ projectRoot: root, file, content: CONTENT, branch: 'b', commitMessage: 'm', prTitle: 't', prBody: 'x', push: true }, run), /commit に失敗/);
+    assert.ok(!existsSync(file), '新規ファイルが残ってはいけない');
+    assert.ok(!existsSync(join(root, '.claude')), 'mkdir した空ディレクトリが残ってはいけない');
   });
 });
 
