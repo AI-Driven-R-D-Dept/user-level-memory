@@ -1059,6 +1059,12 @@ function isLoopbackHost(h) {
   return false;
 }
 
+/** 表示 URL に使えるホストか（IP か妥当な hostname）。空白/`*` 等の無効値を弾く。 */
+function isDisplayableHost(h) {
+  const n = normalizeHost(h);
+  return n !== '' && (isIP(n) !== 0 || /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n));
+}
+
 /**
  * web のバインド先・Host 許可・トークン要否をフラグから決める純関数（テスト用に export）。
  * detect は --tailnet 検出を注入できる（既定は detectTailnet）。
@@ -1076,7 +1082,9 @@ export function resolveWebBind(values, detect = detectTailnet) {
     const allowedHosts = dnsName ? [...allowHosts, dnsName] : allowHosts;
     // tailnet は ACL を信頼境界にする想定なので既定トークン無し（--no-token でも無し）。
     // 表示はユーザ指定の別名 > 検出 MagicDNS 名 > 100.x IP の優先（--host 経路と一貫）。
-    return { host: ip, allowedHosts, requireToken: false, displayHost: allowHosts[0] || dnsName || ip, kind: 'tailnet' };
+    // 空白/ワイルドカード等の無効な別名は表示に使わない（http://:port/ のような死にURL防止）。
+    const alias = allowHosts.find(isDisplayableHost);
+    return { host: ip, allowedHosts, requireToken: false, displayHost: alias || dnsName || ip, kind: 'tailnet' };
   }
 
   if (values.host) {
@@ -1090,7 +1098,8 @@ export function resolveWebBind(values, detect = detectTailnet) {
     if (kind === 'loopback' && allowHosts.length) {
       throw new UsageError('--allow-host は loopback バインドでは到達できません（--tailnet か 100.x の --host と併用、または config.webapp.trusted_hosts を使用）');
     }
-    return { host, allowedHosts: allowHosts, requireToken: !noToken, displayHost: allowHosts[0] || host, kind };
+    const alias = allowHosts.find(isDisplayableHost); // 空白/`*` 等の無効値は表示に使わない
+    return { host, allowedHosts: allowHosts, requireToken: !noToken, displayHost: alias || host, kind };
   }
 
   // 既定: loopback。--allow-host だけ渡しても loopback のままで到達できない（死に設定）ので弾く。
@@ -1103,13 +1112,15 @@ export function resolveWebBind(values, detect = detectTailnet) {
 /** 起動バナー行を組み立てる純関数（テスト用に export）。kind は loopback|tailnet のみ。 */
 export function webBanner(bind, token, actualPort) {
   const lines = [];
-  // allowlist と同じ正規化（:port / 末尾ドット除去）で URL を整える。二重ポート（name:port:port）を防ぐ。
-  const raw = normalizeHost(bind.displayHost || bind.host);
+  // allowlist と同じ正規化（:port / 末尾ドット除去）で URL を整える。二重ポート（name:port:port）を防ぎ、
+  // displayHost が空に正規化されても bind.host へフォールバックする（http://:port/ の死にURL防止）。
+  const raw = normalizeHost(bind.displayHost || bind.host) || normalizeHost(bind.host);
   const shown = isIP(raw) === 6 ? `[${raw}]` : raw; // 真の裸 IPv6 だけ角括弧（name:port を IPv6 と誤判定しない）
   if (bind.kind === 'tailnet') {
     lines.push(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actualPort} / Ctrl+C で終了）`);
   } else {
-    lines.push('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
+    // loopback は実バインド先を出す（::1 を 127.0.0.1 と偽らない）。
+    lines.push(`✓ ulm web を起動しました（${bind.host} のみ・Ctrl+C で終了）`);
   }
   lines.push(`  http://${shown}:${actualPort}${token ? `/?token=${token}` : '/'}`);
   if (token) {
@@ -1148,7 +1159,10 @@ async function cmdWeb(args) {
       throw new UsageError(`ポート ${port} は使用中です。別の --port を指定するか、既存の ulm web を停止してください`);
     }
     if (e && e.code === 'EADDRNOTAVAIL') {
-      throw new UsageError(`${bind.host} にバインドできません（このIPがインターフェースにありません。Tailscale が接続済みか、--host の 100.x IP が正しいか確認してください）`);
+      const hint = bind.kind === 'tailnet'
+        ? '（このIPがインターフェースにありません。Tailscale が接続済みか、--host の 100.x IP が正しいか確認してください）'
+        : '（このアドレスがこのホストに存在しません。loopback が有効か確認してください）';
+      throw new UsageError(`${bind.host} にバインドできません${hint}`);
     }
     throw e;
   }

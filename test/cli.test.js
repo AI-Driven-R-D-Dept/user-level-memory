@@ -513,6 +513,23 @@ test('webBanner: IPv6 displayHost は URL を角括弧で囲む', () => {
   assert.match(lines, /http:\/\/\[::1\]:8765\//);
 });
 
+test('webBanner: loopback は実バインド先を表示（::1 を 127.0.0.1 と偽らない）', () => {
+  const lines = webBanner({ host: '::1', displayHost: '::1', kind: 'loopback' }, null, 8765).join('\n');
+  assert.match(lines, /（::1 のみ/); // バナー1行目が実バインド先
+  assert.doesNotMatch(lines, /127\.0\.0\.1/);
+});
+
+test('webBanner: displayHost が空に正規化されても bind.host にフォールバック（死にURL防止）', () => {
+  const lines = webBanner({ host: '100.64.0.5', displayHost: '   ', kind: 'tailnet' }, null, 8765).join('\n');
+  assert.match(lines, /http:\/\/100\.64\.0\.5:8765\//);
+  assert.doesNotMatch(lines, /http:\/\/:8765/);
+});
+
+test('resolveWebBind: 空白/ワイルドカードの --allow-host は表示に使わず検出名へフォールバック', () => {
+  const r = resolveWebBind(webValues({ tailnet: true, 'allow-host': [' ', '*'] }), () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' }));
+  assert.equal(r.displayHost, 'node.tail.ts.net'); // ' ' も '*' も無効 → 検出 MagicDNS 名
+});
+
 test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => {
   assert.throws(() => resolveWebBind(webValues({ 'allow-host': ['x.ts.net'] })), /--allow-host は/);
 });

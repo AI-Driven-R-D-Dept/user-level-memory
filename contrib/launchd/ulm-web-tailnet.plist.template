@@ -39,7 +39,9 @@
 
   <!-- ログイン時に起動。再起動の主因は KeepAlive=true（落ちる/bind 失敗で exit するたび再起動）で、
        ThrottleInterval=10 はその最短間隔を 10 秒に律速するだけ。Tailscale 接続前は 100.x が無く bind に
-       失敗するが、KeepAlive により接続確立まで再試行し続ける。KeepAlive を外すと再試行されないので注意。 -->
+       失敗するが、KeepAlive により接続確立まで再試行し続ける。KeepAlive を外すと再試行されないので注意。
+       注: 復帰するのは「同じ 100.x IP が戻る」場合のみ。ノードの Tailscale IPv4 が変わると --host が陳腐化し
+       永久に bind 失敗（EADDRNOTAVAIL）でループするので install.sh を再実行して再検出すること。 -->
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

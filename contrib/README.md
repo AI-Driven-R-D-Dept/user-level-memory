@@ -28,7 +28,14 @@ contrib/launchd/install.sh uninstall
 launchctl kickstart -k gui/$(id -u)/co.bond-ai.ulm.web-tailnet
 ```
 
-ポートを変えるなら `ULM_PORT=9000 contrib/launchd/install.sh`。ログは `~/Library/Logs/ulm-web-tailnet.log`。
+ポートを変えるなら `ULM_PORT=9000 contrib/launchd/install.sh`。
+
+**IP 変更時**: 固定した 100.x IP はノードの Tailscale IPv4 が変わると陳腐化し、`status` の `last exit code` が
+EADDRNOTAVAIL で再起動ループになる。`install.sh install` を再実行すれば再検出して直る。
+
+**ログ**: `~/Library/Logs/ulm-web-tailnet.log`（単一ファイル・無回転）。Tailscale 断のあいだ再起動ログが
+溜まり得る。`install.sh uninstall --purge-log` で消せる。定常運用で気になるなら `newsyslog.d`（macOS）/
+`logrotate`（Linux/journald は自動回転）でローテートを。
 
 ### なぜ launchd では `--tailnet` を使わないのか
 

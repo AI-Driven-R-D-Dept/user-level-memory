@@ -40,7 +40,11 @@ uninstall() {
     echo "✓ bootout: $LABEL"
   fi
   [ -f "$PLIST" ] && rm -f "$PLIST" && echo "✓ 削除: $PLIST"
-  echo "完了。ログは残してあります: $LOG"
+  if [ "${1:-}" = "--purge-log" ]; then
+    rm -f "$LOG" && echo "✓ ログ削除: $LOG"
+  else
+    echo "完了。ログは残してあります（消すには $0 uninstall --purge-log）: $LOG"
+  fi
 }
 
 show_status() {
@@ -64,8 +68,8 @@ resolve_tailscale() {
 
 # launchctl が把握している agent の pid（未ロードなら空）。pipefail 下でも落ちないよう末尾 || true。
 managed_pid() { launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -E '^[[:space:]]*pid =' | grep -oE '[0-9]+' | head -1 || true; }
-# $PORT を LISTEN しているプロセスの pid（無ければ空）。
-listen_pid() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2; exit}' || true; }
+# 指定 host:port を LISTEN しているプロセスの pid（無ければ空）。bind 先 IP に限定して誤検出を防ぐ。
+listen_pid() { lsof -nP -iTCP@"$1":"$2" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2; exit}' || true; }
 
 install_agent() {
   [ -f "$ULM_JS" ] || die "ulm 本体が見つかりません: $ULM_JS"
@@ -103,12 +107,14 @@ install_agent() {
 
   echo "検出: IP=$IP  MagicDNS=$NAME  node=$NODE  repo=$REPO  port=$PORT"
 
-  # $PORT を握っているのが「自分の管理下 agent 以外」なら fail-fast（ポート変更再導入でも検出する）。
-  local existing
-  existing="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
-  if [ -n "$existing" ] && [ "$(listen_pid)" != "$(managed_pid)" ]; then
+  # bind 先 IP:$PORT を握っているのが「自分の管理下 agent 以外」なら fail-fast。
+  # IP 限定なので、別 IF（127.0.0.1:$PORT 等）の無関係な listener では誤って止めない。snapshot は一度だけ。
+  local existing existing_pid
+  existing="$(lsof -nP -iTCP@"$IP":"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
+  existing_pid="$(printf '%s\n' "$existing" | awk 'NF{print $2; exit}')"
+  if [ -n "$existing" ] && [ "$existing_pid" != "$(managed_pid)" ]; then
     echo "$existing" >&2
-    die "ポート $PORT は別プロセスが LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
+    die "$IP:$PORT は別プロセスが LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
   fi
 
   mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
@@ -151,7 +157,7 @@ install_agent() {
   echo -n "起動待ち"
   local i ap lp ok=""
   for i in $(seq 1 40); do
-    ap="$(managed_pid)"; lp="$(listen_pid)"
+    ap="$(managed_pid)"; lp="$(listen_pid "$IP" "$PORT")"
     if [ -n "$ap" ] && [ "$ap" = "$lp" ]; then ok=1; break; fi
     echo -n "."; sleep 0.5
   done
@@ -159,8 +165,10 @@ install_agent() {
   if [ -n "$ok" ]; then
     # 疎通は参考表示（成功判定は pid 突合で確定済み）。bind は IPv4 100.x なので IP 直・v4 固定・短timeout で
     # 叩く（MagicDNS の v6 race や名前未解決によるハング/誤 000 を避ける）。Host=IP は allowlist に含まれる。
+    # curl は失敗時に %{http_code} へ自分で 000 を出すので、|| echo 000 で二重化しない。
     local code
-    code="$(curl -4 -s --connect-timeout 2 --max-time 5 -o /dev/null -w "%{http_code}" "http://$IP:$PORT/api/summary" || echo 000)"
+    code="$(curl -4 -s --connect-timeout 2 --max-time 5 -o /dev/null -w "%{http_code}" "http://$IP:$PORT/api/summary" || true)"
+    code="${code:-000}"
     echo "✓ 常時起動を導入しました: http://$NAME:$PORT/  (pid $ap / 疎通 HTTP $code)"
   else
     echo "⚠ まだ listen していません（Tailscale 接続後に自動起動します）。ログ: $LOG ／ 状態: $0 status"
@@ -171,7 +179,7 @@ install_agent() {
 
 case "${1:-install}" in
   install) install_agent ;;
-  uninstall) uninstall ;;
+  uninstall) uninstall "${2:-}" ;;
   status) show_status ;;
-  *) die "使い方: $0 [install|uninstall|status]" ;;
+  *) die "使い方: $0 [install|uninstall [--purge-log]|status]" ;;
 esac
