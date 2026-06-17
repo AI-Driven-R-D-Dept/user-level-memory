@@ -118,6 +118,36 @@ test('commands/*.md: frontmatter と bash 実行の許可が揃っている', ()
   }
 });
 
+// --- commands のシェルインジェクション回帰 -------------------------------------
+// Claude Code の `!` 自動実行ブロックでは $ARGUMENTS / 位置引数が「エスケープされない生テキスト」に
+// textually 置換されてから bash で実行される（公式仕様）。二重引用符 "$ARGUMENTS" はバッククォート/$()
+// を、無クォートは加えて語分割/グロブを許し、単一引用符ヒアドキュメントすらデリミタ衝突で破れる。
+// 安全な手段が存在しないため、!自動実行ブロックにユーザー引数を埋め込んではならない。引数を要する操作は
+// !無しブロック（自動実行されない手順提示）にし、モデルが Bash ツールで安全に組み立てて実行する。
+test('commands/*.md: !自動実行ブロックにユーザー引数($ARGUMENTS/$1..)を埋め込まない', () => {
+  const dir = path.join(ROOT, 'commands');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
+    const { body } = readFrontmatter(path.join(dir, f));
+    const blocks = [...body.matchAll(/```!\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+    for (const m of body.matchAll(/(^|\s)!`([^`]*)`/g)) blocks.push(m[2]); // インライン !`...`
+    for (const block of blocks) {
+      assert.doesNotMatch(
+        block,
+        /\$ARGUMENTS|\$\{ARGUMENTS|\$\{?[0-9]|\$\{?[@*]/,
+        `${f}: !自動実行ブロックにユーザー引数が混入（!無しブロックにしてモデルが Bash ツールで安全に実行すること）`
+      );
+    }
+  }
+});
+
+// note は観測本文（任意の自由文。バッククォート等を含みうる）を stdin 経由で取り込み、
+// シェル引数へ生展開しないこと。
+test('commands/note.md: 観測本文を stdin(obs add -)で取り込む', () => {
+  const { body } = readFrontmatter(path.join(ROOT, 'commands', 'note.md'));
+  assert.match(body, /\bobs add -(?=\s)/, 'obs add -（stdin センチネル）で取り込む');
+  assert.match(body, /obs add -[^\n]*<\s*\/tmp\//, 'stdin リダイレクトで一時ファイルから取り込む');
+});
+
 // --- skills -------------------------------------------------------------------
 
 test('skills/*/SKILL.md: name がディレクトリと一致し description が仕様内', () => {

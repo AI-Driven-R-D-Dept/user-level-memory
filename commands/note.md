@@ -1,7 +1,7 @@
 ---
 description: 作業で得た再利用可能なコツ（観測事実）を ulm に記録する
 argument-hint: "<記録したい観測テキスト>"
-allowed-tools: "Bash(node:*) Bash(ulm:*)"
+allowed-tools: "Bash(node:*) Bash(ulm:*) Write"
 ---
 
 ユーザーレベル長期記憶 (ulm) に観測を記録します。
@@ -15,10 +15,13 @@ allowed-tools: "Bash(node:*) Bash(ulm:*)"
 手順:
 1. ユーザーの入力 `$ARGUMENTS` が観測として具体的か確認する。曖昧なら、いつ・どの条件で・何が起きたかを1文に整える。
 2. 機密（鍵・トークン・パスワード・個人情報）が含まれていないか確認する。含まれる場合は記録しないか、ユーザーに `--secret` 付与の可否を確認する。
-3. 次を実行する（CLI は `${CLAUDE_PLUGIN_ROOT}/bin/ulm.js`）:
+3. 観測本文をシェルに展開させずに記録する。Claude Code の引数置換（`$ARGUMENTS`）はエスケープされない生テキストで、シェルへ直接渡すとバッククォート・`$()`・引用符・ヒアドキュメント境界が解釈され、虫食いや任意コマンド実行を招く。**観測本文を `obs add "$ARGUMENTS"` のようにシェル引数へ直接埋め込んではならない**（バッククォートや `$()` を含む本文で注入が再発する）。次の安全手順に従う（CLI は `${CLAUDE_PLUGIN_ROOT}/bin/ulm.js`）:
+   1. 観測テキストを **Write ツール**で `/tmp` 配下の一意な一時ファイル（例: `/tmp/ulm-note-<ランダム>.txt`）へ書き出す。書き込み先は必ずこの一時ファイルとし、プロジェクトや設定ファイルには書かない。Write はシェルを介さないため本文は一切解釈されない。
+   2. 下のブロックは自動実行されない。**Bash ツール**で実行して stdin から本文を取り込み（`-` は stdin センチネル）、成功・失敗にかかわらず最後に一時ファイルを削除する:
 
-```!
-node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" obs add "$ARGUMENTS" --source claude
+```
+node "${CLAUDE_PLUGIN_ROOT}/bin/ulm.js" obs add - --source claude < /tmp/ulm-note-<ランダム>.txt
+rm -f /tmp/ulm-note-<ランダム>.txt
 ```
 
 4. 記録した観測 ID を報告する。`--tags` で分類でき、横断的に重要なものは `--global`、常に思い出したいものは `--pin` を付けられることを必要に応じて案内する。
