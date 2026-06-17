@@ -30,8 +30,13 @@ launchctl kickstart -k gui/$(id -u)/co.bond-ai.ulm.web-tailnet
 
 ポートを変えるなら `ULM_PORT=9000 contrib/launchd/install.sh`。
 
-**IP 変更時**: 固定した 100.x IP はノードの Tailscale IPv4 が変わると陳腐化し、`status` の `last exit code` が
-EADDRNOTAVAIL で再起動ループになる。`install.sh install` を再実行すれば再検出して直る。
+**IP 変更時**: 固定した 100.x IP はノードの Tailscale IPv4 が変わると陳腐化して bind 失敗で再起動ループになる。
+徴候は `status` の `last exit code` が 0 以外（bind 失敗時は 2）になること、ログ ($LOG) に「バインドできません」が出ること。
+`install.sh install` を再実行すれば再検出して直る。
+
+**IPv4 のみ listen**: tailnet バインドは 100.x（IPv4）のみ。MagicDNS の URL は AAAA も引くため、v6 優先クライアントは
+Happy Eyeballs の v4 フォールバックで繋がるが、フォールバックしないツール（`curl -6` 等）は接続拒否になる。確実にするなら
+`http://100.x.y.z:<port>/`（100.x IP 直）を使う。
 
 **ログ**: `~/Library/Logs/ulm-web-tailnet.log`（単一ファイル・無回転）。Tailscale 断のあいだ再起動ログが
 溜まり得る。`install.sh uninstall --purge-log` で消せる。定常運用で気になるなら `newsyslog.d`（macOS）/
@@ -58,7 +63,7 @@ mkdir -p ~/.config/systemd/user
 cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
 # __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと値中の & や # でパスが壊れる）。
 # __NODE__ = node の実体（process.execPath）。asdf/volta/fnm の shim は systemd 下で版を解決できず不可。
-node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js"))' \
+node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()))' \
   ~/.config/systemd/user/ulm-web-tailnet.service
 loginctl enable-linger "$USER"   # 常時起動には必須: headless/再起動後も起動させる（無いとログインセッション中のみ稼働）
 systemctl --user daemon-reload

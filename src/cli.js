@@ -1059,10 +1059,14 @@ function isLoopbackHost(h) {
   return false;
 }
 
-/** 表示 URL に使えるホストか（IP か妥当な hostname）。空白/`*` 等の無効値を弾く。 */
+/**
+ * 表示 URL のエイリアスに使えるホスト名か。空白/`*` 等の無効値を弾く。
+ * IP リテラルは除外する（bind IP が自然なフォールバックで足り、--allow-host に異ファミリ IP を
+ * 渡されたとき bind していないアドレスを表示してしまうのを防ぐ）。
+ */
 function isDisplayableHost(h) {
   const n = normalizeHost(h);
-  return n !== '' && (isIP(n) !== 0 || /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n));
+  return n !== '' && isIP(n) === 0 && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n);
 }
 
 /**

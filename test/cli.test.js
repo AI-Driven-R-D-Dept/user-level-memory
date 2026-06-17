@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTailnetStatus, resolveWebBind, webBanner } from '../src/cli.js';
@@ -649,6 +649,53 @@ test('ulm web --host <未割当CGNAT>: EADDRNOTAVAIL を案内化して exit 2',
     assert.equal(r.status, 2);
     assert.match(r.stderr, /バインドできません/);
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** このホストに割り当てられている CGNAT(100.64.0.0/10) IPv4 を返す（無ければ null） */
+function cgnatIp() {
+  for (const ifs of Object.values(networkInterfaces())) {
+    for (const a of ifs || []) {
+      if (a.family === 'IPv4' || a.family === 4) {
+        const o = String(a.address).split('.').map(Number);
+        if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return a.address;
+      }
+    }
+  }
+  return null;
+}
+
+test('ulm web tailnet serve (E2E, CGNAT IF があれば): 許可Hostは200/非許可は403・token無し', async (t) => {
+  const ip = cgnatIp();
+  if (!ip) { t.skip('CGNAT(100.64/10) IF が無い環境のためスキップ'); return; }
+  const home = freshHome();
+  let child;
+  try {
+    const { url, port } = await new Promise((res, rej) => {
+      child = spawn('node', [BIN, 'web', '--host', ip, '--allow-host', 'alias.test.ts.net', '--no-token', '--port', '0'], {
+        env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
+      });
+      let out = '';
+      const timer = setTimeout(() => rej(new Error(`banner timeout: ${out}`)), 8000);
+      child.stdout.on('data', (d) => {
+        out += d.toString();
+        const m = out.match(/http:\/\/\S+?:(\d+)\//);
+        if (out.includes('token 無しで公開中') && m) { clearTimeout(timer); res({ url: m[0], port: Number(m[1]) }); }
+      });
+      child.on('error', rej);
+    });
+    const { request } = await import('node:http');
+    const hit = (hostHeader) => new Promise((res, rej) => {
+      const r = request({ host: ip, port, path: '/api/summary', headers: { host: hostHeader } }, (resp) => { resp.resume(); res(resp.statusCode); });
+      r.on('error', rej); r.end();
+    });
+    assert.equal(await hit('alias.test.ts.net'), 200); // 許可した別名 Host
+    assert.equal(await hit(`${ip}:${port}`), 200); // bind IP 直
+    assert.equal(await hit('evil.example.com'), 403); // 非許可 Host は 403
+    assert.doesNotMatch(url, /\?token=/); // tokenless
+  } finally {
+    if (child) { try { child.kill('SIGKILL'); } catch { /* gone */ } }
     rmSync(home, { recursive: true, force: true });
   }
 });
