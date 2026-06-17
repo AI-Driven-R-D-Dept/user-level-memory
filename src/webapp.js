@@ -1,12 +1,15 @@
 // ローカル Web UI サーバ — DB の閲覧・編集（依存ゼロ: node:http のみ）
 //
 // セキュリティ前提（DESIGN.md §7.5）:
-//  - 127.0.0.1 バインドのみ。リモート公開はスコープ外。
-//  - 起動ごとのランダムトークン必須: GET / は ?token=、/api/* は x-ulm-token ヘッダ。
-//    トークンは起動した端末にだけ表示されるため、ブラウザ以外のローカルプロセス
+//  - 既定は 127.0.0.1 バインド + 起動ごとのランダムトークン必須（GET / は ?token=、/api/* は
+//    x-ulm-token ヘッダ）。トークンは起動した端末にだけ表示されるため、ブラウザ以外のローカルプロセス
 //    （エージェント等）が API を直叩きして approve 等の人間操作を偽装するのを防ぐ
 //    （`--yes` と同等の信頼境界: ulm web を起動した人間が操作している）。
-//  - Host ヘッダ検証（DNS rebinding 対策）+ 変更系はカスタムヘッダ必須なので CSRF も成立しない。
+//  - tailnet 直アクセス（opt-in）: startWebServer の host を tailnet IP に、allowedHosts に MagicDNS 名を
+//    渡すと、Host 検証がその名を許可する（cli の `ulm web --tailnet`）。requireToken=false で
+//    トークンを外した場合、信頼境界は「tailnet ACL + このホスト上の任意プロセス」に移る（呼び出し側が明示選択）。
+//  - Host ヘッダ検証（DNS rebinding 対策）: loopback は常に許可、それ以外は allowedHosts / config.webapp.trusted_hosts のみ。
+//    変更系はカスタムヘッダ必須なので CSRF も成立しない。
 //  - SQL タブは読み取り専用接続（readOnly）+ 単一 SELECT のみの二重の壁。
 //  - promote は出さない（/ulm:promote の領分）。観測本文の編集も出さない（追記のみ・訂正は redact）。
 import { createServer } from 'node:http';
@@ -48,9 +51,12 @@ function tokenOk(expected, got) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function hostOk(req) {
+function hostOk(req, allowedHosts) {
   const host = String(req.headers.host || '');
-  return /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host);
+  if (/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) return true;
+  // loopback 以外は allowlist のみ（ポート除去・角括弧除去・小文字化して厳密一致）
+  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  return name !== '' && allowedHosts.has(name);
 }
 
 function json(res, code, obj) {
@@ -108,8 +114,16 @@ export function runReadonlyQuery(home, query) {
  * Web UI サーバを起動する。
  * @returns {Promise<{server: import('node:http').Server, url: string, token: string, port: number}>}
  */
-export function startWebServer(store, config, home, { host = '127.0.0.1', port = 8765 } = {}) {
-  const token = randomBytes(16).toString('hex');
+export function startWebServer(store, config, home, { host = '127.0.0.1', port = 8765, allowedHosts = [], requireToken = true } = {}) {
+  // requireToken=false（tailnet ACL を信頼境界にする選択）のときトークンは発行しない。
+  const token = requireToken ? randomBytes(16).toString('hex') : null;
+  // loopback 以外で許可する Host 名。バインド先 host 自体（tailnet IP 直叩き用）+ 呼び出し側指定
+  // （MagicDNS 名）+ config.webapp.trusted_hosts。loopback は hostOk が常に許可するので入れない。
+  const allowed = new Set(
+    [host, ...(allowedHosts || []), ...((config.webapp && config.webapp.trusted_hosts) || [])]
+      .map((h) => String(h).trim().toLowerCase())
+      .filter(Boolean),
+  );
   let html = null; // 起動後の初回アクセス時に読む（テストでは API のみ使うことがある）
 
   const routes = {
@@ -222,11 +236,11 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
 
   const server = createServer(async (req, res) => {
     try {
-      if (!hostOk(req)) return json(res, 403, { error: 'host が不正です（localhost のみ）' });
+      if (!hostOk(req, allowed)) return json(res, 403, { error: 'host が不正です（localhost または許可ホストのみ）' });
       const url = new URL(req.url, `http://${req.headers.host}`);
 
       if (req.method === 'GET' && url.pathname === '/') {
-        if (!tokenOk(token, url.searchParams.get('token'))) {
+        if (requireToken && !tokenOk(token, url.searchParams.get('token'))) {
           return json(res, 401, { error: 'token が必要です。`ulm web` が表示した URL から開いてください' });
         }
         if (html === null) html = readFileSync(HTML_PATH, 'utf8');
@@ -239,7 +253,7 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       }
 
       if (url.pathname.startsWith('/api/')) {
-        if (!tokenOk(token, req.headers['x-ulm-token'])) return json(res, 401, { error: 'token が不正です' });
+        if (requireToken && !tokenOk(token, req.headers['x-ulm-token'])) return json(res, 401, { error: 'token が不正です' });
         const handler = routes[`${req.method} ${url.pathname}`];
         if (!handler) return json(res, 404, { error: 'not found' });
         const body = req.method === 'POST' ? await readBody(req) : {};
@@ -257,7 +271,8 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
     server.once('error', rejectStart);
     server.listen(port, host, () => {
       const actual = server.address().port;
-      resolveStart({ server, port: actual, token, url: `http://${host}:${actual}/?token=${token}` });
+      const query = token ? `/?token=${token}` : '/';
+      resolveStart({ server, port: actual, token, host, url: `http://${host}:${actual}${query}` });
     });
   });
 }

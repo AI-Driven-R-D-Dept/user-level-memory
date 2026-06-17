@@ -39,6 +39,12 @@ export const DEFAULT_CONFIG = {
     model: 'text-embedding-3-small',
     // base_url / api_key_env / allowed_hosts は未指定なら miner 設定を流用
   },
+  webapp: {
+    // tailnet 直アクセス時（ulm web --tailnet / --host）に Host ヘッダを許可する MagicDNS 名の allowlist。
+    // 既定 [] では従来通り 127.0.0.1 専用（loopback 以外の Host は 403）。socket バインド先は別管理で、
+    // ここに足しただけではポートは公開されない（公開は --tailnet/--host による明示バインドのみ）。
+    trusted_hosts: [], // 例: ["node.tailnet.ts.net"]
+  },
   miner: {
     // auto は codex → opencode の順で CLI を探す（どちらも API キー不要・定額側）。
     // openai（従量課金 API）への暗黙フォールバックはしない: 'openai' を明示したときのみ使う。

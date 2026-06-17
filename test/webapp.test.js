@@ -55,6 +55,66 @@ test('webapp: Host ヘッダ検証（DNS rebinding 対策）', async () => {
   });
 });
 
+/** 生の http.request で Host ヘッダを偽装して status を得る（fetch は Host を上書きできない） */
+async function statusWithHost(port, hostHeader, token) {
+  const { request } = await import('node:http');
+  return new Promise((resolveStatus, reject) => {
+    const headers = { host: hostHeader };
+    if (token) headers['x-ulm-token'] = token;
+    const req = request({ host: '127.0.0.1', port, path: '/api/summary', headers }, (res) => {
+      res.resume();
+      resolveStatus(res.statusCode);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('webapp: allowedHosts に渡した MagicDNS 名は Host 検証を通る（tailnet 直アクセス）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const { server, port, token } = await startWebServer(store, testConfig(), home, {
+      port: 0,
+      allowedHosts: ['node.tailnet.ts.net'],
+    });
+    try {
+      assert.equal(await statusWithHost(port, 'node.tailnet.ts.net:8765', token), 200); // ポート付きでも一致
+      assert.equal(await statusWithHost(port, 'NODE.TAILNET.TS.NET', token), 200); // 大小無視
+      assert.equal(await statusWithHost(port, 'evil.example.com', token), 403); // 非許可は依然 403
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('webapp: config.webapp.trusted_hosts も Host 許可に反映される', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const config = testConfig({ webapp: { trusted_hosts: ['box.tnet.ts.net'] } });
+    const { server, port, token } = await startWebServer(store, config, home, { port: 0 });
+    try {
+      assert.equal(await statusWithHost(port, 'box.tnet.ts.net', token), 200);
+      assert.equal(await statusWithHost(port, 'other.tnet.ts.net', token), 403);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('webapp: requireToken=false はトークン無しで通る（tailnet ACL を信頼境界にする選択）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const { server, port, token } = await startWebServer(store, testConfig(), home, { port: 0, requireToken: false });
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      assert.equal(token, null); // トークンは発行されない
+      assert.equal((await fetch(`${base}/api/summary`)).status, 200); // token 無しの API も通る
+      assert.equal((await fetch(`${base}/`)).status, 200); // GET / も token 不要
+      // Host 検証は外れない: loopback 以外の未許可 Host は requireToken=false でも 403
+      assert.equal(await statusWithHost(port, 'evil.example.com', null), 403);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 test('webapp: obs の追加は入口ゲートを通る（機密パターンは自動 secret）', async () => {
   await withFreshStoreAsync(async (store, home) => {
     await withServer(store, home, async ({ call }) => {

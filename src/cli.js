@@ -1,5 +1,6 @@
 // ulm CLI — コマンドディスパッチ
 import { parseArgs } from 'node:util';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { ulmHome, ensureHome, loadConfig } from './config.js';
@@ -49,7 +50,8 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶をハイブリッド想起（FTS5/BM25 + 埋め込み・キー無しは FTS のみ）
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
-  ulm web [--port 8765]                                 DB を閲覧・編集するローカル Web UI（127.0.0.1）
+  ulm web [--port 8765] [--tailnet] [--host IP]         DB を閲覧・編集する Web UI（既定 127.0.0.1。--tailnet で tailnet 直アクセス）
+              [--allow-host NAME ...] [--no-token]
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
 
@@ -951,17 +953,115 @@ function cmdDoctor() {
   return checks.some((c) => c.level === 'error') ? 1 : 0;
 }
 
+/**
+ * tailscale CLI のバイナリを解決する。macOS GUI/App Store 版は CLI が PATH に無く
+ * アプリバンドル内（/Applications/Tailscale.app/...）にあるため、既知の場所も探す。
+ * ULM_TAILSCALE_BIN で明示上書き可。見つからなければ null。
+ */
+function resolveTailscaleBin() {
+  const candidates = [
+    process.env.ULM_TAILSCALE_BIN,
+    'tailscale', // PATH（Linux / homebrew / operator 設定済み）
+    '/opt/homebrew/bin/tailscale',
+    '/usr/local/bin/tailscale',
+    '/Applications/Tailscale.app/Contents/MacOS/Tailscale', // macOS GUI / App Store 版
+  ].filter(Boolean);
+  for (const bin of candidates) {
+    try {
+      execFileSync(bin, ['version'], { timeout: 5000, stdio: 'ignore' });
+      return bin;
+    } catch { /* 次の候補へ */ }
+  }
+  return null;
+}
+
+/**
+ * tailscale CLI から自ノードの 100.x IPv4 と MagicDNS 名を得る（--tailnet 用）。
+ * 0.0.0.0 ではなく 100.x に名指しバインドして tailnet 限定に保つのが狙い。
+ */
+function detectTailnet() {
+  const bin = resolveTailscaleBin();
+  if (!bin) {
+    throw new UsageError(
+      'tailscale CLI が見つかりません（PATH / 既知の場所いずれにも無し。ULM_TAILSCALE_BIN で指定可）。'
+      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
+    );
+  }
+  let raw;
+  try {
+    raw = execFileSync(bin, ['status', '--json'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    throw new UsageError(
+      'tailscale status を実行できません（Tailscale が起動しているか確認）。'
+      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
+    );
+  }
+  let status;
+  try { status = JSON.parse(raw); } catch { throw new UsageError('tailscale status --json を解析できませんでした'); }
+  const self = status.Self || {};
+  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
+  const ip = ips.find((a) => /^100\./.test(a)) || ips.find((a) => !String(a).includes(':'));
+  const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
+  if (!ip) throw new UsageError('Tailscale の 100.x IPv4 を取得できませんでした。--host で手動指定してください');
+  return { ip, dnsName };
+}
+
 async function cmdWeb(args) {
-  const { values } = parse(args, { port: { type: 'string', default: '8765' } });
+  const { values } = parse(args, {
+    port: { type: 'string', default: '8765' },
+    tailnet: { type: 'boolean', default: false },
+    host: { type: 'string' },
+    'allow-host': { type: 'string', multiple: true, default: [] },
+    'no-token': { type: 'boolean', default: false },
+  });
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError('--port は 0〜65535 の整数です');
+  if (values.tailnet && values.host) throw new UsageError('--tailnet と --host は併用できません');
+
+  let host = '127.0.0.1';
+  let allowedHosts = [...values['allow-host']];
+  let displayHost = null;
+  // 既定はトークン必須。--tailnet は tailnet ACL を信頼境界にする想定なので既定トークン無し（--no-token で明示も可）。
+  let requireToken = !values['no-token'];
+
+  if (values.tailnet) {
+    const { ip, dnsName } = detectTailnet();
+    host = ip;
+    if (dnsName) { allowedHosts.push(dnsName); displayHost = dnsName; } else displayHost = ip;
+    if (!values['no-token']) requireToken = false; // tailnet 既定はトークン無し
+  } else if (values.host) {
+    host = values.host;
+    displayHost = host;
+  }
+
   const home = ulmHome();
   ensureHome(home);
   const store = openStore(home); // サーバの寿命 = プロセスの寿命なので withStore は使わない
-  const { url } = await startWebServer(store, loadConfig(home), home, { port });
-  console.log('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
-  console.log(`  ${url}`);
-  console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+  const { token, port: actual } = await startWebServer(store, loadConfig(home), home, {
+    host, port, allowedHosts, requireToken,
+  });
+
+  const onTailnet = host !== '127.0.0.1';
+  const shown = displayHost || host;
+  const tokenPart = token ? `/?token=${token}` : '/';
+  if (onTailnet) {
+    console.log(`✓ ulm web を起動しました（tailnet バインド: ${host}:${actual} / Ctrl+C で終了）`);
+    console.log(`  http://${shown}:${actual}${tokenPart}`);
+    if (token) {
+      console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+    } else {
+      console.log('  ⚠ token 無しで公開中。tailnet(ACL) 内のデバイス＋このマシン上の任意プロセスが閲覧・承認できます');
+    }
+  } else {
+    console.log('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
+    console.log(`  http://${shown}:${actual}${tokenPart}`);
+    if (token) console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+    else console.log('  ⚠ token 無しで起動中。同一ホスト上の任意プロセスが閲覧・承認できます');
+  }
   return new Promise(() => {}); // サーバが生きている限り戻らない
 }
 

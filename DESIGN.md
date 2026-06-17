@@ -216,10 +216,18 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
 `ulm web [--port 8765]` で DB を閲覧・編集できるローカル UI を提供する（`webapp/index.html` 単一ファイル + JSON API。
 node:http のみで依存ゼロを維持）。
 
-- **セキュリティ**: ①127.0.0.1 バインドのみ ②起動ごとのランダムトークン必須（ページは `?token=`、API は
+- **セキュリティ（既定）**: ①127.0.0.1 バインドのみ ②起動ごとのランダムトークン必須（ページは `?token=`、API は
   `x-ulm-token` ヘッダ）。トークンは起動した端末にだけ表示されるため、ブラウザ以外のローカルプロセス
   （エージェント等）が API を直叩きして approve 等の人間操作を偽装できない（`--yes` と同等の信頼境界）
   ③Host ヘッダ検証（DNS rebinding 対策）。変更系はカスタムヘッダ必須なので CSRF も成立しない。
+- **tailnet 直アクセス（opt-in / closed VPN 前提）**: `ulm web --tailnet` は `tailscale` CLI から自ノードの 100.x IPv4 と
+  MagicDNS 名を取得し、**0.0.0.0 ではなく 100.x に名指しバインド**（LAN への漏れを避け tailnet 限定に保つ）、
+  Host 検証にその MagicDNS 名を許可する（`config.webapp.trusted_hosts` でも追加可）。`tailscale serve` の HTTPS 終端は
+  使わず、`http://<node>.<tailnet>.ts.net:<port>/` で素のまま叩く運用に合わせる。tailnet では既定で**トークンを外す**
+  （信頼境界は「tailnet ACL + このホスト上の任意プロセス」へ移る＝意識的トレードオフ。`--no-token=false` 相当に戻すには
+  手動 `--host` を使う）。手動制御は `--host <ip> --allow-host <name> [--no-token]`。既定（loopback）挙動は不変。
+  なお `tailscale serve` 経由（127.0.0.1 へ逆プロキシ）だと peer IP が潰れて `Tailscale-User-*` ヘッダは同一ホストの
+  別プロセスから偽造可能なため、ulm は ID ヘッダを信頼しない（採用しない）。
 - **できること**: 観測のフラグ（pin/secret/archive）・タグ編集・redact・追加（入口ゲート適用・source=web）／
   state の上書き・追加・削除（入口ゲート適用）／候補の approve・reject（**inbox のみ**）・条件/メモ編集／
   ref ポインタの追加（CLI と同一の safepath 検証）・削除／SQL（**読み取り専用接続 + 単一 SELECT のみ**の二重の壁）。
