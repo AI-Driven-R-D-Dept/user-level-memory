@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTailnetStatus, resolveWebBind } from '../src/cli.js';
+import { parseTailnetStatus, resolveWebBind, webBanner } from '../src/cli.js';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js');
 
@@ -464,21 +464,45 @@ test('resolveWebBind: --tailnet と --host は併用不可', () => {
   assert.throws(() => resolveWebBind(webValues({ tailnet: true, host: '1.2.3.4' }), fakeDetect), /併用できません/);
 });
 
-test('resolveWebBind: 全インターフェース公開(0.0.0.0/::/*)は拒否', () => {
-  for (const h of ['0.0.0.0', '::', '*', '[::]', '0']) {
-    assert.throws(() => resolveWebBind(webValues({ host: h })), /危険|全インターフェース/, `host=${h}`);
+test('resolveWebBind: loopback/100.x 以外の --host は一律拒否（0.0.0.0 別表記・LAN・IPv6・名前）', () => {
+  // 0.0.0.0 のあらゆる別表記やワイルドカード、LAN、非100.x がすり抜けないこと
+  for (const h of ['0.0.0.0', '0x0', '00.0.0.0', '000.000.000.000', '*', '0', '::', '::0', '192.168.1.5', '10.0.0.5', 'evil.example.com']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h })), /loopback か tailnet/, `host=${h}`);
   }
 });
 
-test('resolveWebBind: --host 非loopbackは既定トークン維持／--no-tokenで外す', () => {
+test('resolveWebBind: --host は loopback / 100.x のみ受理し [::1] の角括弧は外す', () => {
+  assert.equal(resolveWebBind(webValues({ host: '127.0.0.1' })).kind, 'loopback');
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).kind, 'tailnet');
+  const r = resolveWebBind(webValues({ host: '[::1]' }));
+  assert.equal(r.host, '::1'); // listen は裸 IP を要求するので角括弧を外す
+  assert.equal(r.kind, 'loopback');
+});
+
+test('resolveWebBind: --host 100.x は既定トークン維持／--no-tokenで外す', () => {
   assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).requireToken, true);
   assert.equal(resolveWebBind(webValues({ host: '100.100.90.41', 'no-token': true })).requireToken, false);
 });
 
-test('resolveWebBind: tailnet外(LAN)の --host は kind=other（呼び出し側が警告）', () => {
-  assert.equal(resolveWebBind(webValues({ host: '192.168.1.5' })).kind, 'other');
-  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).kind, 'tailnet');
-  assert.equal(resolveWebBind(webValues({ host: '127.0.0.1' })).kind, 'loopback');
+test('webBanner: tailnet トークン無しは tailnet(ACL) の警告と MagicDNS URL を出す', () => {
+  const lines = webBanner({ host: '100.100.90.41', displayHost: 'node.ts.net', kind: 'tailnet' }, null, 8765).join('\n');
+  assert.match(lines, /tailnet バインド/);
+  assert.match(lines, /http:\/\/node\.ts\.net:8765\//);
+  assert.match(lines, /token 無しで公開中/);
+  assert.match(lines, /tailnet\(ACL\)/);
+});
+
+test('webBanner: loopback + token は端末限定の注意のみ（公開警告を出さない）', () => {
+  const lines = webBanner({ host: '127.0.0.1', displayHost: null, kind: 'loopback' }, 'abc123', 8765).join('\n');
+  assert.match(lines, /127\.0\.0\.1 のみ/);
+  assert.match(lines, /\?token=abc123/);
+  assert.match(lines, /この端末にだけ/);
+  assert.doesNotMatch(lines, /公開中/);
+});
+
+test('webBanner: IPv6 displayHost は URL を角括弧で囲む', () => {
+  const lines = webBanner({ host: '::1', displayHost: '::1', kind: 'loopback' }, null, 8765).join('\n');
+  assert.match(lines, /http:\/\/\[::1\]:8765\//);
 });
 
 test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => {

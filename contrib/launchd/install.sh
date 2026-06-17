@@ -103,14 +103,16 @@ install_agent() {
 
   mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
 
-  # テンプレートは node で安全に埋める（sed のデリミタ |・メタ文字 &/\ の事故を回避）。
+  # テンプレートは node で安全に埋める（sed のデリミタ/メタ文字を回避）。値は XML エスケープして
+  # <string> に入れる（パスや ULM_HOME に & < > が含まれても妥当な plist になる）。
   # 一時ファイル → lint → atomic mv。失敗時は既存 plist を温存して fail-closed。
   local TMP; TMP="$(mktemp "${TMPDIR:-/tmp}/ulm-plist.XXXXXX")"
   node -e '
     const fs = require("node:fs");
     const [tpl, out, ...kv] = process.argv.slice(1);
+    const esc = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     let s = fs.readFileSync(tpl, "utf8");
-    for (let i = 0; i < kv.length; i += 2) s = s.split(kv[i]).join(kv[i + 1]);
+    for (let i = 0; i < kv.length; i += 2) s = s.split(kv[i]).join(esc(kv[i + 1]));
     fs.writeFileSync(out, s);
   ' "$TEMPLATE" "$TMP" \
     __LABEL__ "$LABEL" __NODE__ "$NODE" __ULM_JS__ "$ULM_JS" \
@@ -124,9 +126,13 @@ install_agent() {
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
     local j
-    for j in $(seq 1 25); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.2; done
+    for j in $(seq 1 50); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.2; done
+    # まだ残っていれば bootstrap は確実に失敗する。古い agent を動かしたまま fail-closed で止める。
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      die "既存 agent の unload がタイムアウトしました。少し待って再実行してください（$0 install）"
+    fi
   fi
-  launchctl bootstrap "$DOMAIN" "$PLIST" || die "bootstrap に失敗しました"
+  launchctl bootstrap "$DOMAIN" "$PLIST" || die "bootstrap に失敗しました（少し待って $0 install を再実行してください）"
 
   # listen を待つ。port を握るのが本当に agent か確認するため launchctl pid と lsof pid を突合。
   echo -n "起動待ち"
@@ -138,8 +144,10 @@ install_agent() {
   done
   echo
   if [ -n "$ok" ]; then
+    # 疎通は参考表示（成功判定は pid 突合で確定済み）。bind は IPv4 100.x なので IP 直・v4 固定・短timeout で
+    # 叩く（MagicDNS の v6 race や名前未解決によるハング/誤 000 を避ける）。Host=IP は allowlist に含まれる。
     local code
-    code="$(curl -s -o /dev/null -w "%{http_code}" "http://$NAME:$PORT/api/summary" || echo 000)"
+    code="$(curl -4 -s --connect-timeout 2 --max-time 5 -o /dev/null -w "%{http_code}" "http://$IP:$PORT/api/summary" || echo 000)"
     echo "✓ 常時起動を導入しました: http://$NAME:$PORT/  (pid $ap / 疎通 HTTP $code)"
   else
     echo "⚠ まだ listen していません（Tailscale 接続後に自動起動します）。ログ: $LOG ／ 状態: $0 status"

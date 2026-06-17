@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { startWebServer, runReadonlyQuery, normalizeHost } from '../src/webapp.js';
+import { startWebServer, runReadonlyQuery, normalizeHost, hostOk } from '../src/webapp.js';
 import { withFreshStoreAsync, testConfig } from './helpers.js';
 
 /** サーバを立てて fn(ctx) を実行し、確実に閉じる */
@@ -86,12 +86,27 @@ test('webapp: allowedHosts に渡した MagicDNS 名は Host 検証を通る（t
   });
 });
 
-test('webapp: normalizeHost は :port/[ipv6]/大小を正規化し、裸IPv6を壊さない', () => {
+test('webapp: normalizeHost は 末尾ドット/:port/[ipv6]/大小を正規化し、裸IPv6を壊さない', () => {
   assert.equal(normalizeHost('Node.TS.net:8765'), 'node.ts.net');
+  assert.equal(normalizeHost('node.ts.net.'), 'node.ts.net'); // 絶対FQDNの末尾ドット
   assert.equal(normalizeHost('[fd7a::1]:8765'), 'fd7a::1');
   assert.equal(normalizeHost('[fd7a::1]'), 'fd7a::1');
   assert.equal(normalizeHost('fd7a::1'), 'fd7a::1'); // 裸IPv6: 末尾を :port と誤認しない
   assert.equal(normalizeHost('100.100.90.41:9000'), '100.100.90.41');
+});
+
+test('webapp: hostOk は loopback Host を「実接続が loopback のときだけ」信頼（ヘッダ偽装を拒否）', () => {
+  const allow = new Set(['node.ts.net']);
+  // 偽装: 非loopback の peer から Host: localhost / 127.0.0.1 を送っても拒否
+  assert.equal(hostOk({ headers: { host: 'localhost' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
+  assert.equal(hostOk({ headers: { host: '127.0.0.1:8765' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
+  // 実 loopback からの loopback Host は許可
+  assert.equal(hostOk({ headers: { host: 'localhost' }, socket: { remoteAddress: '127.0.0.1' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: '[::1]:8765' }, socket: { remoteAddress: '::1' } }, allow), true);
+  // allowlist 一致は peer に依らず許可（末尾ドットも吸収）／非許可は拒否
+  assert.equal(hostOk({ headers: { host: 'node.ts.net' }, socket: { remoteAddress: '100.64.0.5' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: 'node.ts.net.' }, socket: { remoteAddress: '100.64.0.5' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: 'evil.example.com' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
 });
 
 test('webapp: 許可ホストは :port/大小を正規化して一致する（allowlist と hostOk のズレ防止）', async () => {

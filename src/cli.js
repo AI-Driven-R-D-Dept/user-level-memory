@@ -1,6 +1,7 @@
 // ulm CLI — コマンドディスパッチ
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { isIP } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { ulmHome, ensureHome, loadConfig } from './config.js';
@@ -1035,20 +1036,16 @@ function detectTailnet() {
   return parseTailnetStatus(raw);
 }
 
-// 全インターフェース公開になる bind 先（tailnet 限定の前提を壊すので拒否する）。
-const BIND_ALL = new Set(['0.0.0.0', '::', '[::]', '*', '0']);
 function isLoopbackHost(h) {
-  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]' || /^127\./.test(h);
-}
-function isTailnetHost(h) {
-  return /^100\./.test(String(h)); // CGNAT 100.x（Tailscale）
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || /^127\./.test(h);
 }
 
 /**
  * web のバインド先・Host 許可・トークン要否をフラグから決める純関数（テスト用に export）。
  * detect は --tailnet 検出を注入できる（既定は detectTailnet）。
- * 危険な構成（0.0.0.0 公開・到達不能な --allow-host 単独）はここで弾く。
- * @returns {{host:string, allowedHosts:string[], requireToken:boolean, displayHost:string|null, kind:'loopback'|'tailnet'|'other'}}
+ * 設計上、公開バインドは loopback か tailnet の 100.x IPv4 のみ。それ以外（LAN/ワイルドカード・
+ * 0.0.0.0 の別表記含む）は到達範囲が読めないので一律拒否する（tokenless で LAN 露出する事故を断つ）。
+ * @returns {{host:string, allowedHosts:string[], requireToken:boolean, displayHost:string|null, kind:'loopback'|'tailnet'}}
  */
 export function resolveWebBind(values, detect = detectTailnet) {
   if (values.tailnet && values.host) throw new UsageError('--tailnet と --host は併用できません');
@@ -1063,11 +1060,11 @@ export function resolveWebBind(values, detect = detectTailnet) {
   }
 
   if (values.host) {
-    const host = String(values.host);
-    if (BIND_ALL.has(host)) {
-      throw new UsageError(`--host ${host} は全インターフェース公開になり危険です。tailnet の 100.x IP を指定してください`);
-    }
-    const kind = isLoopbackHost(host) ? 'loopback' : (isTailnetHost(host) ? 'tailnet' : 'other');
+    const host = String(values.host).replace(/^\[(.+)\]$/, '$1'); // IPv6 角括弧を外す（listen は裸 IP を要求）
+    let kind;
+    if (isLoopbackHost(host)) kind = 'loopback';
+    else if (isIP(host) === 4 && /^100\./.test(host)) kind = 'tailnet'; // CGNAT 100.x の実 IPv4 のみ
+    else throw new UsageError(`--host は loopback か tailnet の 100.x IPv4 のみ指定できます（tailnet 限定設計）: ${values.host}`);
     return { host, allowedHosts: allowHosts, requireToken: !noToken, displayHost: allowHosts[0] || host, kind };
   }
 
@@ -1076,6 +1073,27 @@ export function resolveWebBind(values, detect = detectTailnet) {
     throw new UsageError('--allow-host は --tailnet または --host と併用してください（loopback バインドのままでは到達できません）');
   }
   return { host: '127.0.0.1', allowedHosts: [], requireToken: !noToken, displayHost: null, kind: 'loopback' };
+}
+
+/** 起動バナー行を組み立てる純関数（テスト用に export）。kind は loopback|tailnet のみ。 */
+export function webBanner(bind, token, actualPort) {
+  const lines = [];
+  const raw = bind.displayHost || bind.host;
+  const shown = raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw; // IPv6 表示は角括弧
+  if (bind.kind === 'tailnet') {
+    lines.push(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actualPort} / Ctrl+C で終了）`);
+  } else {
+    lines.push('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
+  }
+  lines.push(`  http://${shown}:${actualPort}${token ? `/?token=${token}` : '/'}`);
+  if (token) {
+    lines.push('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+  } else if (bind.kind === 'tailnet') {
+    lines.push('  ⚠ token 無しで公開中。tailnet(ACL) 内のデバイス＋このマシン上の任意プロセスが閲覧・承認できます');
+  } else {
+    lines.push('  ⚠ token 無しで起動中。同一ホスト上の任意プロセスが閲覧・承認できます');
+  }
+  return lines;
 }
 
 async function cmdWeb(args) {
@@ -1098,25 +1116,7 @@ async function cmdWeb(args) {
     host: bind.host, port, allowedHosts: bind.allowedHosts, requireToken: bind.requireToken,
   });
 
-  const shownRaw = bind.displayHost || bind.host;
-  const shown = shownRaw.includes(':') && !shownRaw.startsWith('[') ? `[${shownRaw}]` : shownRaw; // IPv6 表示
-  const tokenPart = token ? `/?token=${token}` : '/';
-  if (bind.kind === 'tailnet') {
-    console.log(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actual} / Ctrl+C で終了）`);
-  } else if (bind.kind === 'other') {
-    console.log(`✓ ulm web を起動しました（バインド: ${bind.host}:${actual} / Ctrl+C で終了）`);
-    console.log('  ⚠ これは tailnet(100.x) でも loopback でもないアドレスです。LAN/外部に露出していないか確認してください');
-  } else {
-    console.log('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
-  }
-  console.log(`  http://${shown}:${actual}${tokenPart}`);
-  if (token) {
-    console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
-  } else if (bind.kind === 'loopback') {
-    console.log('  ⚠ token 無しで起動中。同一ホスト上の任意プロセスが閲覧・承認できます');
-  } else {
-    console.log('  ⚠ token 無しで公開中。tailnet(ACL) 内のデバイス＋このマシン上の任意プロセスが閲覧・承認できます');
-  }
+  for (const line of webBanner(bind, token, actual)) console.log(line);
   return new Promise(() => {}); // サーバが生きている限り戻らない
 }
 

@@ -47,7 +47,8 @@ MagicDNS 名を一度だけ検出**し、`--host <IP> --allow-host <name> --no-t
 ```bash
 mkdir -p ~/.config/systemd/user
 cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
-# __NODE__ / __ULM_JS__ を実パスに書き換える
+# __NODE__ = node の実体の絶対パス（`node -p process.execPath`。asdf/volta/fnm の shim は systemd 下で
+#            版を解決できずクラッシュループするので不可）／ __ULM_JS__ = リポジトリの bin/ulm.js
 systemctl --user daemon-reload
 systemctl --user enable --now ulm-web-tailnet
 loginctl enable-linger "$USER"   # ログアウト後も動かすなら
