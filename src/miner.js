@@ -44,12 +44,12 @@ export function buildPrompt(observations, maxCandidates) {
 }
 
 /**
- * ある位置の `[` から対応する `]` までのバランスの取れた部分文字列を返す（なければ slice:null）。
+ * ある位置の open から対応する close までのバランス部分文字列を返す（なければ slice:null）。array/object 共用。
  * budget: この呼び出しで走査してよい最大文字数。`scanned` に実走査量を返し、呼び出し側が
- * 総走査量を入力長の定数倍に抑える（`[`×N 入力での O(n²) 爆発を防ぐ）。
+ * 総走査量を入力長の定数倍に抑える（open×N 入力での O(n²) 爆発を防ぐ）。
  * @returns {{slice: string|null, scanned: number}}
  */
-function balancedArray(s, start, budget) {
+export function balancedBracket(s, start, budget, open, close) {
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -63,8 +63,8 @@ function balancedArray(s, start, budget) {
       continue;
     }
     if (c === '"') inStr = true;
-    else if (c === '[') depth++;
-    else if (c === ']') {
+    else if (c === open) depth++;
+    else if (c === close) {
       depth--;
       if (depth === 0) return { slice: s.slice(start, i + 1), scanned: i - start + 1 };
     }
@@ -72,22 +72,22 @@ function balancedArray(s, start, budget) {
   return { slice: null, scanned: limit - start };
 }
 
-// LLM 応答は信頼できない外部入力。無上限だと `[`×N 等で CPU/メモリ事故になるため上限を設ける。
-const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする
+// LLM 応答は信頼できない外部入力。無上限だと open×N 等で CPU/メモリ事故になるため上限を設ける。
+export const MAX_PARSE_LENGTH = 512 * 1024; // これ以上は先頭のみ parse 対象にする（skillpr も共用）
 
 /**
- * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
- * 散文中の `[1, 2, 3]` を誤って掴まないよう、「オブジェクトを含む配列」を優先する。
- * 全 `[` 位置を順に試し、object を含む最初の配列を返す。なければ最初に parse できた配列。
- * 入力長と総走査量を有界化し、病的応答（`[`×N）でも線形時間に収める。
+ * LLM 応答から、コードフェンス・前後文を許容しつつ JSON をバランス走査で取り出す共通骨格（array/object 共用）。
+ * 入力長(MAX_PARSE_LENGTH)と総走査量(budget)を有界化し、病的応答（open×N）でも線形時間に収める。
+ * accept(parsed) が undefined 以外を返したら即採用。採用ポリシ（配列優先/オブジェクト優先）だけ呼び出し側が渡す。
+ * @returns {*} 採用値、またはどの位置でも採用されなければ undefined
  */
-export function extractJsonArray(text) {
+export function scanBalanced(text, open, close, accept) {
   let s = String(text ?? '');
   if (s.length > MAX_PARSE_LENGTH) s = s.slice(0, MAX_PARSE_LENGTH);
-  let fallback;
-  let budget = s.length * 2 + 65536; // 総走査量を入力長の定数倍に制限（O(n²) 防止）
-  for (let i = s.indexOf('['); i !== -1 && budget > 0; i = s.indexOf('[', i + 1)) {
-    const { slice, scanned } = balancedArray(s, i, budget);
+  // 総走査量の上限（O(n²) 防止）。先頭の未閉じ open 連なりで末尾の本物 JSON を取り逃さないよう定数を大きく取る。
+  let budget = s.length * 2 + 16 * 1024 * 1024;
+  for (let i = s.indexOf(open); i !== -1 && budget > 0; i = s.indexOf(open, i + 1)) {
+    const { slice, scanned } = balancedBracket(s, i, budget, open, close);
     budget -= scanned;
     if (!slice) continue;
     let parsed;
@@ -96,10 +96,25 @@ export function extractJsonArray(text) {
     } catch {
       continue;
     }
-    if (!Array.isArray(parsed)) continue;
-    if (parsed.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return parsed; // 候補らしい配列
-    if (fallback === undefined) fallback = parsed;
+    const r = accept(parsed);
+    if (r !== undefined) return r;
   }
+  return undefined;
+}
+
+/**
+ * レスポンステキストから JSON 配列を取り出す（コードフェンス・前後の説明文を許容）。
+ * 散文中の `[1, 2, 3]` を誤って掴まないよう「オブジェクトを含む配列」を優先し、なければ最初に parse できた配列。
+ */
+export function extractJsonArray(text) {
+  let fallback;
+  const found = scanBalanced(text, '[', ']', (parsed) => {
+    if (!Array.isArray(parsed)) return undefined;
+    if (parsed.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return parsed; // 候補らしい配列を優先
+    if (fallback === undefined) fallback = parsed;
+    return undefined;
+  });
+  if (found !== undefined) return found;
   if (fallback !== undefined) return fallback;
   throw new Error('レスポンスに JSON 配列が見つかりません');
 }
@@ -130,6 +145,25 @@ export function validateCandidates(raw, { knownObsIds, maxCandidates }) {
 
 // ---- プロバイダ ----
 
+// LLM サブプロセス(codex/opencode)へ渡す環境変数から、名前が機密っぽいものを除外する。
+// read-only サンドボックスでも自プロセスの env は読めるため、API キー等が env 経由で LLM に渡ると
+// 生成物（promote --pr では公開 PR）へ egress しうる。codex/opencode の認証はファイル(~/.codex 等)ベースで
+// env 依存ではないため、これらを落としても通常は動作に影響しない。
+// 接続文字列系（DATABASE_URL/REDIS_URL/MONGO_URI/*_DSN/SENTRY_DSN/*_WEBHOOK_URL 等）は値に資格情報を埋め込むが
+// 名前に KEY/TOKEN 等を含まないため、URL/URI/DSN/WEBHOOK/CONNECTION も対象に加える（名前ヒューリスティック。
+// 名前が無害で値だけ機密な env は捕捉できない＝網羅は保証しない。最終防壁は人間の PR レビュー）。
+const SECRET_ENV_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CRED|AUTH|SESSION|COOKIE|DSN|URI|URL|WEBHOOK|CONNECTION)/i;
+// PAT（personal access token）は _ 区切りの独立トークンとしてのみ弾く（GH_PAT/GITHUB_PAT/PAT）。
+// 部分一致だと PATH/PATTERN/PATCH を誤除外して codex 実行を壊すため、語境界を _／先頭末尾に限定する。
+const SECRET_ENV_TOKEN_RE = /(^|_)PAT(_|$)/i;
+export function sanitizedEnv(env = process.env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (!SECRET_ENV_RE.test(k) && !SECRET_ENV_TOKEN_RE.test(k)) out[k] = v;
+  }
+  return out;
+}
+
 export function codexAvailable() {
   const r = spawnSync('codex', ['--version'], { encoding: 'utf8' });
   return r.status === 0;
@@ -143,25 +177,38 @@ export function opencodeAvailable() {
 function callOpencode(prompt, config, home) {
   // opencode run: ヘッドレス1回実行。--agent plan は読み取り専用エージェント（ファイル編集ツール無効）。
   // 認証・課金は opencode CLI 側（OpenCode Go 等のサブスク）に乗るため、ulm は API キーを扱わない。
-  // 応答本文は stdout、バナー類は stderr に出る。cwd は ULM_HOME（リポジトリの文脈を読ませない）。
-  const r = spawnSync('opencode', ['run', '--agent', 'plan', '-m', config.miner.opencode_model], {
-    input: `${prompt.system}\n\n${prompt.user}`,
-    encoding: 'utf8',
-    timeout: 180_000,
-    cwd: home,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
-  const out = String(r.stdout || '').trim();
-  if (r.status !== 0 || !out) {
-    throw new Error(
-      `opencode から応答が得られませんでした (exit=${r.status})${r.stderr ? `: ${String(r.stderr).slice(-400)}` : ''}`
-    );
+  // 応答本文は stdout、バナー類は stderr に出る。cwd は「空の使い捨て一時ディレクトリ」にする: ULM_HOME を
+  // cwd にすると read-only でも memory.db / export/*.secret.jsonl を読めてしまい生成物経由で流出しうる。
+  void home;
+  const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
+  try {
+    const r = spawnSync('opencode', ['run', '--agent', 'plan', '-m', config.miner.opencode_model], {
+      input: `${prompt.system}\n\n${prompt.user}`,
+      encoding: 'utf8',
+      timeout: 180_000,
+      cwd: tmp,
+      env: sanitizedEnv(), // env 経由の secret を LLM サブプロセスへ渡さない
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (r.error) throw new Error(`opencode 実行に失敗: ${r.error.message}`);
+    const out = String(r.stdout || '').trim();
+    if (r.status !== 0 || !out) {
+      throw new Error(
+        `opencode から応答が得られませんでした (exit=${r.status})${r.stderr ? `: ${String(r.stderr).slice(-400)}` : ''}`
+      );
+    }
+    return out;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
-  return out;
 }
 
 function callCodex(prompt, config, home) {
+  // 作業ディレクトリは「空の使い捨て一時ディレクトリ」にする。ULM_HOME を cwd にすると、相対参照や既定の読込範囲で
+  // memory.db / export/*.secret.jsonl（平文の機密控え）が拾われやすい。プロンプトに必要なデータは全て stdin で渡る
+  // ため LLM にファイル文脈を与える必要は無い。ただし read-only サンドボックスは『書込』のみ禁止で『読込』は塞がない
+  // ため、cwd を空 tmp にするのは相対参照と既定読込範囲を狭める緩和であって、絶対パスでの read を不可能にはしない。
+  void home;
   const tmp = mkdtempSync(join(tmpdir(), 'ulm-mine-'));
   const outFile = join(tmp, 'last-message.txt');
   try {
@@ -171,7 +218,7 @@ function callCodex(prompt, config, home) {
       '--ephemeral',
       '-s', 'read-only',
       '--color', 'never',
-      '-C', home,
+      '-C', tmp,
       '-o', outFile,
       '-m', config.miner.model,
       '-c', `model_reasoning_effort=${JSON.stringify(config.miner.reasoning_effort)}`,
@@ -181,6 +228,8 @@ function callCodex(prompt, config, home) {
       input: `${prompt.system}\n\n${prompt.user}`,
       encoding: 'utf8',
       timeout: 180_000,
+      cwd: tmp, // OS レベル cwd も空 tmp に固定（-C tmp と二重化。callOpencode と対称・相対参照リスク低減）
+      env: sanitizedEnv(), // env 経由の secret を LLM サブプロセスへ渡さない
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     if (r.error) throw new Error(`codex 実行に失敗: ${r.error.message}`);
@@ -290,9 +339,13 @@ async function callOpenAi(prompt, config) {
  * @param {{codex?: () => boolean, opencode?: () => boolean}} avail テスト用の可用性チェック差し替え
  * @returns {'codex'|'opencode'|'openai'|'none'}
  */
+/** 対応する LLM プロバイダの単一の真実源（追加・改名時はここだけ変える。経路間 drift を防ぐ）。 */
+export const PROVIDERS = ['codex', 'opencode', 'openai'];
+export const isKnownProvider = (p) => PROVIDERS.includes(p);
+
 export function resolveProvider(config, avail = {}) {
   const p = config.miner.provider;
-  if (p === 'codex' || p === 'openai' || p === 'opencode') return p;
+  if (isKnownProvider(p)) return p;
   if ((avail.codex ?? codexAvailable)()) return 'codex';
   if ((avail.opencode ?? opencodeAvailable)()) return 'opencode';
   return 'none';
@@ -305,7 +358,7 @@ export function providerModel(provider, config) {
 
 /** 指定プロバイダで {system,user} プロンプトを実行し応答テキストを返す（mine/capture 共用） */
 export async function callProvider(provider, prompt, config, home, avail = {}) {
-  const prov = ['codex', 'opencode', 'openai'].includes(provider) ? provider : resolveProvider(config, avail);
+  const prov = isKnownProvider(provider) ? provider : resolveProvider(config, avail);
   if (prov === 'codex') return callCodex(prompt, config, home);
   if (prov === 'opencode') return callOpencode(prompt, config, home);
   if (prov === 'openai') return await callOpenAi(prompt, config);
@@ -328,7 +381,7 @@ export async function mine(store, config, home, { project, days, limit, provider
   const prompt = buildPrompt(obs, maxCandidates);
   // 'auto' 等は具体名に確定させる（log / origin に 'auto' を残さない）
   let prov = provider || 'auto';
-  if (!['codex', 'opencode', 'openai'].includes(prov)) prov = resolveProvider(config);
+  if (!isKnownProvider(prov)) prov = resolveProvider(config);
 
   if (dryRun) {
     log(`[dry-run] provider=${prov} 観測 ${obs.length} 件を送信予定。ペイロード:`);

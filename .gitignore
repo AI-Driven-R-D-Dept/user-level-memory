@@ -7,6 +7,7 @@
 
 # ulm
 node_modules/
+.claude/scheduled_tasks.lock
 # 解説動画の作業ディレクトリ（成果物は report/ と GitHub Release に置く）
 explainer-video-work/
 .DS_Store

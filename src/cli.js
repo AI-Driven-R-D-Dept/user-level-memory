@@ -13,6 +13,7 @@ import { startWebServer } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
+import { promoteWithPr, gateHit, sanitizeRefSlug, oneline, candidateGateText, renderFrontmatterHead } from './skillpr.js';
 import { resolveProject, projectInfo } from './project.js';
 import { nowIso, parseTtl, readStdin, shortDate, splitCsv, truncate, parseJsonSafe, trigramContainment } from './util.js';
 
@@ -36,7 +37,10 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm cand edit <id> [--conditions C] [--note N]
   ulm inbox [--json] | ulm show <id>
   ulm approve|reject <id> [--note N] [--yes]
-  ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills へ skill 化
+  ulm promote <id> [--name slug] [--yes]            承認済みを project の .claude/skills/ref-* へ skill 化（ローカル生成）
+  ulm promote <id> --pr [--provider P] [--dry-run] [--yes]   agent が関連 ref-* skill を更新（無ければ ref- 新規）し PR を出す
+       --provider codex|opencode|openai（既定 auto。codex/opencode CLI か openai 明示が必要）。--name 併用時は常に新規作成。
+       非対話実行では --yes 必須。git リポジトリ・remote・gh CLI が前提。実行すると即 push（--dry-run でも LLM は呼ぶ）。
   ulm reject-stale [--days 90]
 採掘 / ref / 注入 / 運用:
   ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -513,7 +517,10 @@ function cmdReview(args, status) {
   return withStore((store) => {
     const c = store.reviewCandidate(positionals[0], status, values.note);
     console.log(`✓ ${c.id} を ${status === 'approved' ? '承認' : '却下'}しました`);
-    if (status === 'approved') console.log(`  昇格するには: ulm promote ${c.id} [--name <slug>]（project の .claude/skills へ skill 化）`);
+    if (status === 'approved') {
+      console.log(`  昇格するには: ulm promote ${c.id}（.claude/skills/ref-* へローカル生成）`);
+      console.log(`  関連 skill を更新して PR を出すには: ulm promote ${c.id} --pr`);
+    }
     return 0;
   });
 }
@@ -528,13 +535,31 @@ function cmdRejectStale(args) {
   });
 }
 
-function cmdPromote(args) {
+async function cmdPromote(args) {
   const { values, positionals } = parse(args, {
     name: { type: 'string' },
+    pr: { type: 'boolean', default: false },
+    provider: { type: 'string' },
+    'dry-run': { type: 'boolean', default: false },
     yes: { type: 'boolean', default: false },
   }, { positionals: 1 });
+  // --dry-run / --provider は --pr 専用。ローカル生成パスで黙殺すると「dry-run のつもりが本書込・昇格確定」
+  // という取り違えを招くため、--pr 無しでの併用は明確に弾く。
+  if (!values.pr && (values['dry-run'] || values.provider !== undefined)) {
+    throw new UsageError('--dry-run / --provider は --pr と併用してください');
+  }
+  // 空の --name は黙って無視されると「新規強制したつもりが既存照合される」取り違えになるため弾く。
+  if (values.name !== undefined && !values.name.trim()) {
+    throw new UsageError('--name が空です');
+  }
+  // 空の --provider も黙って auto 解決に落とさず弾く（--name と対称。指定したつもりが別 provider になる取り違え防止）。
+  if (values.provider !== undefined && !values.provider.trim()) {
+    throw new UsageError('--provider が空です');
+  }
+  // --pr は dry-run でも LLM を実呼び出しする（候補本文を外部送信しうる）ため、
+  // 非対話エージェントによる無制限呼び出しを防ぐべく人間ゲートを常に課す。
   requireHuman(values, 'promote');
-  return withStore((store) => {
+  return withStore(async (store, config, home) => {
     const c = store.getCandidate(positionals[0]);
     if (!c) throw new Error(`候補が見つかりません: ${positionals[0]}`);
     if (c.status === 'promoted') throw new Error(`既に昇格済みです: ${c.promoted_to}`);
@@ -547,31 +572,64 @@ function cmdPromote(args) {
     if (c.project && c.project !== proj.name) {
       throw new Error(`候補は project '${c.project}' のものです。その project の作業ツリーで実行してください（現在: '${proj.name}'）`);
     }
-    const slug = values.name ?? c.id.replace(/^cand-/, 'ulm-');
+
+    // --pr: agent が関連 skill を選んで更新（無ければ ref- 新規）し、PR を出す
+    if (values.pr) {
+      const r = await promoteWithPr(store, config, home, {
+        candidate: c,
+        projectRoot: proj.root,
+        provider: values.provider,
+        name: values.name,
+        dryRun: values['dry-run'],
+        log: (m) => console.error(m),
+      });
+      if (r.dryRun) return 0;
+      const what = r.action === 'create' ? '新規 skill 作成' : '既存 skill 更新';
+      // PR が作られたときだけ「昇格完了(✓)」。push 止まり（gh 不在等）は候補が approved のままなので、
+      // 完了と誤認させない語調にし、冪等な再実行を案内する。
+      if (r.prUrl) {
+        console.log(`✓ ${c.id} → ${what}: .claude/skills/${r.slug}/SKILL.md`);
+        console.log(`  branch: ${r.branch}`);
+        console.log(`  PR: ${r.prUrl}`);
+      } else {
+        console.log(`△ ${c.id} → ${what}を branch '${r.branch}' に commit しましたが PR は未作成です（候補は approved のまま）。`);
+        console.log('  gh CLI を入れて再実行すると PR を作成できます（ブランチは冪等に再利用）。');
+      }
+      if (r.note) console.log(`  ${r.note}`);
+      return 0;
+    }
+
+    // 既定（ローカル生成）: 候補1件をそのまま ref- skill として新規生成する。
+    // 昇格 skill は ref-* 名前空間に統一する（--name 指定でも ref- を強制。safepath でも再検証）。
+    // 自動ロードされる .claude/skills へ書く前に、--pr 入口と同じ二条件で候補本文を再ゲートする（egress=ゲート対象）。
+    const candText = candidateGateText(c);
+    if (gateHit(compileGate(config), candText)) {
+      throw new Error(`候補 ${c.id} に機密の疑いがあるテキストが含まれるため skill 生成を中止しました`);
+    }
+    // slug 正規化は --pr 経路と同一規則（sanitizeRefSlug）に揃える: 同じ --name 値で経路により成否が割れない。
+    const slug = values.name ? sanitizeRefSlug(values.name) : c.id.replace(/^cand-/, 'ref-');
     const check = checkSkillTarget(slug, proj.root);
     if (!check.ok) throw new Error(`昇格先を拒否: ${check.reason}`);
 
-    // description = 発動条件。skill は常時注入されず、ここのマッチで初めて本文がロードされる
-    const oneline = (s) => String(s).replace(/\s+/g, ' ').trim();
+    // description = 発動条件。skill は常時注入されず、ここのマッチで初めて本文がロードされる。
+    // 正規化/サニタイズは skillpr の oneline（制御文字・U+2028/2029 除去込み）に統一する（--pr 経路と同じ防御）。
     const description = oneline([c.conditions, c.hypothesis].filter(Boolean).join(' — ')).slice(0, 300);
     const skill = [
-      '---',
-      `name: ${slug}`,
-      `description: ${JSON.stringify(description)}`,
-      '---',
+      ...renderFrontmatterHead(slug, description),
       '',
       `# ${oneline(c.hypothesis)}`,
       '',
-      ...(c.conditions ? [`- 条件: ${c.conditions}`] : []),
-      ...c.counterexamples.map((x) => `- 反例: ${x}`),
-      ...(c.evidence.length ? [`- 根拠: ${c.evidence.join(', ')}`] : []),
-      `- 出自: ${c.origin} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
+      ...(c.conditions ? [`- 条件: ${oneline(c.conditions)}`] : []),
+      ...c.counterexamples.map((x) => `- 反例: ${oneline(x)}`),
+      ...(c.evidence.length ? [`- 根拠: ${c.evidence.map(oneline).filter(Boolean).join(', ')}`] : []),
+      `- 出自: ${oneline(c.origin || 'unknown')} / 承認 ${shortDate(c.reviewed_at || nowIso())} / 昇格 ${shortDate(nowIso())} (${c.id})`,
       '',
     ].join('\n');
     mkdirSync(dirname(check.path), { recursive: true });
     writeFileSync(check.path, skill);
     store.markPromoted(c.id, check.path);
     console.log(`✓ ${c.id} を skill へ昇格: ${check.path}`);
+    console.log('  関連する既存 skill に反映して PR を出すには: ulm promote --pr');
     return 0;
   });
 }

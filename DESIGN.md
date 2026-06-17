@@ -37,8 +37,10 @@ ulm は確定知識の手前。まだ正式ルールにできない経験則を�
 ① 観測がたまる        ulm obs add（追記のみ・削除しない）
 ② 突然変異 — AI       ulm mine: 観測 → 仮説+反例+条件 を inbox へ（candidates.status=inbox）
 ③ 自然選択 — 人間     ulm review/approve/reject: 反例込みで人間が判断
-④ 昇格 — skill へ     ulm promote: 承認済み候補を project の .claude/skills/<name>/SKILL.md へ skill 化
+④ 昇格 — skill へ     ulm promote: 承認済み候補を project の .claude/skills/ref-<name>/SKILL.md へ skill 化
                        （条件→description。常時注入されず、条件マッチ時のみ本文ロード）
+   昇格(PR) — agent    ulm promote --pr: LLM が関連する既存 ref-* skill を選んで更新（無ければ ref- 新規）し PR を出す
+                       （提案は LLM・書込先検証と git/gh 実行は ulm。候補本文は送出前に再ゲート）
 ```
 
 - **神殿（厳格）**: ref・機密・現在状態。勝手な生成・統合は禁止。
@@ -110,7 +112,8 @@ ulm inbox                                 # status=inbox の候補一覧（出�
 ulm show <id>                             # obs/cand 詳細
 ulm approve <id> [--note N]               # 人間の操作
 ulm reject <id> [--note N]                # 人間の操作
-ulm promote <id> [--name slug]            # approved → project の .claude/skills へ skill 化
+ulm promote <id> [--name slug]            # approved → project の .claude/skills/ref-* へ skill 化（既定: ref-<id>）
+ulm promote <id> --pr [--provider P] [--dry-run]  # agent が関連 skill を更新（無ければ ref- 新規）し PR を出す
 ulm ref add <path> [--note N] [--project P]
 ulm ref list
 ulm mine [--project P] [--days N] [--limit M] [--provider codex|opencode|openai] [--dry-run]
@@ -176,11 +179,36 @@ bin/ulm.js (+src/)             # CLI 本体（プラグインに同梱、ビル�
   /ulm:promote は approved の候補を一括で `promote --yes` してよい（--yes はユーザーが command を起動したことの明示指示）。
   inbox には触れない。
 - **昇格先は project の skill**: promote は候補の project の作業ツリーで実行し、検証済み slug から組み立てた
-  `.claude/skills/<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
-  候補と現在地の project 不一致は拒否）。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
+  `.claude/skills/ref-<slug>/SKILL.md` のみを生成する（checkSkillTarget。任意パス不可・既存上書き不可・symlink 拒否・
+  候補と現在地の project 不一致は拒否）。ただし **project を持たない候補（global / 横断観測由来）は不一致チェックの対象外**で、
+  実行中のリポジトリの `.claude/skills/ref-*` へ昇格する（横断知見はどの作業ツリーにも置けてよい、という意図）。
+  既定 slug は `ref-<id>`。条件→description、仮説→本文、出自・承認日・候補 ID を自動記録。
   skill は常時注入されない（description マッチ時のみロード）ため、昇格しても context 予算を消費しない。
   旧方式（ULM_HOME/ref への md 追記 + SessionStart でのパス注入）は廃止。refs テーブルと `ulm ref add` は
   手動登録の正式規範ポインタ用として残る。
+- **promote --pr（agent 駆動の skill 更新）**: 承認済み候補を LLM に渡し、**ulm が作った ref-\* skill のうち実在する
+  もの**から関連する既存 skill を選ばせて更新（十分に関連するものが無ければ `ref-<slug>` を新規作成）し、PR を出す。
+  手書き・他経路の skill はプロンプトにも載せず改変しない（listProjectSkills の ref- 絞り込み + checkSkillTarget /
+  checkSkillUpdateTarget の ref- 必須 + 実在 slug 限定の三重）。設計の鉄則は miner と同じ「LLM は読み取り専用で提案
+  するだけ・書込先検証と git/gh 実行は ulm」。frontmatter は ulm が生成（新規）または既存を保持（更新）し、LLM に
+  frontmatter を作らせない（description は関数 replacer で差し替え、`$` 置換展開による注入を封じる）。
+  - **ゲート（送るもの=ゲート対象）**: ① callLlm の前に候補本文＋`origin` を mine/capture と一様の再ゲート（deny
+    パターン＋高エントロピー）で fail-closed に弾く。② プロンプトに載せる既存 ref-\* skill 本文/説明も同じ条件で検査し、
+    機密を含む skill は除外（外部送出しない）。出力側は fail-closed にしない。理由は、入力を既にゲート済みで、かつ
+    LLM がファイル文脈を一切持たないため: codex/opencode は**空の使い捨て一時ディレクトリ**を cwd に起動し（ULM_HOME も
+    project repo も読ませない。ULM_HOME を cwd にすると read-only でも memory.db / export/*.secret.jsonl を読めて流出する）、
+    openai はそもそも FS 非接触。よって出力に含まれうるのは git SHA や `API_KEY=...` の例示等で、これらの全面拒否は
+    主要対象＝CI/秘密管理 lesson を塞ぐため避ける。生成本文の最終確認は人間の PR レビュー。
+  - **前提と状態**: --pr は git リポジトリ・remote・gh CLI を前提とする。remote が無いと（LLM 呼び出し後の）push 段で
+    失敗、gh が無いと push まで（候補は approved のまま・gh 導入後に冪等再実行で PR を出せる）。昇格の確定（promoted）
+    は **PR が作成できたときだけ**。`--name` 併用時は既存照合をスキップし常に新規 `ref-<slug>` を作る。本文を書いた
+    LLM の provider/model は `本文生成` として SKILL.md/PR/commit に刻み、採掘出自（candidate.origin）と区別する。
+  - --pr は dry-run でも LLM を呼ぶ（生成プレビューのため）。よって人間ゲート（TTY か --yes）を常に課す。git は成否に
+    関わらず元ブランチへ復帰し、commit 不成立時は書込んだファイルを巻き戻す。ブランチ衝突は switch -C で冪等に再試行。
+  - **同一 skill への並行 --pr 更新は逐次化する**: 同じ ref-* skill を複数の承認済み候補が --pr 更新すると、後発 PR は
+    先発 PR の更新を含まない旧本文から分岐するため、両者をマージするとロストアップデート/コンフリクトになる。ulm は
+    push 前に同一 slug の未マージブランチを検出して警告するに留める（slug は LLM 非決定で固定できないため）。運用上は
+    先行 PR をマージ/リベースしてから次の候補を昇格すること。
 - memory-recorder skill: 「条件付きで再利用できる知見」を見つけたら `ulm obs add --source claude` で記録するよう促す（記録は観測のみ。候補化は mine の仕事）。
 
 ## 7.5. ローカル Web UI（ulm web）

@@ -63,9 +63,20 @@ const DANGEROUS_LOWER = new Set([...DANGEROUS_BASENAMES].map((s) => s.toLowerCas
  */
 const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-export function checkSkillTarget(slug, projectRoot) {
+/**
+ * 昇格 skill の書込先（.claude/skills/<slug>/SKILL.md）を slug 検証 + realpath 解決 + 経路 symlink 拒否まで
+ * 一括で解決する内部ヘルパ。security-critical な symlink ガードを 1 箇所に集約し、新規/更新の 2 経路で防御が
+ * drift するのを防ぐ（既存ファイルの扱いだけ呼び出し側で分岐する）。
+ * @returns {{ok: true, target: string} | {ok: false, reason: string}}
+ */
+function resolveSkillPath(slug, projectRoot, refMsg) {
   if (!SKILL_SLUG_RE.test(String(slug))) {
     return { ok: false, reason: 'skill 名は英小文字・数字・ハイフン（先頭は英数字）64 文字以内で指定してください' };
+  }
+  // 昇格/更新 skill は ref-* 名前空間に統一（呼び出し側依存にせず safepath を最後の砦にする）。
+  // ref- の後に最低1文字の英数字を要求し、裸の 'ref-' や 'ref--' を弾く。
+  if (!/^ref-[a-z0-9]/.test(String(slug))) {
+    return { ok: false, reason: refMsg };
   }
   const root = realpathish(resolve(projectRoot));
   const dir = join(root, '.claude', 'skills', slug);
@@ -80,10 +91,41 @@ export function checkSkillTarget(slug, projectRoot) {
       if (e.code !== 'ENOENT') return { ok: false, reason: 'パスを評価できません' };
     }
   }
-  if (existsSync(target)) {
-    return { ok: false, reason: `既に存在します: ${target}（--name で別名を指定してください）` };
+  return { ok: true, target };
+}
+
+export function checkSkillTarget(slug, projectRoot) {
+  const r = resolveSkillPath(slug, projectRoot, '昇格 skill 名は ref- + 英数字で始まる必要があります');
+  if (!r.ok) return r;
+  if (existsSync(r.target)) {
+    return { ok: false, reason: `既に存在します: ${r.target}（--name で別名を指定してください）` };
   }
-  return { ok: true, path: target };
+  return { ok: true, path: r.target };
+}
+
+/**
+ * promote --pr（既存 skill 更新）専用の書込先検証。
+ * checkSkillTarget と同じ slug 制約・symlink 拒否・.claude/skills/<slug>/SKILL.md 限定だが、
+ * 「既に存在する SKILL.md への上書き（更新）」を許す点だけが異なる。
+ * agent が更新先 slug を恣意的に作れないよう、呼び出し側は実在 skill の slug 集合に限定して使うこと。
+ * 既存ファイルが通常ファイルでない（ディレクトリ等）場合は拒否（fail-closed）。
+ * @returns {{ok: true, path: string, exists: boolean} | {ok: false, reason: string}}
+ */
+export function checkSkillUpdateTarget(slug, projectRoot) {
+  // 更新は ulm が作った ref-* skill に限る（手書き・運用 skill を上書きさせない）。
+  const r = resolveSkillPath(slug, projectRoot, '既存 skill の更新は ref-* に限られます（手書き skill は更新対象外）');
+  if (!r.ok) return r;
+  if (existsSync(r.target)) {
+    try {
+      if (!lstatSync(r.target).isFile()) {
+        return { ok: false, reason: `通常ファイルではない書込先は拒否します: ${r.target}` };
+      }
+    } catch {
+      return { ok: false, reason: 'パスを評価できません' };
+    }
+    return { ok: true, path: r.target, exists: true };
+  }
+  return { ok: true, path: r.target, exists: false };
 }
 
 export function checkWriteTarget(targetPath, { refRoot, allowRoots = [] } = {}) {

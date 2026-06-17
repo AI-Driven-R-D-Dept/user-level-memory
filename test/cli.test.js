@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,11 +125,12 @@ test('CLI: promote は project の .claude/skills に SKILL.md を生成する',
     run(home, ['cand', 'add', '昇格テスト仮説', '--conditions', 'デモ作業のとき'], { cwd: proj });
     const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
     run(home, ['approve', id, '--yes']);
+    // --name は ref- 名前空間に強制される（昇格 skill は全て ref-*）
     const r = run(home, ['promote', id, '--yes', '--name', 'demo-rule'], { cwd: proj });
     assert.equal(r.status, 0, r.stderr);
-    const skillPath = join(proj, '.claude', 'skills', 'demo-rule', 'SKILL.md');
+    const skillPath = join(proj, '.claude', 'skills', 'ref-demo-rule', 'SKILL.md');
     const body = readFileSync(skillPath, 'utf8');
-    assert.match(body, /^---\nname: demo-rule\n/);
+    assert.match(body, /^---\nname: ref-demo-rule\n/);
     assert.match(body, /description: .*デモ作業のとき/);
     assert.match(body, /# 昇格テスト仮説/);
     assert.match(body, new RegExp(`出自: .*\\(${id}\\)`));
@@ -138,6 +139,131 @@ test('CLI: promote は project の .claude/skills に SKILL.md を生成する',
     assert.equal(cand.status, 'promoted');
     // checkSkillTarget は project root を realpath 解決する（macOS の /var → /private/var 等）
     assert.equal(cand.promoted_to, realpathSync(skillPath));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote は --name なしで ref- プレフィックスの skill を生成する', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'ref-prefix テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes'], { cwd: proj });
+    assert.equal(r.status, 0, r.stderr);
+    const slug = id.replace(/^cand-/, 'ref-');
+    const skillPath = join(proj, '.claude', 'skills', slug, 'SKILL.md');
+    assert.match(readFileSync(skillPath, 'utf8'), new RegExp(`^---\\nname: ${slug}\\n`));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --pr は非TTY+--yes なしで人間ゲートに掛かる（dry-run でも免除しない）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'pr ゲートテスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const denied = run(home, ['promote', id, '--pr', '--dry-run'], { cwd: proj });
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /人間の操作/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --pr は機密疑い候補を LLM 送出前に中止する（再ゲート・provider 不要）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '内部トークンは xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0 を使う'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--pr', '--dry-run', '--yes'], { cwd: proj });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /機密の疑い/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: ローカル promote も機密疑い候補は skill 生成前に再ゲートで中止（--pr と一貫・R5-should5）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '内部トークンは xK9mPqR2vL8nW3tY6bH1jF4dZ7sA5cE0 を使う'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes'], { cwd: proj }); // --pr 無しのローカル生成
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /機密の疑い/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --dry-run / --provider は --pr 無しだと使い方エラー（TEST-1）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'pr 配線テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    // パース段ガード（cli.js）は requireHuman・候補取得より前に発火する。--pr 無しでの併用を明確に弾く。
+    const r1 = run(home, ['promote', id, '--yes', '--dry-run'], { cwd: proj });
+    assert.equal(r1.status, 2);
+    assert.match(r1.stderr, /--dry-run \/ --provider は --pr/);
+    const r2 = run(home, ['promote', id, '--yes', '--provider', 'codex'], { cwd: proj });
+    assert.equal(r2.status, 2);
+    assert.match(r2.stderr, /--dry-run \/ --provider は --pr/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --pr --provider 空文字は使い方エラー（ROB-3）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', 'provider 空テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes', '--pr', '--provider', ''], { cwd: proj });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--provider が空/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dirname(proj), { recursive: true, force: true });
+  }
+});
+
+test('CLI: promote --name 空文字は使い方エラー（R5-nit3）', () => {
+  const home = freshHome();
+  const proj = freshProject('demo-proj');
+  try {
+    run(home, ['init']);
+    run(home, ['cand', 'add', '名前テスト'], { cwd: proj });
+    const id = JSON.parse(run(home, ['inbox', '--json']).stdout)[0].id;
+    run(home, ['approve', id, '--yes']);
+    const r = run(home, ['promote', id, '--yes', '--name', ''], { cwd: proj });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--name が空/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dirname(proj), { recursive: true, force: true });
@@ -163,24 +289,22 @@ test('CLI: promote は候補と現在地の project 不一致を拒否する', (
   }
 });
 
-test('CLI: promote は不正な skill 名と既存 skill への上書きを拒否する', () => {
+test('CLI: promote は --name を ref- slug に正規化し traversal を無害化、既存は上書き拒否', () => {
   const home = freshHome();
   const proj = freshProject('demo-proj');
   try {
     run(home, ['init']);
-    run(home, ['cand', 'add', 'slug検証その1'], { cwd: proj });
-    run(home, ['cand', 'add', 'slug検証その2'], { cwd: proj });
+    for (let i = 0; i < 3; i++) run(home, ['cand', 'add', `slug検証その${i}`], { cwd: proj });
     const ids = JSON.parse(run(home, ['inbox', '--json']).stdout).map((c) => c.id);
     for (const id of ids) run(home, ['approve', id, '--yes']);
-    // 不正 slug（traversal・大文字・空白）はすべて拒否
-    for (const bad of ['../escape', 'Bad Name', 'UPPER']) {
-      const r = run(home, ['promote', ids[0], '--yes', '--name', bad], { cwd: proj });
-      assert.equal(r.status, 1, `slug "${bad}" が通ってしまった`);
-      assert.match(r.stderr, /skill 名は/);
-    }
+    // traversal/大文字/空白入りの --name は --pr 経路と同じく sanitizeRefSlug で安全な ref-* に正規化される
+    const r0 = run(home, ['promote', ids[0], '--yes', '--name', '../Bad Name'], { cwd: proj });
+    assert.equal(r0.status, 0, r0.stderr);
+    assert.ok(existsSync(join(proj, '.claude', 'skills', 'ref-bad-name', 'SKILL.md')), 'ref-bad-name に正規化されるべき');
+    assert.ok(!existsSync(join(dirname(proj), 'escape')), '親ディレクトリへ脱出してはいけない');
     // 同名 skill が既にある場合は上書きせず拒否
-    assert.equal(run(home, ['promote', ids[0], '--yes', '--name', 'same-name'], { cwd: proj }).status, 0);
-    const r2 = run(home, ['promote', ids[1], '--yes', '--name', 'same-name'], { cwd: proj });
+    assert.equal(run(home, ['promote', ids[1], '--yes', '--name', 'dup'], { cwd: proj }).status, 0);
+    const r2 = run(home, ['promote', ids[2], '--yes', '--name', 'dup'], { cwd: proj });
     assert.equal(r2.status, 1);
     assert.match(r2.stderr, /既に存在します/);
   } finally {
