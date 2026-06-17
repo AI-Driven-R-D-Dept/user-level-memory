@@ -75,6 +75,20 @@ systemctl --user enable --now ulm-web-tailnet
 Linux の tailscaled は unix socket 経由なので `--tailnet` が headless でも動く。検出が不安定なら
 ユニット内の `ExecStart` を固定指定版（`--host ... --allow-host ... --no-token`）に差し替える。
 
+**停止/削除（teardown）**: tokenless 公開を確実に止める手順（launchd の `install.sh uninstall` に相当）:
+
+```bash
+systemctl --user disable --now ulm-web-tailnet
+rm ~/.config/systemd/user/ulm-web-tailnet.service
+systemctl --user daemon-reload
+loginctl disable-linger "$USER"                       # 他に linger 必要な user unit が無ければ
+journalctl --user --vacuum-time=1d -u ulm-web-tailnet  # ログを縮める（任意）
+```
+
+**IP 変更時 (systemd)**: 起動後にノードの Tailscale IPv4 が変わっても、稼働中の listen socket は落ちないので
+`Restart=always` は発火せず、`active (running)` のまま到達不能になる。`systemctl --user restart ulm-web-tailnet`
+で `detectTailnet` が再実行され新 IP に bind し直す（固定指定版なら `ExecStart` を編集して restart）。
+
 ## メンテ上の注意
 
 - **node は絶対パス**で埋め込む（launchd は PATH を持たないため決め打ちが必要。`node` を上げたら再導入＝launchd は

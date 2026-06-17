@@ -68,8 +68,16 @@ resolve_tailscale() {
 
 # launchctl が把握している agent の pid（未ロードなら空）。pipefail 下でも落ちないよう末尾 || true。
 managed_pid() { launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -E '^[[:space:]]*pid =' | grep -oE '[0-9]+' | head -1 || true; }
-# 指定 host:port を LISTEN しているプロセスの pid（無ければ空）。bind 先 IP に限定して誤検出を防ぐ。
+# 自分の agent が握る host:port の pid（無ければ空）。agent は具体 IP に bind するので @IP で確認できる。
 listen_pid() { lsof -nP -iTCP@"$1":"$2" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2; exit}' || true; }
+# bind(ip:port) と競合する listener の pid 群。具体 IP 一致 + ワイルドカード(*/0.0.0.0/[::])。
+# 別の具体 IP（127.0.0.1 等）は競合しないので除外する。@IP フィルタはワイルドカード bind を取りこぼすため :port 全件から判定。
+conflict_pids() {
+  lsof -nP -iTCP:"$2" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2, $9}' | while read -r p name; do
+    host="${name%:*}" # NAME の最後の :port を除いたローカルアドレス
+    case "$host" in "$1"|'*'|'0.0.0.0'|'[::]'|'::') printf '%s\n' "$p" ;; esac
+  done | sort -u || true
+}
 
 install_agent() {
   [ -f "$ULM_JS" ] || die "ulm 本体が見つかりません: $ULM_JS"
@@ -107,14 +115,14 @@ install_agent() {
 
   echo "検出: IP=$IP  MagicDNS=$NAME  node=$NODE  repo=$REPO  port=$PORT"
 
-  # bind 先 IP:$PORT を握っているのが「自分の管理下 agent 以外」なら fail-fast。
-  # IP 限定なので、別 IF（127.0.0.1:$PORT 等）の無関係な listener では誤って止めない。snapshot は一度だけ。
-  local existing existing_pid
-  existing="$(lsof -nP -iTCP@"$IP":"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
-  existing_pid="$(printf '%s\n' "$existing" | awk 'NF{print $2; exit}')"
-  if [ -n "$existing" ] && [ "$existing_pid" != "$(managed_pid)" ]; then
-    echo "$existing" >&2
-    die "$IP:$PORT は別プロセスが LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
+  # bind(IP:$PORT) と競合する listener（具体IP一致 + ワイルドカード）を、自分の管理下 agent 以外で検出したら fail-fast。
+  # 別 IF（127.0.0.1:$PORT 等）の無関係な listener では誤って止めない。0.0.0.0:$PORT も取りこぼさない。
+  local mpid foreign
+  mpid="$(managed_pid)"
+  foreign="$(conflict_pids "$IP" "$PORT" | grep -v -x -F "${mpid:-__none__}" || true)"
+  if [ -n "$foreign" ]; then
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null >&2 || true
+    die "ポート $PORT は別プロセス（pid: $(printf '%s' "$foreign" | tr '\n' ' ')）が LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
   fi
 
   mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
@@ -171,7 +179,11 @@ install_agent() {
     code="${code:-000}"
     echo "✓ 常時起動を導入しました: http://$NAME:$PORT/  (pid $ap / 疎通 HTTP $code)"
   else
-    echo "⚠ まだ listen していません（Tailscale 接続後に自動起動します）。ログ: $LOG ／ 状態: $0 status"
+    # listen 未確認の原因は Tailscale 未接続とは限らない（ポート競合・--host IP 陳腐化・node 異常等）。
+    # 実 exit code を出して断定を避ける。
+    local lec
+    lec="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -i 'last exit' | head -1 | tr -s ' ' || true)"
+    echo "⚠ まだ listen していません（${lec:-状態不明}）。原因: Tailscale 未接続 / ポート競合 / --host IP 陳腐化 など。ログ確認: $LOG ／ 状態: $0 status"
   fi
   echo "  ⚠ token 無し公開: tailnet(ACL)内デバイス + このマシン上の任意プロセスが閲覧・承認できます"
   echo "  停止/削除: $0 uninstall ／ 状態: $0 status ／ 反映: launchctl kickstart -k $DOMAIN/$LABEL"
