@@ -63,7 +63,7 @@ observations(
   project TEXT,                  -- 例: "user-level-memory"（git root の basename）
   text TEXT NOT NULL,
   tags TEXT NOT NULL DEFAULT '[]',  -- JSON array
-  source TEXT NOT NULL DEFAULT 'manual',  -- manual | claude | import
+  source TEXT NOT NULL DEFAULT 'manual',  -- manual | claude | auto | web | import（auto=capture 自動抽出 / web=Web UI 追加）
   secret INTEGER NOT NULL DEFAULT 0,
   meta TEXT NOT NULL DEFAULT '{}'   -- cwd, session_id, bd issue 等
 )
@@ -253,7 +253,7 @@ SessionStart の recency 詰め込みだけでは「古いが関連する記憶�
   `vocab_size` のような特異トークンに強い。`obs_fts` 仮想テーブル + トリガで観測に同期。
 - **意味層（埋め込み・任意）**: OpenAI 互換 embeddings を `obs_vec` に貯め、クエリベクトルと cosine。
   「スタイルが反映されない ⇄ クラスが効かない」のような**字面ゼロ一致の同義語**を拾う。キーが無ければ自動で無効化し字句層のみで動く（依存ゼロを崩さない）。
-- **融合（RRF）**: 両層のランクを Reciprocal Rank Fusion で統合し、どちらの取りこぼしも補完する。
+- **融合（vector 主軸）**: 等重み RRF は強い vector を弱い FTS が引き下げ hybrid を vector 未満に劣化させた（外部評価で実証）ため不採用。vector の順位を保持し、FTS 固有ヒットのみ末尾に救済追加する vector-primary 方式（`src/recall.js` の `fuseVectorPrimary`）。RRF は FTS 固有ヒットの並べ替えにのみ使う。
 - **動的注入**: `UserPromptSubmit` hook で「いま聞かれたこと」に関連する観測だけを注入（`ulm recall --hook`）。
   SessionStart の無条件注入とは別経路で、source=auto（未レビュー）は SessionStart に出さず recall（関連時のみ）に委ねる。
 

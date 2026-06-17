@@ -47,7 +47,7 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm capture [--transcript F] [--project P] [--dry-run]  作業ログから観測を自動抽出(source=auto)
   ulm ref add <path.md> [--note N] [--project P] | ulm ref list | ulm ref rm <id|path>
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
-  ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶を BM25 で想起
+  ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶をハイブリッド想起（FTS5/BM25 + 埋め込み・キー無しは FTS のみ）
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
   ulm web [--port 8765]                                 DB を閲覧・編集するローカル Web UI（127.0.0.1）
 
@@ -740,7 +740,7 @@ async function cmdContext(args) {
   });
 }
 
-// UserPromptSubmit 用: プロンプトに関連する記憶を BM25 で動的注入する
+// UserPromptSubmit 用: プロンプトに関連する記憶をハイブリッド想起（FTS5/BM25 + 埋め込み）で動的注入する
 async function cmdRecall(args) {
   const { values, positionals } = parse(args, {
     project: { type: 'string' },
