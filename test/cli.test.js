@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseTailnetStatus } from '../src/cli.js';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js');
 
@@ -398,4 +399,33 @@ test('obs add: 警告候補にも生成ゲート（後付け deny パターン�
   assert.equal(b.status, 0);
   assert.match(b.stdout, /✓ 観測を記録/);
   assert.ok(!b.stderr.includes('ACMEXYZZY'), `機密様テキストが警告に漏れない: ${b.stderr}`);
+});
+
+test('parseTailnetStatus: 正常な status から 100.x IPv4 と MagicDNS 名を取り出す', () => {
+  const raw = JSON.stringify({
+    BackendState: 'Running',
+    Self: { TailscaleIPs: ['fd7a:1::1', '100.100.90.41'], DNSName: 'erenmac-mini.folk-viper.ts.net.' },
+  });
+  assert.deepEqual(parseTailnetStatus(raw), { ip: '100.100.90.41', dnsName: 'erenmac-mini.folk-viper.ts.net' });
+});
+
+test('parseTailnetStatus: 非JSON（macOS GUI headless）は --host フォールバックを案内する実用エラー', () => {
+  // launchd/最小 env での実出力: GUI 起動失敗メッセージ（exit 0 だが非 JSON）
+  const raw = 'The Tailscale GUI failed to start: The operation couldn’t be completed. (Tailscale.CLIError error 3.)\n';
+  assert.throws(() => parseTailnetStatus(raw), (err) => {
+    assert.match(err.message, /JSON を返しませんでした/);
+    assert.match(err.message, /--host/); // 固定指定フォールバックを案内
+    assert.match(err.message, /GUI/); // 原因に触れる
+    return true;
+  });
+});
+
+test('parseTailnetStatus: 未接続（BackendState!=Running）は接続を促すエラー', () => {
+  const raw = JSON.stringify({ BackendState: 'NeedsLogin', Self: {} });
+  assert.throws(() => parseTailnetStatus(raw), /未接続|tailscale up/);
+});
+
+test('parseTailnetStatus: 100.x が無ければ --host 手動指定を促す', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['fd7a:1::1'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|--host/);
 });

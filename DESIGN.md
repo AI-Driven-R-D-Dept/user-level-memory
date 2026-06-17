@@ -228,6 +228,10 @@ node:http のみで依存ゼロを維持）。
   手動 `--host` を使う）。手動制御は `--host <ip> --allow-host <name> [--no-token]`。既定（loopback）挙動は不変。
   なお `tailscale serve` 経由（127.0.0.1 へ逆プロキシ）だと peer IP が潰れて `Tailscale-User-*` ヘッダは同一ホストの
   別プロセスから偽造可能なため、ulm は ID ヘッダを信頼しない（採用しない）。
+- **常時起動**: OS サービス化の補助は `contrib/`（macOS launchd / Linux systemd）。macOS App Store 版 Tailscale CLI は
+  GUI セッション依存で launchd 下では `tailscale status` が JSON を返さないため、サービスでは `--tailnet`（CLI 依存）を使わず
+  導入時に検出した 100.x IP + MagicDNS 名を `--host/--allow-host/--no-token` で固定する（`detectTailnet` は非対話環境で
+  失敗時に固定指定へ誘導するエラーを返す）。
 - **できること**: 観測のフラグ（pin/secret/archive）・タグ編集・redact・追加（入口ゲート適用・source=web）／
   state の上書き・追加・削除（入口ゲート適用）／候補の approve・reject（**inbox のみ**）・条件/メモ編集／
   ref ポインタの追加（CLI と同一の safepath 検証）・削除／SQL（**読み取り専用接続 + 単一 SELECT のみ**の二重の壁）。

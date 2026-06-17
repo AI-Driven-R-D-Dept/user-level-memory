@@ -975,6 +975,39 @@ function resolveTailscaleBin() {
   return null;
 }
 
+// 常時起動（launchd 等）でも一貫して案内するフォールバック手順。
+const TAILNET_MANUAL_HINT =
+  '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net --no-token` で固定指定してください';
+
+/**
+ * `tailscale status --json` の生出力から { ip, dnsName } を取り出す純関数（テスト用に export）。
+ * 不正・未接続時は実用的な UsageError を投げる。
+ */
+export function parseTailnetStatus(raw) {
+  let status;
+  try {
+    status = JSON.parse(raw);
+  } catch {
+    // macOS App Store 版 CLI は GUI セッション依存で、launchd/cron/最小 env では
+    // "The Tailscale GUI failed to start..." を stdout に吐く（exit 0 だが非 JSON）。実機で確認済み。
+    const head = String(raw).trim().split('\n')[0].slice(0, 160);
+    throw new UsageError(
+      `tailscale status --json が JSON を返しませんでした${head ? `（出力: ${head}）` : ''}。`
+      + 'macOS GUI 版 CLI は launchd 等の非対話環境では動きません。'
+      + `常時起動などでは ${TAILNET_MANUAL_HINT}`,
+    );
+  }
+  if (status.BackendState && status.BackendState !== 'Running') {
+    throw new UsageError(`Tailscale が未接続です（BackendState=${status.BackendState}）。\`tailscale up\` で接続してください`);
+  }
+  const self = status.Self || {};
+  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
+  const ip = ips.find((a) => /^100\./.test(a)) || ips.find((a) => !String(a).includes(':'));
+  const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
+  if (!ip) throw new UsageError(`Tailscale の 100.x IPv4 を取得できませんでした。${TAILNET_MANUAL_HINT}`);
+  return { ip, dnsName };
+}
+
 /**
  * tailscale CLI から自ノードの 100.x IPv4 と MagicDNS 名を得る（--tailnet 用）。
  * 0.0.0.0 ではなく 100.x に名指しバインドして tailnet 限定に保つのが狙い。
@@ -984,7 +1017,7 @@ function detectTailnet() {
   if (!bin) {
     throw new UsageError(
       'tailscale CLI が見つかりません（PATH / 既知の場所いずれにも無し。ULM_TAILSCALE_BIN で指定可）。'
-      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
+      + TAILNET_MANUAL_HINT,
     );
   }
   let raw;
@@ -995,19 +1028,9 @@ function detectTailnet() {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
-    throw new UsageError(
-      'tailscale status を実行できません（Tailscale が起動しているか確認）。'
-      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
-    );
+    throw new UsageError(`tailscale status を実行できません（Tailscale が起動しているか確認）。${TAILNET_MANUAL_HINT}`);
   }
-  let status;
-  try { status = JSON.parse(raw); } catch { throw new UsageError('tailscale status --json を解析できませんでした'); }
-  const self = status.Self || {};
-  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
-  const ip = ips.find((a) => /^100\./.test(a)) || ips.find((a) => !String(a).includes(':'));
-  const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
-  if (!ip) throw new UsageError('Tailscale の 100.x IPv4 を取得できませんでした。--host で手動指定してください');
-  return { ip, dnsName };
+  return parseTailnetStatus(raw);
 }
 
 async function cmdWeb(args) {
@@ -1035,7 +1058,8 @@ async function cmdWeb(args) {
     if (!values['no-token']) requireToken = false; // tailnet 既定はトークン無し
   } else if (values.host) {
     host = values.host;
-    displayHost = host;
+    // --allow-host があれば表示 URL はその名前を優先（IP 直よりブラウザで開きやすい）。
+    displayHost = allowedHosts[0] || host;
   }
 
   const home = ulmHome();

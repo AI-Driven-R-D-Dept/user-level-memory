@@ -1,0 +1,31 @@
+# ulm web を tailnet 直アクセスで常時起動する systemd ユーザーユニット（Linux）。
+#
+# 設置（ユーザー単位・root 不要）:
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
+#   # 下の __NODE__ / __ULM_JS__ を実パスに書き換える（例: which node, リポジトリの bin/ulm.js）
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ulm-web-tailnet
+#   loginctl enable-linger "$USER"   # ログアウト後も動かすなら
+#
+# 確認: systemctl --user status ulm-web-tailnet ／ journalctl --user -u ulm-web-tailnet -f
+#
+# macOS と違い Linux の tailscaled は unix socket 経由なので、--tailnet が headless でも動く。
+# 検出が不安定な環境では下記 ExecStart をコメントの固定指定版に差し替える。
+
+[Unit]
+Description=ulm web (tailnet direct access)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__NODE__ __ULM_JS__ web --tailnet --port 8765
+# 固定指定版（検出を使わない・最も堅牢）:
+# ExecStart=__NODE__ __ULM_JS__ web --host <100.x IP> --allow-host <node>.<tailnet>.ts.net --no-token --port 8765
+Environment=ULM_HOME=%h/.claude/user-memory
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
