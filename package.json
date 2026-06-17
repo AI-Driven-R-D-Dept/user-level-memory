@@ -1,6 +1,6 @@
 {
   "name": "ulm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "user-level memory — Claude Code のためのユーザーレベル長期記憶レイヤー（観測 / 可変状態 / 仮説候補）",
   "type": "module",
   "bin": {
