@@ -51,8 +51,9 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶をハイブリッド想起（FTS5/BM25 + 埋め込み・キー無しは FTS のみ）
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
-  ulm web [--port 8765] [--tailnet] [--host IP]         DB を閲覧・編集する Web UI（既定 127.0.0.1+トークン必須）。
-              [--allow-host NAME ...] [--no-token]          --tailnet は 100.x に直バインドし既定でトークン無し公開（tailnet ACL を信頼境界に）
+  ulm web [--port 8765] [--tailnet]                     DB を閲覧・編集する Web UI（既定 127.0.0.1+トークン必須）。
+              [--host loopback|100.x] [--allow-host NAME]   --tailnet は 100.x(CGNAT) に直バインドし既定でトークン無し公開（tailnet ACL を信頼境界に）。
+              [--no-token]                                  --host は loopback か tailnet の 100.x のみ受理
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
 

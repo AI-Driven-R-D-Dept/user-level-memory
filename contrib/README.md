@@ -63,7 +63,8 @@ mkdir -p ~/.config/systemd/user
 cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
 # __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと値中の & や # でパスが壊れる）。
 # __NODE__ = node の実体（process.execPath）。asdf/volta/fnm の shim は systemd 下で版を解決できず不可。
-node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()))' \
+# --port/ULM_HOME は ULM_PORT / ULM_HOME 環境変数で上書き可（launchd 側と同じ。未指定は 8765 / ~/.claude/user-memory）。
+node -e 'const fs=require("fs"),f=process.argv[1],e=process.env;fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()).split("__PORT__").join(e.ULM_PORT||"8765").split("__ULM_HOME__").join(e.ULM_HOME||e.HOME+"/.claude/user-memory"))' \
   ~/.config/systemd/user/ulm-web-tailnet.service
 loginctl enable-linger "$USER"   # 常時起動には必須: headless/再起動後も起動させる（無いとログインセッション中のみ稼働）
 systemctl --user daemon-reload
@@ -81,8 +82,8 @@ Linux の tailscaled は unix socket 経由なので `--tailnet` が headless �
 systemctl --user disable --now ulm-web-tailnet
 rm ~/.config/systemd/user/ulm-web-tailnet.service
 systemctl --user daemon-reload
-loginctl disable-linger "$USER"                       # 他に linger 必要な user unit が無ければ
-journalctl --user --vacuum-time=1d -u ulm-web-tailnet  # ログを縮める（任意）
+loginctl disable-linger "$USER"          # 他に linger 必要な user unit が無ければ
+journalctl --user --vacuum-time=1d       # 任意。注: vacuum は単一ユニットに絞れずユーザジャーナル全体に効く
 ```
 
 **IP 変更時 (systemd)**: 起動後にノードの Tailscale IPv4 が変わっても、稼働中の listen socket は落ちないので

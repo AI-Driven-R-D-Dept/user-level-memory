@@ -152,6 +152,43 @@ test('webapp: requireToken=false はトークン無しで通る（tailnet ACL �
   });
 });
 
+/** Host を偽装して POST /api/* を投げ status を返す（fetch は Host を上書きできない） */
+async function postWithHost(port, hostHeader, path, bodyObj) {
+  const { request } = await import('node:http');
+  const body = JSON.stringify(bodyObj);
+  return new Promise((resolveStatus, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path, method: 'POST', headers: { host: hostHeader, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
+      (res) => { res.resume(); resolveStatus(res.statusCode); },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+test('webapp: requireToken=false でも POST mutation はトークン無しで通る（tailnet 公開の核心挙動・回帰ガード）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const cand = store.addCandidate({ hypothesis: 'tokenless 承認テスト', origin: 'manual' });
+    // 許可ホストありで起動（tailnet 相当）。loopback からの allowlist Host アクセスを許す。
+    const { server, port } = await startWebServer(store, testConfig(), home, { port: 0, requireToken: false, allowedHosts: ['node.test.ts.net'] });
+    try {
+      // token 無しで承認が通る（--tailnet/--no-token の信頼境界そのもの）
+      const ok = await fetch(`http://127.0.0.1:${port}/api/cand/review`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: cand.id, status: 'approved' }),
+      });
+      assert.equal(ok.status, 200);
+      assert.equal(store.getCandidate(cand.id).status, 'approved');
+      // 許可 Host からの mutation も通る
+      assert.equal(await postWithHost(port, 'node.test.ts.net', '/api/obs', { text: 'tokenless 観測' }), 200);
+      // ただし Host 検証は外れない: 非許可 Host からの mutation は 403
+      assert.equal(await postWithHost(port, 'evil.example.com', '/api/cand/review', { id: cand.id, status: 'rejected' }), 403);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 test('webapp: obs の追加は入口ゲートを通る（機密パターンは自動 secret）', async () => {
   await withFreshStoreAsync(async (store, home) => {
     await withServer(store, home, async ({ call }) => {

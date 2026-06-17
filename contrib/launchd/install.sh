@@ -83,6 +83,7 @@ install_agent() {
   [ -f "$ULM_JS" ] || die "ulm 本体が見つかりません: $ULM_JS"
   [ -f "$TEMPLATE" ] || die "テンプレートが見つかりません: $TEMPLATE"
   case "$PORT" in ''|*[!0-9]*) die "ULM_PORT は整数で指定してください: $PORT" ;; esac
+  PORT=$((10#$PORT)) # 先頭ゼロを正規化（08080→8080。plist/banner と実 bind ポートを一致させる）
   { [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } || die "ULM_PORT が範囲外です: $PORT"
 
   local NODE TS DETECT IP NAME
