@@ -132,7 +132,8 @@ install_agent() {
     __REPO__ "$REPO" __ULM_HOME__ "$ULM_HOME_VAL" __LOG__ "$LOG" \
     || { rm -f "$TMP"; die "plist の生成に失敗しました"; }
   plutil -lint "$TMP" >/dev/null || { rm -f "$TMP"; die "生成した plist が不正です"; }
-  mv "$TMP" "$PLIST"  # ここで初めて既存を置換（ここまでの失敗では元 plist が残る）
+  # ここで初めて既存を置換（ここまでの失敗では元 plist が残る）。失敗時も temp を残さず案内する。
+  mv "$TMP" "$PLIST" || { rm -f "$TMP"; die "plist の設置に失敗しました（$PLIST に書き込めません）"; }
 
   # 既存をクリーンに入れ直す（冪等）。bootout は非同期なので未ロードになるまで待ってから bootstrap。
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then

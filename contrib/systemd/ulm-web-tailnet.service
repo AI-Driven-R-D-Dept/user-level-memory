@@ -7,9 +7,9 @@
 #   # __NODE__ は node の実体の絶対パス（process.execPath）。asdf/volta/fnm の shim はダメ
 #   # （systemd はシェル初期化が無く shim が版を解決できずクラッシュループする）。
 #   node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js"))' ~/.config/systemd/user/ulm-web-tailnet.service
+#   loginctl enable-linger "$USER"   # 常時起動には必須（headless/再起動後の自動起動。無いとログイン中のみ動く）
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now ulm-web-tailnet
-#   loginctl enable-linger "$USER"   # ログアウト後も動かすなら
 #
 # 確認: systemctl --user status ulm-web-tailnet ／ journalctl --user -u ulm-web-tailnet -f
 #

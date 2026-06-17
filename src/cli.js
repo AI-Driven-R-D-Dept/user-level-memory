@@ -11,7 +11,7 @@ import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
 import { capture, findDupCandidates } from './capture.js';
-import { startWebServer } from './webapp.js';
+import { startWebServer, normalizeHost } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
@@ -1050,7 +1050,13 @@ function detectTailnet() {
 }
 
 function isLoopbackHost(h) {
-  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || /^127\./.test(h);
+  // IP リテラルのみ受理（'127.0.0.1.evil.com' のような名前が listen で DNS 解決され
+  // 非 loopback に bind される事故を防ぐ。CGNAT 側と同じく isIP で literal 検証する）。
+  if (h === 'localhost') return true;
+  const v = isIP(h);
+  if (v === 6) return h === '::1';
+  if (v === 4) return /^127\./.test(h);
+  return false;
 }
 
 /**
@@ -1069,7 +1075,8 @@ export function resolveWebBind(values, detect = detectTailnet) {
     const { ip, dnsName } = detect();
     const allowedHosts = dnsName ? [...allowHosts, dnsName] : allowHosts;
     // tailnet は ACL を信頼境界にする想定なので既定トークン無し（--no-token でも無し）。
-    return { host: ip, allowedHosts, requireToken: false, displayHost: dnsName || ip, kind: 'tailnet' };
+    // 表示はユーザ指定の別名 > 検出 MagicDNS 名 > 100.x IP の優先（--host 経路と一貫）。
+    return { host: ip, allowedHosts, requireToken: false, displayHost: allowHosts[0] || dnsName || ip, kind: 'tailnet' };
   }
 
   if (values.host) {
@@ -1096,7 +1103,8 @@ export function resolveWebBind(values, detect = detectTailnet) {
 /** 起動バナー行を組み立てる純関数（テスト用に export）。kind は loopback|tailnet のみ。 */
 export function webBanner(bind, token, actualPort) {
   const lines = [];
-  const raw = bind.displayHost || bind.host;
+  // allowlist と同じ正規化（:port / 末尾ドット除去）で URL を整える。二重ポート（name:port:port）を防ぐ。
+  const raw = normalizeHost(bind.displayHost || bind.host);
   const shown = isIP(raw) === 6 ? `[${raw}]` : raw; // 真の裸 IPv6 だけ角括弧（name:port を IPv6 と誤判定しない）
   if (bind.kind === 'tailnet') {
     lines.push(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actualPort} / Ctrl+C で終了）`);

@@ -474,9 +474,17 @@ test('resolveWebBind: loopback/100.x 以外の --host は一律拒否（0.0.0.0 
 test('resolveWebBind: --host は loopback / 100.x のみ受理し [::1] の角括弧は外す', () => {
   assert.equal(resolveWebBind(webValues({ host: '127.0.0.1' })).kind, 'loopback');
   assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).kind, 'tailnet');
+  assert.equal(resolveWebBind(webValues({ host: 'localhost' })).kind, 'loopback');
+  assert.equal(resolveWebBind(webValues({ host: '::1' })).kind, 'loopback');
   const r = resolveWebBind(webValues({ host: '[::1]' }));
   assert.equal(r.host, '::1'); // listen は裸 IP を要求するので角括弧を外す
   assert.equal(r.kind, 'loopback');
+});
+
+test('resolveWebBind: 127.* の名前(非リテラル)は loopback 扱いせず拒否（listen の DNS 解決 bind 防止）', () => {
+  for (const h of ['127.0.0.1.evil.com', '127.evil', '127.0.0.999']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h, 'no-token': true })), /loopback か tailnet/, `reject ${h}`);
+  }
 });
 
 test('resolveWebBind: --host 100.x は既定トークン維持／--no-tokenで外す', () => {
@@ -536,10 +544,11 @@ test('parseTailnetStatus: 非CGNATの 100.x は採用しない（fail-closed）'
   assert.throws(() => parseTailnetStatus(raw), /100\.x|CGNAT|--host/);
 });
 
-test('webBanner: name:port の displayHost を IPv6 と誤認して角括弧で囲まない', () => {
+test('webBanner: displayHost の :port を正規化して二重ポートURLにしない', () => {
   const lines = webBanner({ host: '100.64.0.5', displayHost: 'node.ts.net:9000', kind: 'tailnet' }, 'abc', 8765).join('\n');
-  assert.match(lines, /http:\/\/node\.ts\.net:9000:8765\//); // 角括弧無し
-  assert.doesNotMatch(lines, /\[node\.ts\.net:9000\]/);
+  assert.match(lines, /http:\/\/node\.ts\.net:8765\//); // :9000 は落ち actualPort のみ
+  assert.doesNotMatch(lines, /9000/);
+  assert.doesNotMatch(lines, /\[/); // 角括弧も付かない
 });
 
 // --- cmdWeb のサブプロセス検証（resolveWebBind→startWebServer の配線まで通す） ---
@@ -594,4 +603,35 @@ test('ulm web --no-token (loopback): tokenless バナーを出して起動する
     child.on('error', finish);
   });
   rmSync(home, { recursive: true, force: true });
+});
+
+test('ulm web --tailnet: tailscale が非JSON(GUI headless等)なら固定指定へ誘導して exit 2', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ulm-ts-'));
+  const stub = join(dir, 'tailscale');
+  // version は成功・status は非JSON を返すスタブ（macOS App Store CLI の headless 失敗を再現）
+  writeFileSync(stub, '#!/bin/sh\nif [ "$1" = version ]; then echo 1.0; exit 0; fi\necho "The Tailscale GUI failed to start"\nexit 0\n', { mode: 0o755 });
+  const home = freshHome();
+  try {
+    const r = spawnSync('node', [BIN, 'web', '--tailnet'], {
+      env: { ...process.env, ULM_HOME: home, ULM_TAILSCALE_BIN: stub, NODE_NO_WARNINGS: '1' },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /JSON を返しませんでした|--host/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ulm web --host <未割当CGNAT>: EADDRNOTAVAIL を案内化して exit 2', () => {
+  const home = freshHome();
+  try {
+    // 100.64.231.231 はこのホストに割り当てられていない CGNAT IP → bind 失敗
+    const r = run(home, ['web', '--host', '100.64.231.231', '--no-token']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /バインドできません/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

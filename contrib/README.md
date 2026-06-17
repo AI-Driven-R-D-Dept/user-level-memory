@@ -53,10 +53,12 @@ cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
 # __NODE__ = node の実体（process.execPath）。asdf/volta/fnm の shim は systemd 下で版を解決できず不可。
 node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js"))' \
   ~/.config/systemd/user/ulm-web-tailnet.service
+loginctl enable-linger "$USER"   # 常時起動には必須: headless/再起動後も起動させる（無いとログインセッション中のみ稼働）
 systemctl --user daemon-reload
 systemctl --user enable --now ulm-web-tailnet
-loginctl enable-linger "$USER"   # ログアウト後も動かすなら
 ```
+
+> `loginctl enable-linger` を省くと、user systemd はログイン中しか動かず**再起動後に上がらない**（headless で特に問題）。
 
 Linux の tailscaled は unix socket 経由なので `--tailnet` が headless でも動く。検出が不安定なら
 ユニット内の `ExecStart` を固定指定版（`--host ... --allow-host ... --no-token`）に差し替える。
