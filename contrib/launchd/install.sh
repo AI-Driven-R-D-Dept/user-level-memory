@@ -31,6 +31,9 @@ uninstall() {
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     # ラベル(service-target)で bootout する。パス形式は plist が消えていると Label を読めず失敗するため。
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    # bootout は非同期（SIGTERM→SIGKILL）。unload 完了まで待ってから判定する（install と同じ猶予）。
+    local j
+    for j in $(seq 1 50); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.2; done
     if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
       die "bootout に失敗し agent がまだ動いています（tokenless 公開中）。手動: launchctl bootout $DOMAIN/$LABEL"
     fi
@@ -85,9 +88,11 @@ install_agent() {
     catch { console.error("tailscale が JSON を返しません（GUI 未起動など）: " + String(raw).trim().split("\n")[0]); process.exit(1); }
     if (s.BackendState && s.BackendState !== "Running") { console.error("Tailscale 未接続: BackendState=" + s.BackendState); process.exit(1); }
     const self = s.Self || {};
-    const ip = (self.TailscaleIPs||[]).find(a => /^100\./.test(a));
+    // CGNAT 100.64.0.0/10 のみ（cli.js isCgnatIp と一致。public な 100.x を tokenless 公開しない）
+    const isCgnat = (ip) => { const o = String(ip).split("."); return o.length===4 && Number(o[0])===100 && Number(o[1])>=64 && Number(o[1])<=127; };
+    const ip = (self.TailscaleIPs||[]).find(a => isCgnat(a));
     const name = String(self.DNSName||"").replace(/\.$/,"").toLowerCase();
-    if (!ip) { console.error("100.x IPv4 が取得できません"); process.exit(1); }
+    if (!ip) { console.error("CGNAT(100.64.0.0/10) の IPv4 が取得できません"); process.exit(1); }
     process.stdout.write(ip + "\t" + name);
   ' "$TS")" || die "tailnet 情報の検出に失敗しました"
   IP="${DETECT%%$'\t'*}"

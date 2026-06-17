@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -518,4 +518,80 @@ test('resolveWebBind: --host(100.x) + --allow-host は表示に名前を優先�
 test('resolveWebBind: loopback --host + --allow-host は死に設定として拒否（到達不能URLを出さない）', () => {
   // 127.0.0.1 にしか bind しないのに tailnet 名を許可しても到達できず、トークン入り偽URLを出すのを防ぐ
   assert.throws(() => resolveWebBind(webValues({ host: '127.0.0.1', 'allow-host': ['node.ts.net'] })), /loopback バインドでは到達できません/);
+});
+
+test('resolveWebBind: tailnet 判定は CGNAT 100.64.0.0/10 のみ（public な 100.x を tokenless 公開しない）', () => {
+  // 範囲内は受理
+  for (const h of ['100.64.0.0', '100.100.90.41', '100.127.255.255']) {
+    assert.equal(resolveWebBind(webValues({ host: h })).kind, 'tailnet', `accept ${h}`);
+  }
+  // 範囲外の 100.x（public IPv4 空間）は拒否
+  for (const h of ['100.0.0.1', '100.63.255.255', '100.128.0.1', '100.200.5.5']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h, 'no-token': true })), /loopback か tailnet/, `reject ${h}`);
+  }
+});
+
+test('parseTailnetStatus: 非CGNATの 100.x は採用しない（fail-closed）', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['100.200.5.5'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|CGNAT|--host/);
+});
+
+test('webBanner: name:port の displayHost を IPv6 と誤認して角括弧で囲まない', () => {
+  const lines = webBanner({ host: '100.64.0.5', displayHost: 'node.ts.net:9000', kind: 'tailnet' }, 'abc', 8765).join('\n');
+  assert.match(lines, /http:\/\/node\.ts\.net:9000:8765\//); // 角括弧無し
+  assert.doesNotMatch(lines, /\[node\.ts\.net:9000\]/);
+});
+
+// --- cmdWeb のサブプロセス検証（resolveWebBind→startWebServer の配線まで通す） ---
+
+test('ulm web: --port 範囲外は UsageError で即終了', () => {
+  const home = freshHome();
+  try {
+    const r = run(home, ['web', '--port', '99999']);
+    assert.equal(r.status, 2); // UsageError は exit 2
+    assert.match(r.stderr, /--port/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ulm web: --host 0.0.0.0 / --allow-host 単独は起動前に弾く', () => {
+  const home = freshHome();
+  try {
+    const wild = run(home, ['web', '--host', '0.0.0.0', '--no-token']);
+    assert.equal(wild.status, 2); // UsageError は exit 2
+    assert.match(wild.stderr, /loopback か tailnet/);
+    const dead = run(home, ['web', '--allow-host', 'x.ts.net']);
+    assert.equal(dead.status, 2);
+    assert.match(dead.stderr, /--allow-host/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ulm web --no-token (loopback): tokenless バナーを出して起動する（cmdWeb 配線）', async () => {
+  const home = freshHome();
+  await new Promise((resolveTest, rejectTest) => {
+    const child = spawn('node', [BIN, 'web', '--port', '0', '--no-token'], {
+      env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
+    });
+    let out = '';
+    const finish = (err) => { try { child.kill('SIGKILL'); } catch { /* already gone */ } err ? rejectTest(err) : resolveTest(); };
+    const timer = setTimeout(() => finish(new Error(`banner 未出力: ${out}`)), 8000);
+    child.stdout.on('data', (d) => {
+      out += d.toString();
+      // バナーは3つの console.log が別チャンクで届きうるので、最終行（token 無し警告）まで待ってから判定。
+      if (out.includes('token 無しで起動中')) {
+        clearTimeout(timer);
+        try {
+          assert.match(out, /127\.0\.0\.1 のみ/);
+          assert.match(out, /http:\/\/127\.0\.0\.1:\d+\//);
+          assert.doesNotMatch(out, /\?token=/); // --no-token なので URL に token は無い
+          finish();
+        } catch (e) { finish(e); }
+      }
+    });
+    child.on('error', finish);
+  });
+  rmSync(home, { recursive: true, force: true });
 });

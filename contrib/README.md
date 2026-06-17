@@ -49,9 +49,9 @@ MagicDNS 名を一度だけ検出**し、`--host <IP> --allow-host <name> --no-t
 ```bash
 mkdir -p ~/.config/systemd/user
 cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
-# __NODE__ = node の実体の絶対パス（node -p process.execPath。asdf/volta/fnm の shim は systemd 下で
-#            版を解決できずクラッシュループするので不可）／ __ULM_JS__ = リポジトリの bin/ulm.js
-sed -i "s#__NODE__#$(node -p process.execPath)#; s#__ULM_JS__#$PWD/bin/ulm.js#" \
+# __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと値中の & や # でパスが壊れる）。
+# __NODE__ = node の実体（process.execPath）。asdf/volta/fnm の shim は systemd 下で版を解決できず不可。
+node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js"))' \
   ~/.config/systemd/user/ulm-web-tailnet.service
 systemctl --user daemon-reload
 systemctl --user enable --now ulm-web-tailnet

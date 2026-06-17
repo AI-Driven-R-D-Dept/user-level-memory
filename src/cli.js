@@ -981,6 +981,19 @@ const TAILNET_MANUAL_HINT =
   '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net --no-token` で固定指定してください';
 
 /**
+ * Tailscale の CGNAT 範囲 100.64.0.0/10（第2オクテット 64〜127）の IPv4 か。
+ * `/^100\./` だと public な 100.0〜63 / 100.128〜255 まで通ってしまう（tokenless 公開の fail-open）ので
+ * tailnet 判定はこの厳密版に統一する（install.sh の検出ロジックとも一致）。
+ */
+function isCgnatIp(ip) {
+  const o = String(ip).split('.');
+  if (o.length !== 4) return false;
+  const n = o.map((x) => Number(x));
+  if (n.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
+  return n[0] === 100 && n[1] >= 64 && n[1] <= 127;
+}
+
+/**
  * `tailscale status --json` の生出力から { ip, dnsName } を取り出す純関数（テスト用に export）。
  * 不正・未接続時は実用的な UsageError を投げる。
  */
@@ -1003,9 +1016,9 @@ export function parseTailnetStatus(raw) {
   }
   const self = status.Self || {};
   const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
-  // Tailscale の IPv4 は CGNAT 100.x のみ。緩いフォールバックは付けない（非 100.x を
+  // Tailscale の IPv4 は CGNAT 100.64.0.0/10 のみ。緩いフォールバックは付けない（非 CGNAT を
   // トークン無しで bind する fail-open を避け、install.sh の検出と一致させる）。
-  const ip = ips.find((a) => /^100\./.test(String(a)));
+  const ip = ips.find((a) => isIP(String(a)) === 4 && isCgnatIp(a));
   const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
   if (!ip) throw new UsageError(`Tailscale の 100.x IPv4 を取得できませんでした。${TAILNET_MANUAL_HINT}`);
   return { ip, dnsName };
@@ -1063,8 +1076,8 @@ export function resolveWebBind(values, detect = detectTailnet) {
     const host = String(values.host).replace(/^\[(.+)\]$/, '$1'); // IPv6 角括弧を外す（listen は裸 IP を要求）
     let kind;
     if (isLoopbackHost(host)) kind = 'loopback';
-    else if (isIP(host) === 4 && /^100\./.test(host)) kind = 'tailnet'; // CGNAT 100.x の実 IPv4 のみ
-    else throw new UsageError(`--host は loopback か tailnet の 100.x IPv4 のみ指定できます（tailnet 限定設計）: ${values.host}`);
+    else if (isIP(host) === 4 && isCgnatIp(host)) kind = 'tailnet'; // CGNAT 100.64.0.0/10 の実 IPv4 のみ
+    else throw new UsageError(`--host は loopback か tailnet の CGNAT(100.64.0.0/10) IPv4 のみ指定できます（tailnet 限定設計）: ${values.host}`);
     // loopback バインドに --allow-host を足してもその名前では到達できない（死に設定）。
     // proxy 前段で Host を通したい場合は config.webapp.trusted_hosts を使う。
     if (kind === 'loopback' && allowHosts.length) {
@@ -1084,7 +1097,7 @@ export function resolveWebBind(values, detect = detectTailnet) {
 export function webBanner(bind, token, actualPort) {
   const lines = [];
   const raw = bind.displayHost || bind.host;
-  const shown = raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw; // IPv6 表示は角括弧
+  const shown = isIP(raw) === 6 ? `[${raw}]` : raw; // 真の裸 IPv6 だけ角括弧（name:port を IPv6 と誤判定しない）
   if (bind.kind === 'tailnet') {
     lines.push(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actualPort} / Ctrl+C で終了）`);
   } else {
@@ -1125,6 +1138,9 @@ async function cmdWeb(args) {
   } catch (e) {
     if (e && e.code === 'EADDRINUSE') {
       throw new UsageError(`ポート ${port} は使用中です。別の --port を指定するか、既存の ulm web を停止してください`);
+    }
+    if (e && e.code === 'EADDRNOTAVAIL') {
+      throw new UsageError(`${bind.host} にバインドできません（このIPがインターフェースにありません。Tailscale が接続済みか、--host の 100.x IP が正しいか確認してください）`);
     }
     throw e;
   }

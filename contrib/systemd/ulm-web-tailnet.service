@@ -1,12 +1,12 @@
 # ulm web を tailnet 直アクセスで常時起動する systemd ユーザーユニット（Linux）。
 #
-# 設置（ユーザー単位・root 不要）:
+# 設置（ユーザー単位・root 不要。リポジトリのルートで実行）:
 #   mkdir -p ~/.config/systemd/user
 #   cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
-#   # 下の __NODE__ / __ULM_JS__ を実パスに書き換える:
-#   #   __NODE__   = node の実体の絶対パス → `node -p process.execPath` で取得（asdf/volta/fnm の
-#   #                shim はダメ。systemd はシェル初期化が無く shim が版を解決できずクラッシュループする）
-#   #   __ULM_JS__ = リポジトリの bin/ulm.js の絶対パス
+#   # __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと & や # を含むパスで壊れる）。
+#   # __NODE__ は node の実体の絶対パス（process.execPath）。asdf/volta/fnm の shim はダメ
+#   # （systemd はシェル初期化が無く shim が版を解決できずクラッシュループする）。
+#   node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js"))' ~/.config/systemd/user/ulm-web-tailnet.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now ulm-web-tailnet
 #   loginctl enable-linger "$USER"   # ログアウト後も動かすなら
