@@ -509,8 +509,13 @@ test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => 
   assert.throws(() => resolveWebBind(webValues({ 'allow-host': ['x.ts.net'] })), /--allow-host は/);
 });
 
-test('resolveWebBind: --host + --allow-host は表示に名前を優先し許可にも入る', () => {
+test('resolveWebBind: --host(100.x) + --allow-host は表示に名前を優先し許可にも入る', () => {
   const r = resolveWebBind(webValues({ host: '100.100.90.41', 'allow-host': ['node.ts.net'] }));
   assert.equal(r.displayHost, 'node.ts.net');
   assert.ok(r.allowedHosts.includes('node.ts.net'));
+});
+
+test('resolveWebBind: loopback --host + --allow-host は死に設定として拒否（到達不能URLを出さない）', () => {
+  // 127.0.0.1 にしか bind しないのに tailnet 名を許可しても到達できず、トークン入り偽URLを出すのを防ぐ
+  assert.throws(() => resolveWebBind(webValues({ host: '127.0.0.1', 'allow-host': ['node.ts.net'] })), /loopback バインドでは到達できません/);
 });

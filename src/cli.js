@@ -1065,6 +1065,11 @@ export function resolveWebBind(values, detect = detectTailnet) {
     if (isLoopbackHost(host)) kind = 'loopback';
     else if (isIP(host) === 4 && /^100\./.test(host)) kind = 'tailnet'; // CGNAT 100.x の実 IPv4 のみ
     else throw new UsageError(`--host は loopback か tailnet の 100.x IPv4 のみ指定できます（tailnet 限定設計）: ${values.host}`);
+    // loopback バインドに --allow-host を足してもその名前では到達できない（死に設定）。
+    // proxy 前段で Host を通したい場合は config.webapp.trusted_hosts を使う。
+    if (kind === 'loopback' && allowHosts.length) {
+      throw new UsageError('--allow-host は loopback バインドでは到達できません（--tailnet か 100.x の --host と併用、または config.webapp.trusted_hosts を使用）');
+    }
     return { host, allowedHosts: allowHosts, requireToken: !noToken, displayHost: allowHosts[0] || host, kind };
   }
 
@@ -1112,9 +1117,18 @@ async function cmdWeb(args) {
   const home = ulmHome();
   ensureHome(home);
   const store = openStore(home); // サーバの寿命 = プロセスの寿命なので withStore は使わない
-  const { token, port: actual } = await startWebServer(store, loadConfig(home), home, {
-    host: bind.host, port, allowedHosts: bind.allowedHosts, requireToken: bind.requireToken,
-  });
+  let started;
+  try {
+    started = await startWebServer(store, loadConfig(home), home, {
+      host: bind.host, port, allowedHosts: bind.allowedHosts, requireToken: bind.requireToken,
+    });
+  } catch (e) {
+    if (e && e.code === 'EADDRINUSE') {
+      throw new UsageError(`ポート ${port} は使用中です。別の --port を指定するか、既存の ulm web を停止してください`);
+    }
+    throw e;
+  }
+  const { token, port: actual } = started;
 
   for (const line of webBanner(bind, token, actual)) console.log(line);
   return new Promise(() => {}); // サーバが生きている限り戻らない

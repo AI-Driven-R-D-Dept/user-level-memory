@@ -224,14 +224,17 @@ node:http のみで依存ゼロを維持）。
   MagicDNS 名を取得し、**0.0.0.0 ではなく 100.x に名指しバインド**（LAN への漏れを避け tailnet 限定に保つ）、
   Host 検証にその MagicDNS 名を許可する（`config.webapp.trusted_hosts` でも追加可）。`tailscale serve` の HTTPS 終端は
   使わず、`http://<node>.<tailnet>.ts.net:<port>/` で素のまま叩く運用に合わせる。tailnet では既定で**トークンを外す**
-  （信頼境界は「tailnet ACL + このホスト上の任意プロセス」へ移る＝意識的トレードオフ。`--no-token=false` 相当に戻すには
-  手動 `--host` を使う）。手動制御は `--host <ip> --allow-host <name> [--no-token]`。既定（loopback）挙動は不変。
-  なお `tailscale serve` 経由（127.0.0.1 へ逆プロキシ）だと peer IP が潰れて `Tailscale-User-*` ヘッダは同一ホストの
-  別プロセスから偽造可能なため、ulm は ID ヘッダを信頼しない（採用しない）。
-- **常時起動**: OS サービス化の補助は `contrib/`（macOS launchd / Linux systemd）。macOS App Store 版 Tailscale CLI は
-  GUI セッション依存で launchd 下では `tailscale status` が JSON を返さないため、サービスでは `--tailnet`（CLI 依存）を使わず
-  導入時に検出した 100.x IP + MagicDNS 名を `--host/--allow-host/--no-token` で固定する（`detectTailnet` は非対話環境で
-  失敗時に固定指定へ誘導するエラーを返す）。
+  （信頼境界は「tailnet ACL + このホスト上の任意プロセス」へ移る＝意識的トレードオフ。トークンを残したまま 100.x に
+  バインドするには `--tailnet` ではなく `--host <100.x> --allow-host <name>` を `--no-token` 無しで使う＝`--host` 経路は
+  既定トークン必須）。**公開バインドは loopback か 100.x IPv4 のみ許可**し、0.0.0.0 やその別表記・LAN・名前は一律拒否する。
+  `hostOk` は loopback の Host を「実接続が loopback のときだけ」信頼し、ヘッダ偽装を弾く。なお `tailscale serve` 経由
+  （127.0.0.1 へ逆プロキシ）だと peer IP が潰れて `Tailscale-User-*` ヘッダは同一ホストの別プロセスから偽造可能なため、
+  ulm は ID ヘッダを信頼しない（採用しない）。
+- **常時起動**: OS サービス化の補助は `contrib/`（macOS launchd / Linux systemd）。**macOS の launchd** では App Store 版
+  Tailscale CLI が GUI セッション依存で `tailscale status` が JSON を返さないため、`install.sh` は導入時に検出した
+  100.x IP + MagicDNS 名を `--host/--allow-host/--no-token` で固定し、サービスからは CLI を一切呼ばない。**Linux の systemd**
+  では tailscaled が unix socket 経由なので `--tailnet`（CLI 依存）を headless でも使える（固定指定版にも差し替え可）。
+  `detectTailnet` は CLI が非 JSON を返す・未接続・100.x 不在などの失敗時に固定指定へ誘導するエラーを返す。
 - **できること**: 観測のフラグ（pin/secret/archive）・タグ編集・redact・追加（入口ゲート適用・source=web）／
   state の上書き・追加・削除（入口ゲート適用）／候補の approve・reject（**inbox のみ**）・条件/メモ編集／
   ref ポインタの追加（CLI と同一の safepath 検証）・削除／SQL（**読み取り専用接続 + 単一 SELECT のみ**の二重の壁）。

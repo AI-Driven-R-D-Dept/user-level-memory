@@ -29,7 +29,11 @@ die() { echo "✗ $*" >&2; exit 1; }
 
 uninstall() {
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-    launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
+    # ラベル(service-target)で bootout する。パス形式は plist が消えていると Label を読めず失敗するため。
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      die "bootout に失敗し agent がまだ動いています（tokenless 公開中）。手動: launchctl bootout $DOMAIN/$LABEL"
+    fi
     echo "✓ bootout: $LABEL"
   fi
   [ -f "$PLIST" ] && rm -f "$PLIST" && echo "✓ 削除: $PLIST"
@@ -71,11 +75,12 @@ install_agent() {
   TS="$(resolve_tailscale)"
 
   # tailscale status --json を node で解析（app 本体と同じ取り出し方）。非JSON/未接続は明確に失敗。
+  # cli.js detectTailnet と同じく 5s でタイムアウト（wedge した CLI で無限ハングしない）。
   DETECT="$(node -e '
     const { execFileSync } = require("node:child_process");
     let raw;
-    try { raw = execFileSync(process.argv[1], ["status","--json"], { encoding:"utf8" }); }
-    catch { console.error("tailscale status を実行できません"); process.exit(1); }
+    try { raw = execFileSync(process.argv[1], ["status","--json"], { encoding:"utf8", timeout: 5000 }); }
+    catch { console.error("tailscale status を実行できません（タイムアウト/未起動）"); process.exit(1); }
     let s; try { s = JSON.parse(raw); }
     catch { console.error("tailscale が JSON を返しません（GUI 未起動など）: " + String(raw).trim().split("\n")[0]); process.exit(1); }
     if (s.BackendState && s.BackendState !== "Running") { console.error("Tailscale 未接続: BackendState=" + s.BackendState); process.exit(1); }
@@ -93,10 +98,10 @@ install_agent() {
 
   echo "検出: IP=$IP  MagicDNS=$NAME  node=$NODE  repo=$REPO  port=$PORT"
 
-  # 別プロセスが既に $PORT を握っていないか（自分の agent 未ロード時のみ fail-fast）。
+  # $PORT を握っているのが「自分の管理下 agent 以外」なら fail-fast（ポート変更再導入でも検出する）。
   local existing
   existing="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
-  if [ -n "$existing" ] && ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  if [ -n "$existing" ] && [ "$(listen_pid)" != "$(managed_pid)" ]; then
     echo "$existing" >&2
     die "ポート $PORT は別プロセスが LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
   fi
@@ -111,8 +116,10 @@ install_agent() {
     const fs = require("node:fs");
     const [tpl, out, ...kv] = process.argv.slice(1);
     const esc = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    let s = fs.readFileSync(tpl, "utf8");
-    for (let i = 0; i < kv.length; i += 2) s = s.split(kv[i]).join(esc(kv[i + 1]));
+    const map = {};
+    for (let i = 0; i < kv.length; i += 2) map[kv[i]] = esc(kv[i + 1]);
+    // 単一パス置換: 置換後テキストを再走査しない（値に __PORT__ 等が含まれても壊さない）。
+    const s = fs.readFileSync(tpl, "utf8").replace(/__[A-Z_]+__/g, (m) => (m in map ? map[m] : m));
     fs.writeFileSync(out, s);
   ' "$TEMPLATE" "$TMP" \
     __LABEL__ "$LABEL" __NODE__ "$NODE" __ULM_JS__ "$ULM_JS" \
@@ -124,7 +131,7 @@ install_agent() {
 
   # 既存をクリーンに入れ直す（冪等）。bootout は非同期なので未ロードになるまで待ってから bootstrap。
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-    launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true  # ラベル形式（plist 消失でも Label 不要）
     local j
     for j in $(seq 1 50); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.2; done
     # まだ残っていれば bootstrap は確実に失敗する。古い agent を動かしたまま fail-closed で止める。
