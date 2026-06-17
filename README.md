@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node.js >= 22.5](https://img.shields.io/badge/node-%3E%3D22.5-brightgreen.svg)
 ![dependencies: 0](https://img.shields.io/badge/dependencies-0-success.svg)
-![tests: 153 passed](https://img.shields.io/badge/tests-153%20passed-success.svg)
+![tests: 311 passed](https://img.shields.io/badge/tests-311%20passed-success.svg)
 
 > 作業で得たコツを、次の仕事で迷わず使う。
 > CLAUDE.md / ref / beads(bd) の **次に来る**「現場の勘所を育てる生もの」の記憶レイヤー。
@@ -27,6 +27,7 @@ ulm の全体像（ポジション・記憶の3分類・ライフサイクル・
 - [インストール](#インストール)
 - [クイックスタート](#クイックスタート)
 - [使い方（CLI）](#使い方cli)
+  - [📖 使い方ガイド — 記憶のライフサイクルと昇格フロー（docs）](./docs/usage-guide.md)
 - [Claude Code プラグイン](#claude-code-プラグイン)
 - [想起の質（ベンチマーク）](#想起の質ベンチマーク)
 - [セキュリティ](#セキュリティ)
@@ -41,7 +42,7 @@ ulm の全体像（ポジション・記憶の3分類・ライフサイクル・
 - **依存パッケージゼロ・ビルド不要** — `node:sqlite` のみで動作。`git clone` してすぐ使えます
 - **記憶を腐り方ごとに 3 分類** — 観測（追記のみ）/ 可変状態（上書き + TTL）/ 仮説候補（inbox で育成）
 - **普段は隠し、関連分だけ注入** — SessionStart では state・ref・ピン留め・最近分のみ。プロンプト連動の動的想起は BM25 + 埋め込みのハイブリッド検索
-- **仮説の正式化は人間が決める** — `mine` の生成物は inbox 隔離。承認・`ref` への昇格は人間の操作だけが行えます
+- **仮説の正式化は人間が決める** — `mine` の生成物は inbox 隔離。承認、および project の skill（`.claude/skills/ref-*`）への昇格は人間の操作だけが行えます
 - **機密の門番は AI ではなく機械的ルール** — 鍵・トークン等は入口で自動 `secret` 化し、注入・採掘・持出から機械的に除外
 - **外部評価つき** — 作者非依存の評価コーパスで Success@10 95%（後述）
 
@@ -54,7 +55,7 @@ ulm の全体像（ポジション・記憶の3分類・ライフサイクル・
 | `bd`（beads） | 課題の構造（依存グラフ・タスク文脈） | セッション〜プロジェクト |
 | **`ulm`（これ）** | **現場の勘所を育てる「生もの」** | **揺れている知識の中間層** |
 
-`ulm` は `ref` の手前。まだ正式ルールにできない経験則を預かり、検証できたものだけを **人間の承認** で `ref` へ昇格させます。
+`ulm` は正式規範（`ref`）の手前。まだ正式ルールにできない経験則を預かり、検証できたものだけを **人間の承認** で project の skill（`.claude/skills/ref-<slug>/SKILL.md`）へ昇格させます。
 
 記憶は腐り方ごとに 3 つに分けて扱います：
 
@@ -102,7 +103,7 @@ ulm status                                            # 統計
 ```bash
 ulm obs add "node:sqlite は Node 22.5 未満で落ちる" --tags ci --pin
 ulm state set 現在の担当 "決済リファクタ" --ttl 30d --global
-ulm recall "金額計算で丸め誤差が出る"             # BM25 で関連する過去の勘所を想起（FTS5）
+ulm recall "金額計算で丸め誤差が出る"             # FTS5/BM25（キーがあれば埋め込み意味検索とハイブリッド）で関連する勘所を想起
 ulm capture --transcript <session.jsonl>          # 作業ログから観測を自動抽出（source=auto）
 ulm mine                                          # 観測 → 仮説候補を inbox へ（LLM）
 ulm inbox                                         # 未レビューの候補（出自・反例込み）
@@ -115,15 +116,16 @@ ulm web                                           # DB を閲覧・編集する�
 ```
 
 全コマンドとオプションは `ulm help` を参照してください。
+記憶のライフサイクル（観測 → `mine` → inbox → 承認 → `promote`）と昇格フローを図で知りたい方は、[使い方ガイド — 記憶のライフサイクルと昇格フロー](./docs/usage-guide.md) をどうぞ（Mermaid 図つき）。
 
 ## Claude Code プラグイン
 
 | 種類 | 名前 | 役割 |
 |---|---|---|
 | hook | SessionStart | `ulm context --hook` で state/ref/pin/最近を `additionalContext` 注入（fail-open） |
-| hook | **UserPromptSubmit** | `ulm recall --hook` でプロンプト関連の記憶を BM25 動的注入 |
+| hook | **UserPromptSubmit** | `ulm recall --hook` でプロンプト関連の記憶をハイブリッド想起（埋め込み意味検索 + FTS5/BM25 字句、埋め込みキーが無ければ FTS のみに degrade）で動的注入 |
 | hook | **Stop** | `ulm capture --hook` で作業ログから観測を自動抽出（async・fail-open） |
-| hook | SessionEnd | `ulm export --quiet` で JSONL 控えを更新（push はしない） |
+| hook | SessionEnd | `ulm export --quiet` で JSONL 控えを更新し、`ulm reindex` で未ベクトル化の観測を埋め込む（埋め込みキーが無ければ no-op・push はしない） |
 | command | `/ulm:note` | 観測を記録 |
 | command | `/ulm:state` | 可変状態の更新/参照 |
 | command | `/ulm:mine` | 仮説の採掘 |
@@ -158,7 +160,7 @@ CLAUDE.md / MEMORY.md / ref のような構造的記憶には自動で書きま�
 ### ハイブリッド検索の内訳（FTS5/BM25 + 埋め込み）
 
 SessionStart の「最近分の詰め込み」だけでなく、**プロンプトに関連する記憶を取り出す**のが ulm の中核。
-2層を Reciprocal Rank Fusion で融合します：
+2層を vector 主軸で融合します（vector の順位を保持し、FTS 固有ヒットのみ末尾に救済追加する vector-primary 方式。等重み RRF は hybrid を vector 未満に劣化させたため不採用）：
 
 - **字句層**（FTS5 trigram / BM25）: 日本語クエリもトライグラム分解で関連度検索。`vocab_size` 等の特異トークンに強い
 - **意味層**（埋め込み / 任意）: OpenAI 互換 embeddings で「スタイルが反映されない ⇄ クラスが効かない」のような**字面ゼロ一致の同義語**を拾う。API キーが無ければ自動で無効化し字句層のみで動く（依存ゼロを保つ）
@@ -201,7 +203,7 @@ SessionStart の「最近分の詰め込み」だけでなく、**プロンプ�
 ## FAQ
 
 **Q. CLAUDE.md や MEMORY.md と何が違う？**
-A. CLAUDE.md は「人が書き、常時注入される確定ルール」。ulm は「まだ確定していない経験則を貯め、関連するときだけ思い出す」層です。確度が上がったものだけを人間の承認で `ref` に昇格させます。
+A. CLAUDE.md は「人が書き、常時注入される確定ルール」。ulm は「まだ確定していない経験則を貯め、関連するときだけ思い出す」層です。確度が上がったものだけを人間の承認で project の skill（`.claude/skills/ref-*`）に昇格させます。
 
 **Q. API キーが無いと使えない？**
 A. 使えます。埋め込み（意味検索）・`mine`/`capture`（仮説採掘・自動抽出）・`promote --pr`（関連 skill 更新の文面生成）が LLM を使う任意機能です。いずれも codex / opencode CLI があれば API キー不要で動き、無ければ静かに no-op（`promote --pr` は明確にエラー）。埋め込みもキーが無ければ自動的に FTS5/BM25 のみで動作します。
@@ -224,7 +226,7 @@ A. `ulm export` で JSONL 控えを書き出し、移行先で `ulm import <dir>
 ## 開発
 
 ```bash
-node --test test/*.test.js                        # ユニットテスト（153件）
+node --test test/*.test.js                        # ユニットテスト（311件）
 node test/eval/recall-eval-large.js 5 2000        # 想起評価（ローカル）
 node test/eval/external/run-external-eval.js 10   # 外部評価（要 OPENAI_API_KEY）
 ```
