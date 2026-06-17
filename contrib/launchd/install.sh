@@ -55,9 +55,16 @@ resolve_tailscale() {
   die "tailscale CLI が見つかりません（Tailscale を起動しているか確認、または ULM_TAILSCALE_BIN を設定）"
 }
 
+# launchctl が把握している agent の pid（未ロードなら空）。pipefail 下でも落ちないよう末尾 || true。
+managed_pid() { launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -E '^[[:space:]]*pid =' | grep -oE '[0-9]+' | head -1 || true; }
+# $PORT を LISTEN しているプロセスの pid（無ければ空）。
+listen_pid() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2; exit}' || true; }
+
 install_agent() {
   [ -f "$ULM_JS" ] || die "ulm 本体が見つかりません: $ULM_JS"
   [ -f "$TEMPLATE" ] || die "テンプレートが見つかりません: $TEMPLATE"
+  case "$PORT" in ''|*[!0-9]*) die "ULM_PORT は整数で指定してください: $PORT" ;; esac
+  { [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } || die "ULM_PORT が範囲外です: $PORT"
 
   local NODE TS DETECT IP NAME
   NODE="$(resolve_node)"
@@ -81,41 +88,61 @@ install_agent() {
   IP="${DETECT%%$'\t'*}"
   NAME="${DETECT#*$'\t'}"
   [ -n "$IP" ] || die "100.x IP を検出できませんでした"
+  # MagicDNS 無効環境では NAME が空。その場合は IP を表示/疎通/allow-host に使う（IP は常に許可される）。
+  [ -n "$NAME" ] || { NAME="$IP"; echo "⚠ MagicDNS 名が無いため IP でアクセスします（tailnet で MagicDNS 無効？）"; }
 
   echo "検出: IP=$IP  MagicDNS=$NAME  node=$NODE  repo=$REPO  port=$PORT"
 
+  # 別プロセスが既に $PORT を握っていないか（自分の agent 未ロード時のみ fail-fast）。
+  local existing
+  existing="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
+  if [ -n "$existing" ] && ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    echo "$existing" >&2
+    die "ポート $PORT は別プロセスが LISTEN 中です。停止するか ULM_PORT=別ポートを指定してください"
+  fi
+
   mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
-  sed -e "s|__LABEL__|$LABEL|g" \
-      -e "s|__NODE__|$NODE|g" \
-      -e "s|__ULM_JS__|$ULM_JS|g" \
-      -e "s|__TAILNET_IP__|$IP|g" \
-      -e "s|__MAGICDNS__|$NAME|g" \
-      -e "s|__PORT__|$PORT|g" \
-      -e "s|__REPO__|$REPO|g" \
-      -e "s|__ULM_HOME__|$ULM_HOME_VAL|g" \
-      -e "s|__LOG__|$LOG|g" \
-      "$TEMPLATE" > "$PLIST"
 
-  plutil -lint "$PLIST" >/dev/null || die "生成した plist が不正です: $PLIST"
+  # テンプレートは node で安全に埋める（sed のデリミタ |・メタ文字 &/\ の事故を回避）。
+  # 一時ファイル → lint → atomic mv。失敗時は既存 plist を温存して fail-closed。
+  local TMP; TMP="$(mktemp "${TMPDIR:-/tmp}/ulm-plist.XXXXXX")"
+  node -e '
+    const fs = require("node:fs");
+    const [tpl, out, ...kv] = process.argv.slice(1);
+    let s = fs.readFileSync(tpl, "utf8");
+    for (let i = 0; i < kv.length; i += 2) s = s.split(kv[i]).join(kv[i + 1]);
+    fs.writeFileSync(out, s);
+  ' "$TEMPLATE" "$TMP" \
+    __LABEL__ "$LABEL" __NODE__ "$NODE" __ULM_JS__ "$ULM_JS" \
+    __TAILNET_IP__ "$IP" __MAGICDNS__ "$NAME" __PORT__ "$PORT" \
+    __REPO__ "$REPO" __ULM_HOME__ "$ULM_HOME_VAL" __LOG__ "$LOG" \
+    || { rm -f "$TMP"; die "plist の生成に失敗しました"; }
+  plutil -lint "$TMP" >/dev/null || { rm -f "$TMP"; die "生成した plist が不正です"; }
+  mv "$TMP" "$PLIST"  # ここで初めて既存を置換（ここまでの失敗では元 plist が残る）
 
-  # 既存をクリーンに入れ直す（冪等）
-  launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
+  # 既存をクリーンに入れ直す（冪等）。bootout は非同期なので未ロードになるまで待ってから bootstrap。
+  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
+    local j
+    for j in $(seq 1 25); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.2; done
+  fi
   launchctl bootstrap "$DOMAIN" "$PLIST" || die "bootstrap に失敗しました"
 
-  # listen を待って疎通確認（Tailscale 接続前は数十秒かかることがある）
+  # listen を待つ。port を握るのが本当に agent か確認するため launchctl pid と lsof pid を突合。
   echo -n "起動待ち"
-  local i ok=""
+  local i ap lp ok=""
   for i in $(seq 1 40); do
-    if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | grep -q ":$PORT "; then ok=1; break; fi
+    ap="$(managed_pid)"; lp="$(listen_pid)"
+    if [ -n "$ap" ] && [ "$ap" = "$lp" ]; then ok=1; break; fi
     echo -n "."; sleep 0.5
   done
   echo
   if [ -n "$ok" ]; then
     local code
     code="$(curl -s -o /dev/null -w "%{http_code}" "http://$NAME:$PORT/api/summary" || echo 000)"
-    echo "✓ 常時起動を導入しました: http://$NAME:$PORT/  (疎通 HTTP $code)"
+    echo "✓ 常時起動を導入しました: http://$NAME:$PORT/  (pid $ap / 疎通 HTTP $code)"
   else
-    echo "⚠ まだ listen していません（Tailscale 接続後に自動で起動します）。ログ: $LOG"
+    echo "⚠ まだ listen していません（Tailscale 接続後に自動起動します）。ログ: $LOG ／ 状態: $0 status"
   fi
   echo "  ⚠ token 無し公開: tailnet(ACL)内デバイス + このマシン上の任意プロセスが閲覧・承認できます"
   echo "  停止/削除: $0 uninstall ／ 状態: $0 status ／ 反映: launchctl kickstart -k $DOMAIN/$LABEL"

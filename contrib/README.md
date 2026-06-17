@@ -58,6 +58,8 @@ Linux の tailscaled は unix socket 経由なので `--tailnet` が headless �
 
 ## メンテ上の注意
 
-- **node の絶対パス**を埋め込む（サービスは PATH を持たない）。`node` を上げたら再導入（launchd は `install.sh`、
-  systemd は `ExecStart` 更新）すること。
+- **node は絶対パス**で埋め込む（launchd は PATH を持たないため決め打ちが必要。`node` を上げたら再導入＝launchd は
+  `install.sh`、systemd は `ExecStart` 更新）。systemd の user unit は既定 PATH（`/usr/bin` 等）を持つので、
+  Linux の `--tailnet` ExecStart は `tailscale` をその PATH から見つけられる。PATH が特殊な環境では固定指定版
+  （`--host/--allow-host/--no-token`）に切り替えること。
 - ここでは開発リポジトリの `bin/ulm.js` を指す。プラグイン版に `--tailnet` が載ったら、そちらの `ulm` に向け直してよい。

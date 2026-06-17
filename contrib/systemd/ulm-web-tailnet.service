@@ -13,10 +13,11 @@
 # macOS と違い Linux の tailscaled は unix socket 経由なので、--tailnet が headless でも動く。
 # 検出が不安定な環境では下記 ExecStart をコメントの固定指定版に差し替える。
 
+# 注意: これは user unit なので、system 側の tailscaled.service への After= は効かない
+# （user manager は system unit を順序付けできない）。Tailscale 接続前の初回起動は
+# detectTailnet が失敗するが、Restart=always/RestartSec=10 で接続後に自動回復するのが本来の仕組み。
 [Unit]
 Description=ulm web (tailnet direct access)
-After=network-online.target tailscaled.service
-Wants=network-online.target
 
 [Service]
 Type=simple

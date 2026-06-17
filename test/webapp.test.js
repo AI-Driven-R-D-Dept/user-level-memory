@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { startWebServer, runReadonlyQuery } from '../src/webapp.js';
+import { startWebServer, runReadonlyQuery, normalizeHost } from '../src/webapp.js';
 import { withFreshStoreAsync, testConfig } from './helpers.js';
 
 /** サーバを立てて fn(ctx) を実行し、確実に閉じる */
@@ -80,6 +80,28 @@ test('webapp: allowedHosts に渡した MagicDNS 名は Host 検証を通る（t
       assert.equal(await statusWithHost(port, 'node.tailnet.ts.net:8765', token), 200); // ポート付きでも一致
       assert.equal(await statusWithHost(port, 'NODE.TAILNET.TS.NET', token), 200); // 大小無視
       assert.equal(await statusWithHost(port, 'evil.example.com', token), 403); // 非許可は依然 403
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('webapp: normalizeHost は :port/[ipv6]/大小を正規化し、裸IPv6を壊さない', () => {
+  assert.equal(normalizeHost('Node.TS.net:8765'), 'node.ts.net');
+  assert.equal(normalizeHost('[fd7a::1]:8765'), 'fd7a::1');
+  assert.equal(normalizeHost('[fd7a::1]'), 'fd7a::1');
+  assert.equal(normalizeHost('fd7a::1'), 'fd7a::1'); // 裸IPv6: 末尾を :port と誤認しない
+  assert.equal(normalizeHost('100.100.90.41:9000'), '100.100.90.41');
+});
+
+test('webapp: 許可ホストは :port/大小を正規化して一致する（allowlist と hostOk のズレ防止）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    // :port や大文字混じりで登録しても、Host 名部分で一致すること
+    const { server, port, token } = await startWebServer(store, testConfig(), home, { port: 0, allowedHosts: ['Node.TS.net:9000'] });
+    try {
+      assert.equal(await statusWithHost(port, 'node.ts.net', token), 200); // port無し
+      assert.equal(await statusWithHost(port, 'node.ts.net:1234', token), 200); // 別port
+      assert.equal(await statusWithHost(port, 'other.ts.net', token), 403);
     } finally {
       server.close();
     }

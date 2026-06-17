@@ -51,11 +51,25 @@ function tokenOk(expected, got) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Host 値を比較用に正規化する（allowlist 構築と hostOk の両方で使い、ズレを防ぐ）。
+ * 受理形: name / name:port / ipv4 / ipv4:port / [ipv6] / [ipv6]:port。
+ * 裸の IPv6（複数コロン・角括弧無し）はポート除去せずそのまま返す。
+ */
+export function normalizeHost(h) {
+  const s = String(h).trim().toLowerCase();
+  const bracket = s.match(/^\[(.+?)\](?::\d+)?$/);
+  if (bracket) return bracket[1]; // [ipv6] / [ipv6]:port → ipv6
+  // 単一コロンのみ（name:port / ipv4:port）のときだけ :port を剥がす（裸 IPv6 を壊さない）
+  if ((s.match(/:/g) || []).length === 1) return s.replace(/:\d+$/, '');
+  return s;
+}
+
 function hostOk(req, allowedHosts) {
   const host = String(req.headers.host || '');
   if (/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) return true;
-  // loopback 以外は allowlist のみ（ポート除去・角括弧除去・小文字化して厳密一致）
-  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  // loopback 以外は allowlist のみ（正規化して厳密一致）
+  const name = normalizeHost(host);
   return name !== '' && allowedHosts.has(name);
 }
 
@@ -121,7 +135,7 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
   // （MagicDNS 名）+ config.webapp.trusted_hosts。loopback は hostOk が常に許可するので入れない。
   const allowed = new Set(
     [host, ...(allowedHosts || []), ...((config.webapp && config.webapp.trusted_hosts) || [])]
-      .map((h) => String(h).trim().toLowerCase())
+      .map((h) => normalizeHost(h)) // hostOk と同じ正規化（:port / [ipv6] を吸収しズレを防ぐ）
       .filter(Boolean),
   );
   let html = null; // 起動後の初回アクセス時に読む（テストでは API のみ使うことがある）
@@ -272,7 +286,9 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
     server.listen(port, host, () => {
       const actual = server.address().port;
       const query = token ? `/?token=${token}` : '/';
-      resolveStart({ server, port: actual, token, host, url: `http://${host}:${actual}${query}` });
+      // IPv6 リテラルは角括弧で囲む（裸だと不正な URL になる）
+      const h = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+      resolveStart({ server, port: actual, token, host, url: `http://${h}:${actual}${query}` });
     });
   });
 }

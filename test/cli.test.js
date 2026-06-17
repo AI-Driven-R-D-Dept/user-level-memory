@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTailnetStatus } from '../src/cli.js';
+import { parseTailnetStatus, resolveWebBind } from '../src/cli.js';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js');
 
@@ -428,4 +428,65 @@ test('parseTailnetStatus: 未接続（BackendState!=Running）は接続を促す
 test('parseTailnetStatus: 100.x が無ければ --host 手動指定を促す', () => {
   const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['fd7a:1::1'], DNSName: 'x.ts.net.' } });
   assert.throws(() => parseTailnetStatus(raw), /100\.x|--host/);
+});
+
+test('parseTailnetStatus: 非100.xのIPv4は採用せず fail-closed（fallbackで誤bindしない）', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['10.0.0.5', 'fd7a::1'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|--host/);
+});
+
+// --- resolveWebBind: フラグ→bind/トークン要否の決定（feature の信頼境界ロジック） ---
+function webValues(over = {}) {
+  return { tailnet: false, host: undefined, 'allow-host': [], 'no-token': false, ...over };
+}
+const fakeDetect = () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' });
+
+test('resolveWebBind: 既定は loopback + トークン必須', () => {
+  assert.deepEqual(resolveWebBind(webValues()), {
+    host: '127.0.0.1', allowedHosts: [], requireToken: true, displayHost: null, kind: 'loopback',
+  });
+});
+
+test('resolveWebBind: --no-token は loopback でもトークンを外す', () => {
+  assert.equal(resolveWebBind(webValues({ 'no-token': true })).requireToken, false);
+});
+
+test('resolveWebBind: --tailnet は 100.x bind・MagicDNS 許可・トークン無し', () => {
+  const r = resolveWebBind(webValues({ tailnet: true }), fakeDetect);
+  assert.equal(r.host, '100.100.90.41');
+  assert.equal(r.requireToken, false);
+  assert.equal(r.kind, 'tailnet');
+  assert.equal(r.displayHost, 'node.tail.ts.net');
+  assert.ok(r.allowedHosts.includes('node.tail.ts.net'));
+});
+
+test('resolveWebBind: --tailnet と --host は併用不可', () => {
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, host: '1.2.3.4' }), fakeDetect), /併用できません/);
+});
+
+test('resolveWebBind: 全インターフェース公開(0.0.0.0/::/*)は拒否', () => {
+  for (const h of ['0.0.0.0', '::', '*', '[::]', '0']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h })), /危険|全インターフェース/, `host=${h}`);
+  }
+});
+
+test('resolveWebBind: --host 非loopbackは既定トークン維持／--no-tokenで外す', () => {
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).requireToken, true);
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41', 'no-token': true })).requireToken, false);
+});
+
+test('resolveWebBind: tailnet外(LAN)の --host は kind=other（呼び出し側が警告）', () => {
+  assert.equal(resolveWebBind(webValues({ host: '192.168.1.5' })).kind, 'other');
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).kind, 'tailnet');
+  assert.equal(resolveWebBind(webValues({ host: '127.0.0.1' })).kind, 'loopback');
+});
+
+test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => {
+  assert.throws(() => resolveWebBind(webValues({ 'allow-host': ['x.ts.net'] })), /--allow-host は/);
+});
+
+test('resolveWebBind: --host + --allow-host は表示に名前を優先し許可にも入る', () => {
+  const r = resolveWebBind(webValues({ host: '100.100.90.41', 'allow-host': ['node.ts.net'] }));
+  assert.equal(r.displayHost, 'node.ts.net');
+  assert.ok(r.allowedHosts.includes('node.ts.net'));
 });
