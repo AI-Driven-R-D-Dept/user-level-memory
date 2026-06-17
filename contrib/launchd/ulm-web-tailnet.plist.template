@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ulm web を tailnet 直アクセスで常時起動する LaunchAgent テンプレート。
+  プレースホルダ（__FOO__）は contrib/launchd/install.sh が導入時に実値へ置換する。
+
+  重要: サービスでは tailscale CLI を呼ばない（--tailnet を使わない）。
+  macOS App Store 版 Tailscale CLI は GUI セッション依存で、launchd 等の非対話環境では
+  "The Tailscale GUI failed to start" を返し JSON を出さないため。代わりにこのノードの
+  安定値（100.x IP + MagicDNS 名）を install 時に検出して固定指定する。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__ULM_JS__</string>
+    <string>web</string>
+    <string>--host</string>
+    <string>__TAILNET_IP__</string>
+    <string>--allow-host</string>
+    <string>__MAGICDNS__</string>
+    <string>--no-token</string>
+    <string>--port</string>
+    <string>__PORT__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ULM_HOME</key>
+    <string>__ULM_HOME__</string>
+  </dict>
+
+  <!-- ログイン時に起動。再起動の主因は KeepAlive=true（落ちる/bind 失敗で exit するたび再起動）で、
+       ThrottleInterval=10 はその最短間隔を 10 秒に律速するだけ。Tailscale 接続前は 100.x が無く bind に
+       失敗するが、KeepAlive により接続確立まで再試行し続ける。KeepAlive を外すと再試行されないので注意。
+       注: 復帰するのは「同じ 100.x IP が戻る」場合のみ。ノードの Tailscale IPv4 が変わると --host が陳腐化し
+       永久に bind 失敗（EADDRNOTAVAIL）でループするので install.sh を再実行して再検出すること。 -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+</dict>
+</plist>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { startWebServer, runReadonlyQuery } from '../src/webapp.js';
+import { startWebServer, runReadonlyQuery, normalizeHost, hostOk } from '../src/webapp.js';
 import { withFreshStoreAsync, testConfig } from './helpers.js';
 
 /** サーバを立てて fn(ctx) を実行し、確実に閉じる */
@@ -86,6 +86,43 @@ test('webapp: allowedHosts に渡した MagicDNS 名は Host 検証を通る（t
   });
 });
 
+test('webapp: normalizeHost は 末尾ドット/:port/[ipv6]/大小を正規化し、裸IPv6を壊さない', () => {
+  assert.equal(normalizeHost('Node.TS.net:8765'), 'node.ts.net');
+  assert.equal(normalizeHost('node.ts.net.'), 'node.ts.net'); // 絶対FQDNの末尾ドット
+  assert.equal(normalizeHost('[fd7a::1]:8765'), 'fd7a::1');
+  assert.equal(normalizeHost('[fd7a::1]'), 'fd7a::1');
+  assert.equal(normalizeHost('fd7a::1'), 'fd7a::1'); // 裸IPv6: 末尾を :port と誤認しない
+  assert.equal(normalizeHost('100.100.90.41:9000'), '100.100.90.41');
+});
+
+test('webapp: hostOk は loopback Host を「実接続が loopback のときだけ」信頼（ヘッダ偽装を拒否）', () => {
+  const allow = new Set(['node.ts.net']);
+  // 偽装: 非loopback の peer から Host: localhost / 127.0.0.1 を送っても拒否
+  assert.equal(hostOk({ headers: { host: 'localhost' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
+  assert.equal(hostOk({ headers: { host: '127.0.0.1:8765' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
+  // 実 loopback からの loopback Host は許可
+  assert.equal(hostOk({ headers: { host: 'localhost' }, socket: { remoteAddress: '127.0.0.1' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: '[::1]:8765' }, socket: { remoteAddress: '::1' } }, allow), true);
+  // allowlist 一致は peer に依らず許可（末尾ドットも吸収）／非許可は拒否
+  assert.equal(hostOk({ headers: { host: 'node.ts.net' }, socket: { remoteAddress: '100.64.0.5' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: 'node.ts.net.' }, socket: { remoteAddress: '100.64.0.5' } }, allow), true);
+  assert.equal(hostOk({ headers: { host: 'evil.example.com' }, socket: { remoteAddress: '100.64.0.5' } }, allow), false);
+});
+
+test('webapp: 許可ホストは :port/大小を正規化して一致する（allowlist と hostOk のズレ防止）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    // :port や大文字混じりで登録しても、Host 名部分で一致すること
+    const { server, port, token } = await startWebServer(store, testConfig(), home, { port: 0, allowedHosts: ['Node.TS.net:9000'] });
+    try {
+      assert.equal(await statusWithHost(port, 'node.ts.net', token), 200); // port無し
+      assert.equal(await statusWithHost(port, 'node.ts.net:1234', token), 200); // 別port
+      assert.equal(await statusWithHost(port, 'other.ts.net', token), 403);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 test('webapp: config.webapp.trusted_hosts も Host 許可に反映される', async () => {
   await withFreshStoreAsync(async (store, home) => {
     const config = testConfig({ webapp: { trusted_hosts: ['box.tnet.ts.net'] } });
@@ -109,6 +146,43 @@ test('webapp: requireToken=false はトークン無しで通る（tailnet ACL �
       assert.equal((await fetch(`${base}/`)).status, 200); // GET / も token 不要
       // Host 検証は外れない: loopback 以外の未許可 Host は requireToken=false でも 403
       assert.equal(await statusWithHost(port, 'evil.example.com', null), 403);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+/** Host を偽装して POST /api/* を投げ status を返す（fetch は Host を上書きできない） */
+async function postWithHost(port, hostHeader, path, bodyObj) {
+  const { request } = await import('node:http');
+  const body = JSON.stringify(bodyObj);
+  return new Promise((resolveStatus, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path, method: 'POST', headers: { host: hostHeader, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
+      (res) => { res.resume(); resolveStatus(res.statusCode); },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+test('webapp: requireToken=false でも POST mutation はトークン無しで通る（tailnet 公開の核心挙動・回帰ガード）', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    const cand = store.addCandidate({ hypothesis: 'tokenless 承認テスト', origin: 'manual' });
+    // 許可ホストありで起動（tailnet 相当）。loopback からの allowlist Host アクセスを許す。
+    const { server, port } = await startWebServer(store, testConfig(), home, { port: 0, requireToken: false, allowedHosts: ['node.test.ts.net'] });
+    try {
+      // token 無しで承認が通る（--tailnet/--no-token の信頼境界そのもの）
+      const ok = await fetch(`http://127.0.0.1:${port}/api/cand/review`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: cand.id, status: 'approved' }),
+      });
+      assert.equal(ok.status, 200);
+      assert.equal(store.getCandidate(cand.id).status, 'approved');
+      // 許可 Host からの mutation も通る
+      assert.equal(await postWithHost(port, 'node.test.ts.net', '/api/obs', { text: 'tokenless 観測' }), 200);
+      // ただし Host 検証は外れない: 非許可 Host からの mutation は 403
+      assert.equal(await postWithHost(port, 'evil.example.com', '/api/cand/review', { id: cand.id, status: 'rejected' }), 403);
     } finally {
       server.close();
     }

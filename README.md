@@ -113,9 +113,11 @@ ulm promote <cand-id> --pr [--provider P] [--dry-run] [--yes]  # agent が関連
 ulm export / ulm import <dir>                     # JSONL 控えの書き出し / 復元
 ulm status / ulm doctor                           # 統計 / 環境診断
 ulm web                                           # DB を閲覧・編集するローカル Web UI（127.0.0.1）
+ulm web --tailnet                                 # closed な tailnet 上で http://<node>.<tailnet>.ts.net:8765/ で直アクセス（トークン無し）
 ```
 
 全コマンドとオプションは `ulm help` を参照してください。
+tailnet で**常時起動**したい場合（macOS launchd / Linux systemd）は [`contrib/`](./contrib/README.md) を参照（セキュリティ前提も記載）。
 記憶のライフサイクル（観測 → `mine` → inbox → 承認 → `promote`）と昇格フローを図で知りたい方は、[使い方ガイド — 記憶のライフサイクルと昇格フロー](./docs/usage-guide.md) をどうぞ（Mermaid 図つき）。
 
 ## Claude Code プラグイン

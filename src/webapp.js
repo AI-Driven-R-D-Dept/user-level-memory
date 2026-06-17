@@ -13,6 +13,7 @@
 //  - SQL タブは読み取り専用接続（readOnly）+ 単一 SELECT のみの二重の壁。
 //  - promote は出さない（/ulm:promote の領分）。観測本文の編集も出さない（追記のみ・訂正は redact）。
 import { createServer } from 'node:http';
+import { isIP } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -51,11 +52,34 @@ function tokenOk(expected, got) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function hostOk(req, allowedHosts) {
-  const host = String(req.headers.host || '');
-  if (/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) return true;
-  // loopback 以外は allowlist のみ（ポート除去・角括弧除去・小文字化して厳密一致）
-  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+/**
+ * Host 値を比較用に正規化する（allowlist 構築と hostOk の両方で使い、ズレを防ぐ）。
+ * 受理形: name / name:port / ipv4 / ipv4:port / [ipv6] / [ipv6]:port。
+ * 裸の IPv6（複数コロン・角括弧無し）はポート除去せずそのまま返す。
+ */
+export function normalizeHost(h) {
+  let s = String(h).trim().toLowerCase();
+  const bracket = s.match(/^\[(.+?)\](?::\d+)?$/);
+  if (bracket) return bracket[1]; // [ipv6] / [ipv6]:port → ipv6
+  // 単一コロンのみ（name:port / ipv4:port）のときだけ :port を剥がす（裸 IPv6 を壊さない）
+  if ((s.match(/:/g) || []).length === 1) s = s.replace(/:\d+$/, '');
+  return s.replace(/\.$/, ''); // FQDN 末尾ドットを除去（node.ts.net. == node.ts.net）
+}
+
+/** 接続が実際に loopback から来たか（Host ヘッダの偽装を信頼しないため、実 peer を見る） */
+function isLoopbackRemote(req) {
+  const a = String((req.socket && req.socket.remoteAddress) || '');
+  return a === '::1' || a === '127.0.0.1' || /^127\./.test(a) || /^::ffff:127\./.test(a);
+}
+
+/**
+ * Host 検証（DNS rebinding 対策 + tokenless 時の唯一の越境防御）。
+ * loopback の Host 名は「実接続が loopback のときだけ」信頼する（ヘッダ偽装で素通りさせない）。
+ * それ以外は allowlist の厳密一致のみ。
+ */
+export function hostOk(req, allowedHosts) {
+  const name = normalizeHost(req.headers.host || '');
+  if (name === '127.0.0.1' || name === 'localhost' || name === '::1') return isLoopbackRemote(req);
   return name !== '' && allowedHosts.has(name);
 }
 
@@ -119,9 +143,12 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
   const token = requireToken ? randomBytes(16).toString('hex') : null;
   // loopback 以外で許可する Host 名。バインド先 host 自体（tailnet IP 直叩き用）+ 呼び出し側指定
   // （MagicDNS 名）+ config.webapp.trusted_hosts。loopback は hostOk が常に許可するので入れない。
+  // バインド先 host は「具体的な routable IP のときだけ」許可に入れる（未指定 0.0.0.0/:: や
+  // 文字列ワイルドカードを allowlist に載せて到達可能にしてしまう事故を防ぐ）。loopback は hostOk が別途許可。
+  const hostEntries = isIP(host) && host !== '0.0.0.0' && host !== '::' ? [host] : [];
   const allowed = new Set(
-    [host, ...(allowedHosts || []), ...((config.webapp && config.webapp.trusted_hosts) || [])]
-      .map((h) => String(h).trim().toLowerCase())
+    [...hostEntries, ...(allowedHosts || []), ...((config.webapp && config.webapp.trusted_hosts) || [])]
+      .map((h) => normalizeHost(h)) // hostOk と同じ正規化（:port / [ipv6] / 末尾ドットを吸収しズレを防ぐ）
       .filter(Boolean),
   );
   let html = null; // 起動後の初回アクセス時に読む（テストでは API のみ使うことがある）
@@ -272,7 +299,9 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
     server.listen(port, host, () => {
       const actual = server.address().port;
       const query = token ? `/?token=${token}` : '/';
-      resolveStart({ server, port: actual, token, host, url: `http://${host}:${actual}${query}` });
+      // IPv6 リテラルは角括弧で囲む（裸だと不正な URL になる）
+      const h = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+      resolveStart({ server, port: actual, token, host, url: `http://${h}:${actual}${query}` });
     });
   });
 }

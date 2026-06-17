@@ -1,6 +1,7 @@
 // ulm CLI — コマンドディスパッチ
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { isIP } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { ulmHome, ensureHome, loadConfig } from './config.js';
@@ -10,7 +11,7 @@ import { buildContext, buildRecall, hookOutput } from './context.js';
 import { exportAll } from './exporter.js';
 import { mine } from './miner.js';
 import { capture, findDupCandidates } from './capture.js';
-import { startWebServer } from './webapp.js';
+import { startWebServer, normalizeHost } from './webapp.js';
 import { embedAvailable, embedTexts, embedConfig, vecToBuf } from './embed.js';
 import { runDoctor } from './doctor.js';
 import { checkWriteTarget, checkSkillTarget } from './safepath.js';
@@ -50,8 +51,9 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm context [--project P] [--hook] [--json]           SessionStart 用の注入（state/ref/pin/最近）
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶をハイブリッド想起（FTS5/BM25 + 埋め込み・キー無しは FTS のみ）
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
-  ulm web [--port 8765] [--tailnet] [--host IP]         DB を閲覧・編集する Web UI（既定 127.0.0.1。--tailnet で tailnet 直アクセス）
-              [--allow-host NAME ...] [--no-token]
+  ulm web [--port 8765] [--tailnet]                     DB を閲覧・編集する Web UI（既定 127.0.0.1+トークン必須）。
+              [--host 127.0.0.1|100.x] [--allow-host NAME]  --tailnet は 100.x(CGNAT) に直バインドし既定でトークン無し公開（tailnet ACL を信頼境界に）。
+              [--no-token]                                  --host は loopback(127.0.0.1/localhost/::1) か tailnet の 100.x のみ受理
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
 
@@ -975,6 +977,54 @@ function resolveTailscaleBin() {
   return null;
 }
 
+// 常時起動（launchd 等）でも一貫して案内するフォールバック手順。
+const TAILNET_MANUAL_HINT =
+  '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net --no-token` で固定指定してください';
+
+/**
+ * Tailscale の CGNAT 範囲 100.64.0.0/10（第2オクテット 64〜127）の IPv4 か。
+ * `/^100\./` だと public な 100.0〜63 / 100.128〜255 まで通ってしまう（tokenless 公開の fail-open）ので
+ * tailnet 判定はこの厳密版に統一する（install.sh の検出ロジックとも一致）。
+ */
+function isCgnatIp(ip) {
+  const o = String(ip).split('.');
+  if (o.length !== 4) return false;
+  const n = o.map((x) => Number(x));
+  if (n.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
+  return n[0] === 100 && n[1] >= 64 && n[1] <= 127;
+}
+
+/**
+ * `tailscale status --json` の生出力から { ip, dnsName } を取り出す純関数（テスト用に export）。
+ * 不正・未接続時は実用的な UsageError を投げる。
+ */
+export function parseTailnetStatus(raw) {
+  let status;
+  try {
+    status = JSON.parse(raw);
+  } catch {
+    // macOS App Store 版 CLI は GUI セッション依存で、launchd/cron/最小 env では
+    // "The Tailscale GUI failed to start..." を stdout に吐く（exit 0 だが非 JSON）。実機で確認済み。
+    const head = String(raw).trim().split('\n')[0].slice(0, 160);
+    throw new UsageError(
+      `tailscale status --json が JSON を返しませんでした${head ? `（出力: ${head}）` : ''}。`
+      + 'macOS GUI 版 CLI は launchd 等の非対話環境では動きません。'
+      + `常時起動などでは ${TAILNET_MANUAL_HINT}`,
+    );
+  }
+  if (status.BackendState && status.BackendState !== 'Running') {
+    throw new UsageError(`Tailscale が未接続です（BackendState=${status.BackendState}）。\`tailscale up\` で接続してください`);
+  }
+  const self = status.Self || {};
+  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
+  // Tailscale の IPv4 は CGNAT 100.64.0.0/10 のみ。緩いフォールバックは付けない（非 CGNAT を
+  // トークン無しで bind する fail-open を避け、install.sh の検出と一致させる）。
+  const ip = ips.find((a) => isIP(String(a)) === 4 && isCgnatIp(a));
+  const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
+  if (!ip) throw new UsageError(`Tailscale の 100.x IPv4 を取得できませんでした。${TAILNET_MANUAL_HINT}`);
+  return { ip, dnsName };
+}
+
 /**
  * tailscale CLI から自ノードの 100.x IPv4 と MagicDNS 名を得る（--tailnet 用）。
  * 0.0.0.0 ではなく 100.x に名指しバインドして tailnet 限定に保つのが狙い。
@@ -984,7 +1034,7 @@ function detectTailnet() {
   if (!bin) {
     throw new UsageError(
       'tailscale CLI が見つかりません（PATH / 既知の場所いずれにも無し。ULM_TAILSCALE_BIN で指定可）。'
-      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
+      + TAILNET_MANUAL_HINT,
     );
   }
   let raw;
@@ -995,19 +1045,106 @@ function detectTailnet() {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
-    throw new UsageError(
-      'tailscale status を実行できません（Tailscale が起動しているか確認）。'
-      + '手動なら `ulm web --host <100.x のIP> --allow-host <node>.<tailnet>.ts.net` を使ってください',
-    );
+    throw new UsageError(`tailscale status を実行できません（Tailscale が起動しているか確認）。${TAILNET_MANUAL_HINT}`);
   }
-  let status;
-  try { status = JSON.parse(raw); } catch { throw new UsageError('tailscale status --json を解析できませんでした'); }
-  const self = status.Self || {};
-  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
-  const ip = ips.find((a) => /^100\./.test(a)) || ips.find((a) => !String(a).includes(':'));
-  const dnsName = String(self.DNSName || '').replace(/\.$/, '').toLowerCase();
-  if (!ip) throw new UsageError('Tailscale の 100.x IPv4 を取得できませんでした。--host で手動指定してください');
-  return { ip, dnsName };
+  return parseTailnetStatus(raw);
+}
+
+function isLoopbackHost(h) {
+  // IP リテラルのみ受理（'127.0.0.1.evil.com' のような名前が listen で DNS 解決され
+  // 非 loopback に bind される事故を防ぐ。CGNAT 側と同じく isIP で literal 検証する）。
+  if (h === 'localhost') return true;
+  const v = isIP(h);
+  if (v === 6) return h === '::1';
+  if (v === 4) return /^127\./.test(h);
+  return false;
+}
+
+/**
+ * 表示 URL のエイリアスに使えるホスト名か。空白/`*` 等の無効値を弾く。
+ * IP リテラルは除外する（bind IP が自然なフォールバックで足り、--allow-host に異ファミリ IP を
+ * 渡されたとき bind していないアドレスを表示してしまうのを防ぐ）。
+ */
+function isDisplayableHost(h) {
+  const n = normalizeHost(h);
+  return n !== '' && isIP(n) === 0 && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n);
+}
+
+/**
+ * web のバインド先・Host 許可・トークン要否をフラグから決める純関数（テスト用に export）。
+ * detect は --tailnet 検出を注入できる（既定は detectTailnet）。
+ * 設計上、公開バインドは loopback か tailnet の 100.x IPv4 のみ。それ以外（LAN/ワイルドカード・
+ * 0.0.0.0 の別表記含む）は到達範囲が読めないので一律拒否する（tokenless で LAN 露出する事故を断つ）。
+ * @returns {{host:string, allowedHosts:string[], requireToken:boolean, displayHost:string|null, kind:'loopback'|'tailnet'}}
+ */
+export function resolveWebBind(values, detect = detectTailnet) {
+  if (values.tailnet && values.host) throw new UsageError('--tailnet と --host は併用できません');
+  // 空 --host は「未指定」と区別する（黙って loopback に落ちる/自己矛盾エラーを避ける）。
+  if (values.host !== undefined && !String(values.host).trim()) throw new UsageError('--host が空です');
+  const allowHosts = [...(values['allow-host'] || [])];
+  const noToken = !!values['no-token'];
+  // --allow-host は Host allowlist（tokenless 時の唯一の越境防御）に入るので、入口で形を検証する。
+  // 表示用 isDisplayableHost と違い IP リテラルは許可（Host が IP のアクセスもある）。'*'/junk は弾く。
+  for (const h of allowHosts) {
+    const n = normalizeHost(h);
+    const valid = n !== '' && (isIP(n) !== 0 || /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n));
+    if (!valid) throw new UsageError(`--allow-host が不正です（ホスト名か IP のみ）: ${JSON.stringify(h)}`);
+  }
+
+  if (values.tailnet) {
+    const { ip, dnsName } = detect();
+    const allowedHosts = dnsName ? [...allowHosts, dnsName] : allowHosts;
+    // tailnet は ACL を信頼境界にする想定なので既定トークン無し（--no-token でも無し）。
+    // 表示はユーザ指定の別名 > 検出 MagicDNS 名 > 100.x IP の優先（--host 経路と一貫）。
+    // 空白/ワイルドカード等の無効な別名は表示に使わない（http://:port/ のような死にURL防止）。
+    const alias = allowHosts.find(isDisplayableHost);
+    return { host: ip, allowedHosts, requireToken: false, displayHost: alias || dnsName || ip, kind: 'tailnet' };
+  }
+
+  if (values.host) {
+    const host = String(values.host).replace(/^\[(.+)\]$/, '$1'); // IPv6 角括弧を外す（listen は裸 IP を要求）
+    let kind;
+    if (isLoopbackHost(host)) kind = 'loopback';
+    else if (isIP(host) === 4 && isCgnatIp(host)) kind = 'tailnet'; // CGNAT 100.64.0.0/10 の実 IPv4 のみ
+    else throw new UsageError(`--host は loopback か tailnet の CGNAT(100.64.0.0/10) IPv4 のみ指定できます（tailnet 限定設計）: ${values.host}`);
+    // loopback バインドに --allow-host を足してもその名前では到達できない（死に設定）。
+    // proxy 前段で Host を通したい場合は config.webapp.trusted_hosts を使う。
+    if (kind === 'loopback' && allowHosts.length) {
+      throw new UsageError('--allow-host は loopback バインドでは到達できません（--tailnet か 100.x の --host と併用、または config.webapp.trusted_hosts を使用）');
+    }
+    const alias = allowHosts.find(isDisplayableHost); // 空白/`*` 等の無効値は表示に使わない
+    return { host, allowedHosts: allowHosts, requireToken: !noToken, displayHost: alias || host, kind };
+  }
+
+  // 既定: loopback。--allow-host だけ渡しても loopback のままで到達できない（死に設定）ので弾く。
+  if (allowHosts.length) {
+    throw new UsageError('--allow-host は --tailnet または --host と併用してください（loopback バインドのままでは到達できません）');
+  }
+  return { host: '127.0.0.1', allowedHosts: [], requireToken: !noToken, displayHost: null, kind: 'loopback' };
+}
+
+/** 起動バナー行を組み立てる純関数（テスト用に export）。kind は loopback|tailnet のみ。 */
+export function webBanner(bind, token, actualPort) {
+  const lines = [];
+  // allowlist と同じ正規化（:port / 末尾ドット除去）で URL を整える。二重ポート（name:port:port）を防ぎ、
+  // displayHost が空に正規化されても bind.host へフォールバックする（http://:port/ の死にURL防止）。
+  const raw = normalizeHost(bind.displayHost || bind.host) || normalizeHost(bind.host);
+  const shown = isIP(raw) === 6 ? `[${raw}]` : raw; // 真の裸 IPv6 だけ角括弧（name:port を IPv6 と誤判定しない）
+  if (bind.kind === 'tailnet') {
+    lines.push(`✓ ulm web を起動しました（tailnet バインド: ${bind.host}:${actualPort} / Ctrl+C で終了）`);
+  } else {
+    // loopback は実バインド先を出す（::1 を 127.0.0.1 と偽らない）。
+    lines.push(`✓ ulm web を起動しました（${bind.host} のみ・Ctrl+C で終了）`);
+  }
+  lines.push(`  http://${shown}:${actualPort}${token ? `/?token=${token}` : '/'}`);
+  if (token) {
+    lines.push('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
+  } else if (bind.kind === 'tailnet') {
+    lines.push('  ⚠ token 無しで公開中。tailnet(ACL) 内のデバイス＋このマシン上の任意プロセスが閲覧・承認できます');
+  } else {
+    lines.push('  ⚠ token 無しで起動中。同一ホスト上の任意プロセスが閲覧・承認できます');
+  }
+  return lines;
 }
 
 async function cmdWeb(args) {
@@ -1020,48 +1157,32 @@ async function cmdWeb(args) {
   });
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError('--port は 0〜65535 の整数です');
-  if (values.tailnet && values.host) throw new UsageError('--tailnet と --host は併用できません');
 
-  let host = '127.0.0.1';
-  let allowedHosts = [...values['allow-host']];
-  let displayHost = null;
-  // 既定はトークン必須。--tailnet は tailnet ACL を信頼境界にする想定なので既定トークン無し（--no-token で明示も可）。
-  let requireToken = !values['no-token'];
-
-  if (values.tailnet) {
-    const { ip, dnsName } = detectTailnet();
-    host = ip;
-    if (dnsName) { allowedHosts.push(dnsName); displayHost = dnsName; } else displayHost = ip;
-    if (!values['no-token']) requireToken = false; // tailnet 既定はトークン無し
-  } else if (values.host) {
-    host = values.host;
-    displayHost = host;
-  }
+  const bind = resolveWebBind(values);
 
   const home = ulmHome();
   ensureHome(home);
   const store = openStore(home); // サーバの寿命 = プロセスの寿命なので withStore は使わない
-  const { token, port: actual } = await startWebServer(store, loadConfig(home), home, {
-    host, port, allowedHosts, requireToken,
-  });
-
-  const onTailnet = host !== '127.0.0.1';
-  const shown = displayHost || host;
-  const tokenPart = token ? `/?token=${token}` : '/';
-  if (onTailnet) {
-    console.log(`✓ ulm web を起動しました（tailnet バインド: ${host}:${actual} / Ctrl+C で終了）`);
-    console.log(`  http://${shown}:${actual}${tokenPart}`);
-    if (token) {
-      console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
-    } else {
-      console.log('  ⚠ token 無しで公開中。tailnet(ACL) 内のデバイス＋このマシン上の任意プロセスが閲覧・承認できます');
+  let started;
+  try {
+    started = await startWebServer(store, loadConfig(home), home, {
+      host: bind.host, port, allowedHosts: bind.allowedHosts, requireToken: bind.requireToken,
+    });
+  } catch (e) {
+    if (e && e.code === 'EADDRINUSE') {
+      throw new UsageError(`ポート ${port} は使用中です。別の --port を指定するか、既存の ulm web を停止してください`);
     }
-  } else {
-    console.log('✓ ulm web を起動しました（127.0.0.1 のみ・Ctrl+C で終了）');
-    console.log(`  http://${shown}:${actual}${tokenPart}`);
-    if (token) console.log('  ※ URL の token はこの端末にだけ表示されます。token 無しのアクセスは拒否されます');
-    else console.log('  ⚠ token 無しで起動中。同一ホスト上の任意プロセスが閲覧・承認できます');
+    if (e && e.code === 'EADDRNOTAVAIL') {
+      const hint = bind.kind === 'tailnet'
+        ? '（このIPがインターフェースにありません。Tailscale が接続済みか、--host の 100.x IP が正しいか確認してください）'
+        : '（このアドレスがこのホストに存在しません。loopback が有効か確認してください）';
+      throw new UsageError(`${bind.host} にバインドできません${hint}`);
+    }
+    throw e;
   }
+  const { token, port: actual } = started;
+
+  for (const line of webBanner(bind, token, actual)) console.log(line);
   return new Promise(() => {}); // サーバが生きている限り戻らない
 }
 

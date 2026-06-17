@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseTailnetStatus, resolveWebBind, webBanner } from '../src/cli.js';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ulm.js');
 
@@ -398,4 +399,312 @@ test('obs add: 警告候補にも生成ゲート（後付け deny パターン�
   assert.equal(b.status, 0);
   assert.match(b.stdout, /✓ 観測を記録/);
   assert.ok(!b.stderr.includes('ACMEXYZZY'), `機密様テキストが警告に漏れない: ${b.stderr}`);
+});
+
+test('parseTailnetStatus: 正常な status から 100.x IPv4 と MagicDNS 名を取り出す', () => {
+  const raw = JSON.stringify({
+    BackendState: 'Running',
+    Self: { TailscaleIPs: ['fd7a:1::1', '100.100.90.41'], DNSName: 'erenmac-mini.folk-viper.ts.net.' },
+  });
+  assert.deepEqual(parseTailnetStatus(raw), { ip: '100.100.90.41', dnsName: 'erenmac-mini.folk-viper.ts.net' });
+});
+
+test('parseTailnetStatus: 非JSON（macOS GUI headless）は --host フォールバックを案内する実用エラー', () => {
+  // launchd/最小 env での実出力: GUI 起動失敗メッセージ（exit 0 だが非 JSON）
+  const raw = 'The Tailscale GUI failed to start: The operation couldn’t be completed. (Tailscale.CLIError error 3.)\n';
+  assert.throws(() => parseTailnetStatus(raw), (err) => {
+    assert.match(err.message, /JSON を返しませんでした/);
+    assert.match(err.message, /--host/); // 固定指定フォールバックを案内
+    assert.match(err.message, /GUI/); // 原因に触れる
+    return true;
+  });
+});
+
+test('parseTailnetStatus: 未接続（BackendState!=Running）は接続を促すエラー', () => {
+  const raw = JSON.stringify({ BackendState: 'NeedsLogin', Self: {} });
+  assert.throws(() => parseTailnetStatus(raw), /未接続|tailscale up/);
+});
+
+test('parseTailnetStatus: 100.x が無ければ --host 手動指定を促す', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['fd7a:1::1'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|--host/);
+});
+
+test('parseTailnetStatus: 非100.xのIPv4は採用せず fail-closed（fallbackで誤bindしない）', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['10.0.0.5', 'fd7a::1'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|--host/);
+});
+
+// --- resolveWebBind: フラグ→bind/トークン要否の決定（feature の信頼境界ロジック） ---
+function webValues(over = {}) {
+  return { tailnet: false, host: undefined, 'allow-host': [], 'no-token': false, ...over };
+}
+const fakeDetect = () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' });
+
+test('resolveWebBind: 既定は loopback + トークン必須', () => {
+  assert.deepEqual(resolveWebBind(webValues()), {
+    host: '127.0.0.1', allowedHosts: [], requireToken: true, displayHost: null, kind: 'loopback',
+  });
+});
+
+test('resolveWebBind: --no-token は loopback でもトークンを外す', () => {
+  assert.equal(resolveWebBind(webValues({ 'no-token': true })).requireToken, false);
+});
+
+test('resolveWebBind: --tailnet は 100.x bind・MagicDNS 許可・トークン無し', () => {
+  const r = resolveWebBind(webValues({ tailnet: true }), fakeDetect);
+  assert.equal(r.host, '100.100.90.41');
+  assert.equal(r.requireToken, false);
+  assert.equal(r.kind, 'tailnet');
+  assert.equal(r.displayHost, 'node.tail.ts.net');
+  assert.ok(r.allowedHosts.includes('node.tail.ts.net'));
+});
+
+test('resolveWebBind: --tailnet と --host は併用不可', () => {
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, host: '1.2.3.4' }), fakeDetect), /併用できません/);
+});
+
+test('resolveWebBind: loopback/100.x 以外の --host は一律拒否（0.0.0.0 別表記・LAN・IPv6・名前）', () => {
+  // 0.0.0.0 のあらゆる別表記やワイルドカード、LAN、非100.x がすり抜けないこと
+  for (const h of ['0.0.0.0', '0x0', '00.0.0.0', '000.000.000.000', '*', '0', '::', '::0', '192.168.1.5', '10.0.0.5', 'evil.example.com']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h })), /loopback か tailnet/, `host=${h}`);
+  }
+});
+
+test('resolveWebBind: --host は loopback / 100.x のみ受理し [::1] の角括弧は外す', () => {
+  assert.equal(resolveWebBind(webValues({ host: '127.0.0.1' })).kind, 'loopback');
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).kind, 'tailnet');
+  assert.equal(resolveWebBind(webValues({ host: 'localhost' })).kind, 'loopback');
+  assert.equal(resolveWebBind(webValues({ host: '::1' })).kind, 'loopback');
+  const r = resolveWebBind(webValues({ host: '[::1]' }));
+  assert.equal(r.host, '::1'); // listen は裸 IP を要求するので角括弧を外す
+  assert.equal(r.kind, 'loopback');
+});
+
+test('resolveWebBind: 127.* の名前(非リテラル)は loopback 扱いせず拒否（listen の DNS 解決 bind 防止）', () => {
+  for (const h of ['127.0.0.1.evil.com', '127.evil', '127.0.0.999']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h, 'no-token': true })), /loopback か tailnet/, `reject ${h}`);
+  }
+});
+
+test('resolveWebBind: --host 100.x は既定トークン維持／--no-tokenで外す', () => {
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41' })).requireToken, true);
+  assert.equal(resolveWebBind(webValues({ host: '100.100.90.41', 'no-token': true })).requireToken, false);
+});
+
+test('webBanner: tailnet トークン無しは tailnet(ACL) の警告と MagicDNS URL を出す', () => {
+  const lines = webBanner({ host: '100.100.90.41', displayHost: 'node.ts.net', kind: 'tailnet' }, null, 8765).join('\n');
+  assert.match(lines, /tailnet バインド/);
+  assert.match(lines, /http:\/\/node\.ts\.net:8765\//);
+  assert.match(lines, /token 無しで公開中/);
+  assert.match(lines, /tailnet\(ACL\)/);
+});
+
+test('webBanner: loopback + token は端末限定の注意のみ（公開警告を出さない）', () => {
+  const lines = webBanner({ host: '127.0.0.1', displayHost: null, kind: 'loopback' }, 'abc123', 8765).join('\n');
+  assert.match(lines, /127\.0\.0\.1 のみ/);
+  assert.match(lines, /\?token=abc123/);
+  assert.match(lines, /この端末にだけ/);
+  assert.doesNotMatch(lines, /公開中/);
+});
+
+test('webBanner: IPv6 displayHost は URL を角括弧で囲む', () => {
+  const lines = webBanner({ host: '::1', displayHost: '::1', kind: 'loopback' }, null, 8765).join('\n');
+  assert.match(lines, /http:\/\/\[::1\]:8765\//);
+});
+
+test('webBanner: loopback は実バインド先を表示（::1 を 127.0.0.1 と偽らない）', () => {
+  const lines = webBanner({ host: '::1', displayHost: '::1', kind: 'loopback' }, null, 8765).join('\n');
+  assert.match(lines, /（::1 のみ/); // バナー1行目が実バインド先
+  assert.doesNotMatch(lines, /127\.0\.0\.1/);
+});
+
+test('webBanner: displayHost が空に正規化されても bind.host にフォールバック（死にURL防止）', () => {
+  const lines = webBanner({ host: '100.64.0.5', displayHost: '   ', kind: 'tailnet' }, null, 8765).join('\n');
+  assert.match(lines, /http:\/\/100\.64\.0\.5:8765\//);
+  assert.doesNotMatch(lines, /http:\/\/:8765/);
+});
+
+test('resolveWebBind: 無効な --allow-host（空白/ワイルドカード/不正文字）は UsageError で弾く', () => {
+  const det = () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' });
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['*'] }), det), /--allow-host が不正/);
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['ev*il'] }), det), /--allow-host が不正/);
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['  '] }), det), /--allow-host が不正/);
+  // 妥当なホスト名・IP は通る
+  assert.equal(resolveWebBind(webValues({ tailnet: true, 'allow-host': ['ok.ts.net'] }), det).displayHost, 'ok.ts.net');
+});
+
+test('resolveWebBind: 空 --host は UsageError（黙って loopback に落とさない）', () => {
+  assert.throws(() => resolveWebBind(webValues({ host: '' })), /--host が空です/);
+  assert.throws(() => resolveWebBind(webValues({ host: '   ' })), /--host が空です/);
+});
+
+test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => {
+  assert.throws(() => resolveWebBind(webValues({ 'allow-host': ['x.ts.net'] })), /--allow-host は/);
+});
+
+test('resolveWebBind: --host(100.x) + --allow-host は表示に名前を優先し許可にも入る', () => {
+  const r = resolveWebBind(webValues({ host: '100.100.90.41', 'allow-host': ['node.ts.net'] }));
+  assert.equal(r.displayHost, 'node.ts.net');
+  assert.ok(r.allowedHosts.includes('node.ts.net'));
+});
+
+test('resolveWebBind: loopback --host + --allow-host は死に設定として拒否（到達不能URLを出さない）', () => {
+  // 127.0.0.1 にしか bind しないのに tailnet 名を許可しても到達できず、トークン入り偽URLを出すのを防ぐ
+  assert.throws(() => resolveWebBind(webValues({ host: '127.0.0.1', 'allow-host': ['node.ts.net'] })), /loopback バインドでは到達できません/);
+});
+
+test('resolveWebBind: tailnet 判定は CGNAT 100.64.0.0/10 のみ（public な 100.x を tokenless 公開しない）', () => {
+  // 範囲内は受理
+  for (const h of ['100.64.0.0', '100.100.90.41', '100.127.255.255']) {
+    assert.equal(resolveWebBind(webValues({ host: h })).kind, 'tailnet', `accept ${h}`);
+  }
+  // 範囲外の 100.x（public IPv4 空間）は拒否
+  for (const h of ['100.0.0.1', '100.63.255.255', '100.128.0.1', '100.200.5.5']) {
+    assert.throws(() => resolveWebBind(webValues({ host: h, 'no-token': true })), /loopback か tailnet/, `reject ${h}`);
+  }
+});
+
+test('parseTailnetStatus: 非CGNATの 100.x は採用しない（fail-closed）', () => {
+  const raw = JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['100.200.5.5'], DNSName: 'x.ts.net.' } });
+  assert.throws(() => parseTailnetStatus(raw), /100\.x|CGNAT|--host/);
+});
+
+test('webBanner: displayHost の :port を正規化して二重ポートURLにしない', () => {
+  const lines = webBanner({ host: '100.64.0.5', displayHost: 'node.ts.net:9000', kind: 'tailnet' }, 'abc', 8765).join('\n');
+  assert.match(lines, /http:\/\/node\.ts\.net:8765\//); // :9000 は落ち actualPort のみ
+  assert.doesNotMatch(lines, /9000/);
+  assert.doesNotMatch(lines, /\[/); // 角括弧も付かない
+});
+
+// --- cmdWeb のサブプロセス検証（resolveWebBind→startWebServer の配線まで通す） ---
+
+test('ulm web: --port 範囲外は UsageError で即終了', () => {
+  const home = freshHome();
+  try {
+    const r = run(home, ['web', '--port', '99999']);
+    assert.equal(r.status, 2); // UsageError は exit 2
+    assert.match(r.stderr, /--port/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ulm web: --host 0.0.0.0 / --allow-host 単独は起動前に弾く', () => {
+  const home = freshHome();
+  try {
+    const wild = run(home, ['web', '--host', '0.0.0.0', '--no-token']);
+    assert.equal(wild.status, 2); // UsageError は exit 2
+    assert.match(wild.stderr, /loopback か tailnet/);
+    const dead = run(home, ['web', '--allow-host', 'x.ts.net']);
+    assert.equal(dead.status, 2);
+    assert.match(dead.stderr, /--allow-host/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ulm web --no-token (loopback): tokenless バナーを出して起動する（cmdWeb 配線）', async () => {
+  const home = freshHome();
+  await new Promise((resolveTest, rejectTest) => {
+    const child = spawn('node', [BIN, 'web', '--port', '0', '--no-token'], {
+      env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
+    });
+    let out = '';
+    const finish = (err) => { try { child.kill('SIGKILL'); } catch { /* already gone */ } err ? rejectTest(err) : resolveTest(); };
+    const timer = setTimeout(() => finish(new Error(`banner 未出力: ${out}`)), 8000);
+    child.stdout.on('data', (d) => {
+      out += d.toString();
+      // バナーは3つの console.log が別チャンクで届きうるので、最終行（token 無し警告）まで待ってから判定。
+      if (out.includes('token 無しで起動中')) {
+        clearTimeout(timer);
+        try {
+          assert.match(out, /127\.0\.0\.1 のみ/);
+          assert.match(out, /http:\/\/127\.0\.0\.1:\d+\//);
+          assert.doesNotMatch(out, /\?token=/); // --no-token なので URL に token は無い
+          finish();
+        } catch (e) { finish(e); }
+      }
+    });
+    child.on('error', finish);
+  });
+  rmSync(home, { recursive: true, force: true });
+});
+
+test('ulm web --tailnet: tailscale が非JSON(GUI headless等)なら固定指定へ誘導して exit 2', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ulm-ts-'));
+  const stub = join(dir, 'tailscale');
+  // version は成功・status は非JSON を返すスタブ（macOS App Store CLI の headless 失敗を再現）
+  writeFileSync(stub, '#!/bin/sh\nif [ "$1" = version ]; then echo 1.0; exit 0; fi\necho "The Tailscale GUI failed to start"\nexit 0\n', { mode: 0o755 });
+  const home = freshHome();
+  try {
+    const r = spawnSync('node', [BIN, 'web', '--tailnet'], {
+      env: { ...process.env, ULM_HOME: home, ULM_TAILSCALE_BIN: stub, NODE_NO_WARNINGS: '1' },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /JSON を返しませんでした|--host/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ulm web --host <未割当CGNAT>: EADDRNOTAVAIL を案内化して exit 2', () => {
+  const home = freshHome();
+  try {
+    // 100.64.231.231 はこのホストに割り当てられていない CGNAT IP → bind 失敗
+    const r = run(home, ['web', '--host', '100.64.231.231', '--no-token']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /バインドできません/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** このホストに割り当てられている CGNAT(100.64.0.0/10) IPv4 を返す（無ければ null） */
+function cgnatIp() {
+  for (const ifs of Object.values(networkInterfaces())) {
+    for (const a of ifs || []) {
+      if (a.family === 'IPv4' || a.family === 4) {
+        const o = String(a.address).split('.').map(Number);
+        if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return a.address;
+      }
+    }
+  }
+  return null;
+}
+
+test('ulm web tailnet serve (E2E, CGNAT IF があれば): 許可Hostは200/非許可は403・token無し', async (t) => {
+  const ip = cgnatIp();
+  if (!ip) { t.skip('CGNAT(100.64/10) IF が無い環境のためスキップ'); return; }
+  const home = freshHome();
+  let child;
+  try {
+    const { url, port } = await new Promise((res, rej) => {
+      child = spawn('node', [BIN, 'web', '--host', ip, '--allow-host', 'alias.test.ts.net', '--no-token', '--port', '0'], {
+        env: { ...process.env, ULM_HOME: home, NODE_NO_WARNINGS: '1' },
+      });
+      let out = '';
+      const timer = setTimeout(() => rej(new Error(`banner timeout: ${out}`)), 8000);
+      child.stdout.on('data', (d) => {
+        out += d.toString();
+        const m = out.match(/http:\/\/\S+?:(\d+)\//);
+        if (out.includes('token 無しで公開中') && m) { clearTimeout(timer); res({ url: m[0], port: Number(m[1]) }); }
+      });
+      child.on('error', rej);
+    });
+    const { request } = await import('node:http');
+    const hit = (hostHeader) => new Promise((res, rej) => {
+      const r = request({ host: ip, port, path: '/api/summary', headers: { host: hostHeader } }, (resp) => { resp.resume(); res(resp.statusCode); });
+      r.on('error', rej); r.end();
+    });
+    assert.equal(await hit('alias.test.ts.net'), 200); // 許可した別名 Host
+    assert.equal(await hit(`${ip}:${port}`), 200); // bind IP 直
+    assert.equal(await hit('evil.example.com'), 403); // 非許可 Host は 403
+    assert.doesNotMatch(url, /\?token=/); // tokenless
+  } finally {
+    if (child) { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+    rmSync(home, { recursive: true, force: true });
+  }
 });
