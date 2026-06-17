@@ -28,6 +28,7 @@ ULM_HOME_VAL="${ULM_HOME:-$HOME/.claude/user-memory}"
 die() { echo "✗ $*" >&2; exit 1; }
 
 uninstall() {
+  case "${1:-}" in ''|--purge-log) ;; *) die "不明な引数: $1（uninstall [--purge-log]）" ;; esac
   if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     # ラベル(service-target)で bootout する。パス形式は plist が消えていると Label を読めず失敗するため。
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
@@ -101,8 +102,8 @@ install_agent() {
     catch { console.error("tailscale が JSON を返しません（GUI 未起動など）: " + String(raw).trim().split("\n")[0]); process.exit(1); }
     if (s.BackendState && s.BackendState !== "Running") { console.error("Tailscale 未接続: BackendState=" + s.BackendState); process.exit(1); }
     const self = s.Self || {};
-    // CGNAT 100.64.0.0/10 のみ（cli.js isCgnatIp と一致。public な 100.x を tokenless 公開しない）
-    const isCgnat = (ip) => { const o = String(ip).split("."); return o.length===4 && Number(o[0])===100 && Number(o[1])>=64 && Number(o[1])<=127; };
+    // CGNAT 100.64.0.0/10 のみ（cli.js isCgnatIp と同一定義。public な 100.x を tokenless 公開しない）
+    const isCgnat = (ip) => { const o = String(ip).split("."); if (o.length!==4) return false; const n=o.map(Number); return n.every(x=>Number.isInteger(x)&&x>=0&&x<=255) && n[0]===100 && n[1]>=64 && n[1]<=127; };
     const ip = (self.TailscaleIPs||[]).find(a => isCgnat(a));
     const name = String(self.DNSName||"").replace(/\.$/,"").toLowerCase();
     if (!ip) { console.error("CGNAT(100.64.0.0/10) の IPv4 が取得できません"); process.exit(1); }

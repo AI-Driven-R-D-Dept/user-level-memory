@@ -52,8 +52,8 @@ const HELP = `ulm — user-level memory（ユーザーレベル長期記憶 CLI�
   ulm recall <query> [--project P] [--explain] [--json]  プロンプト関連の記憶をハイブリッド想起（FTS5/BM25 + 埋め込み・キー無しは FTS のみ）
   ulm export [--quiet] | ulm import <dir> | ulm status | ulm doctor
   ulm web [--port 8765] [--tailnet]                     DB を閲覧・編集する Web UI（既定 127.0.0.1+トークン必須）。
-              [--host loopback|100.x] [--allow-host NAME]   --tailnet は 100.x(CGNAT) に直バインドし既定でトークン無し公開（tailnet ACL を信頼境界に）。
-              [--no-token]                                  --host は loopback か tailnet の 100.x のみ受理
+              [--host 127.0.0.1|100.x] [--allow-host NAME]  --tailnet は 100.x(CGNAT) に直バインドし既定でトークン無し公開（tailnet ACL を信頼境界に）。
+              [--no-token]                                  --host は loopback(127.0.0.1/localhost/::1) か tailnet の 100.x のみ受理
 
 環境変数: ULM_HOME（既定: ~/.claude/user-memory）`;
 
@@ -1079,8 +1079,17 @@ function isDisplayableHost(h) {
  */
 export function resolveWebBind(values, detect = detectTailnet) {
   if (values.tailnet && values.host) throw new UsageError('--tailnet と --host は併用できません');
+  // 空 --host は「未指定」と区別する（黙って loopback に落ちる/自己矛盾エラーを避ける）。
+  if (values.host !== undefined && !String(values.host).trim()) throw new UsageError('--host が空です');
   const allowHosts = [...(values['allow-host'] || [])];
   const noToken = !!values['no-token'];
+  // --allow-host は Host allowlist（tokenless 時の唯一の越境防御）に入るので、入口で形を検証する。
+  // 表示用 isDisplayableHost と違い IP リテラルは許可（Host が IP のアクセスもある）。'*'/junk は弾く。
+  for (const h of allowHosts) {
+    const n = normalizeHost(h);
+    const valid = n !== '' && (isIP(n) !== 0 || /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(n));
+    if (!valid) throw new UsageError(`--allow-host が不正です（ホスト名か IP のみ）: ${JSON.stringify(h)}`);
+  }
 
   if (values.tailnet) {
     const { ip, dnsName } = detect();

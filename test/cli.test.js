@@ -525,9 +525,18 @@ test('webBanner: displayHost が空に正規化されても bind.host にフォ�
   assert.doesNotMatch(lines, /http:\/\/:8765/);
 });
 
-test('resolveWebBind: 空白/ワイルドカードの --allow-host は表示に使わず検出名へフォールバック', () => {
-  const r = resolveWebBind(webValues({ tailnet: true, 'allow-host': [' ', '*'] }), () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' }));
-  assert.equal(r.displayHost, 'node.tail.ts.net'); // ' ' も '*' も無効 → 検出 MagicDNS 名
+test('resolveWebBind: 無効な --allow-host（空白/ワイルドカード/不正文字）は UsageError で弾く', () => {
+  const det = () => ({ ip: '100.100.90.41', dnsName: 'node.tail.ts.net' });
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['*'] }), det), /--allow-host が不正/);
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['ev*il'] }), det), /--allow-host が不正/);
+  assert.throws(() => resolveWebBind(webValues({ tailnet: true, 'allow-host': ['  '] }), det), /--allow-host が不正/);
+  // 妥当なホスト名・IP は通る
+  assert.equal(resolveWebBind(webValues({ tailnet: true, 'allow-host': ['ok.ts.net'] }), det).displayHost, 'ok.ts.net');
+});
+
+test('resolveWebBind: 空 --host は UsageError（黙って loopback に落とさない）', () => {
+  assert.throws(() => resolveWebBind(webValues({ host: '' })), /--host が空です/);
+  assert.throws(() => resolveWebBind(webValues({ host: '   ' })), /--host が空です/);
 });
 
 test('resolveWebBind: --allow-host 単独は死に設定として拒否', () => {

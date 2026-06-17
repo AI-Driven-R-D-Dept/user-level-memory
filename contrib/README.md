@@ -63,8 +63,10 @@ mkdir -p ~/.config/systemd/user
 cp contrib/systemd/ulm-web-tailnet.service ~/.config/systemd/user/
 # __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと値中の & や # でパスが壊れる）。
 # __NODE__ = node の実体（process.execPath）。asdf/volta/fnm の shim は systemd 下で版を解決できず不可。
-# --port/ULM_HOME は ULM_PORT / ULM_HOME 環境変数で上書き可（launchd 側と同じ。未指定は 8765 / ~/.claude/user-memory）。
-node -e 'const fs=require("fs"),f=process.argv[1],e=process.env;fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()).split("__PORT__").join(e.ULM_PORT||"8765").split("__ULM_HOME__").join(e.ULM_HOME||e.HOME+"/.claude/user-memory"))' \
+# node/repo パスを埋める（パスに空白を含む環境は systemd 側では非対応）。
+# ポート/ULM_HOME を変えるなら、置換後にユニットの `--port` と `Environment=ULM_HOME=` を直接編集する
+# （ULM_PORT/ULM_HOME 環境変数は launchd の install.sh のみが解釈し、systemd ユニットは固定値）。
+node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()))' \
   ~/.config/systemd/user/ulm-web-tailnet.service
 loginctl enable-linger "$USER"   # 常時起動には必須: headless/再起動後も起動させる（無いとログインセッション中のみ稼働）
 systemctl --user daemon-reload
@@ -92,8 +94,9 @@ journalctl --user --vacuum-time=1d       # 任意。注: vacuum は単一ユニ�
 
 ## メンテ上の注意
 
-- **node は絶対パス**で埋め込む（launchd は PATH を持たないため決め打ちが必要。`node` を上げたら再導入＝launchd は
-  `install.sh`、systemd は `ExecStart` 更新）。systemd の user unit は既定 PATH（`/usr/bin` 等）を持つので、
+- **node は絶対パス**で埋め込む（launchd ジョブの既定 PATH は `/usr/bin:/bin` など最小で、nvm/homebrew/asdf の
+  node はそこに無いため `process.execPath` で決め打ちする。`node` を上げたら再導入＝launchd は `install.sh`、
+  systemd は `ExecStart` 更新）。systemd の user unit は既定 PATH（`/usr/bin` 等）を持つので、
   Linux の `--tailnet` ExecStart は `tailscale` をその PATH から見つけられる。PATH が特殊な環境では固定指定版
   （`--host/--allow-host/--no-token`）に切り替えること。
 - ここでは開発リポジトリの `bin/ulm.js` を指す。プラグイン版に `--tailnet` が載ったら、そちらの `ulm` に向け直してよい。

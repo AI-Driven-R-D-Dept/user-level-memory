@@ -6,8 +6,8 @@
 #   # __NODE__/__ULM_JS__ を実パスへ置換（node で安全に。sed だと & や # を含むパスで壊れる）。
 #   # __NODE__ は node の実体の絶対パス（process.execPath）。asdf/volta/fnm の shim はダメ
 #   # （systemd はシェル初期化が無く shim が版を解決できずクラッシュループする）。
-#   （--port/ULM_HOME は ULM_PORT / ULM_HOME 環境変数で上書き可。launchd 側と同じ）
-#   node -e 'const fs=require("fs"),f=process.argv[1],e=process.env;fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()).split("__PORT__").join(e.ULM_PORT||"8765").split("__ULM_HOME__").join(e.ULM_HOME||e.HOME+"/.claude/user-memory"))' ~/.config/systemd/user/ulm-web-tailnet.service
+#   （リポジトリ/node のパスに空白が含まれる環境は systemd 側では非対応。--port/ULM_HOME はユニットを直接編集）
+#   node -e 'const fs=require("fs"),f=process.argv[1];fs.writeFileSync(f,fs.readFileSync(f,"utf8").split("__NODE__").join(process.execPath).split("__ULM_JS__").join(process.cwd()+"/bin/ulm.js").split("__REPO__").join(process.cwd()))' ~/.config/systemd/user/ulm-web-tailnet.service
 #   loginctl enable-linger "$USER"   # 常時起動には必須（headless/再起動後の自動起動。無いとログイン中のみ動く）
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now ulm-web-tailnet
@@ -28,10 +28,12 @@ Type=simple
 # WorkingDirectory はリポジトリルートに固定（/api/ref/add の allowRoots=cwd を launchd と揃える。
 # 未設定だと user manager 既定の ~ や / になり、受理パス根が広がる）。
 WorkingDirectory=__REPO__
-ExecStart=__NODE__ __ULM_JS__ web --tailnet --port __PORT__
+# ポート/ULM_HOME を変えるなら下の --port と Environment=ULM_HOME= を直接編集する
+# （ULM_PORT/ULM_HOME 環境変数は launchd の install.sh のみが解釈する。systemd 側は固定）。
+ExecStart=__NODE__ __ULM_JS__ web --tailnet --port 8765
 # 固定指定版（検出を使わない・最も堅牢）:
-# ExecStart=__NODE__ __ULM_JS__ web --host <100.x IP> --allow-host <node>.<tailnet>.ts.net --no-token --port __PORT__
-Environment=ULM_HOME=__ULM_HOME__
+# ExecStart=__NODE__ __ULM_JS__ web --host <100.x IP> --allow-host <node>.<tailnet>.ts.net --no-token --port 8765
+Environment=ULM_HOME=%h/.claude/user-memory
 Restart=always
 RestartSec=10
 
