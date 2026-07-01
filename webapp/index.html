@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ulm — user-level memory</title>
 <style>
   :root {
@@ -61,6 +61,9 @@
   body {
     background: var(--bg); color: var(--text);
     font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    /* viewport-fit=cover でノッチ下に潜り込む横インセットを避ける（非対応環境では 0） */
+    padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+    -webkit-tap-highlight-color: transparent;
   }
   button { font: inherit; color: inherit; cursor: pointer; }
 
@@ -74,9 +77,9 @@
   .app { display: flex; min-height: 100vh; }
 
   aside {
-    width: 232px; flex: none; position: sticky; top: 0; height: 100vh;
+    width: 232px; flex: none; position: sticky; top: 0; height: 100vh; height: 100dvh;
     display: flex; flex-direction: column;
-    background: var(--sidebar); backdrop-filter: blur(20px);
+    background: var(--sidebar); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
     border-right: 1px solid var(--hairline); padding: 20px 12px 14px;
   }
   .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 18px; }
@@ -175,7 +178,7 @@
     position: relative; transition: box-shadow 0.15s;
   }
   .obs.archived .obs-text, .obs.archived .obs-meta { opacity: 0.45; }
-  .obs-meta { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--muted); }
+  .obs-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 2px; font-size: 11.5px; color: var(--muted); }
   .obs-meta .pin-ind { display: inline-flex; color: var(--amber); }
   .obs-meta .pin-ind .ic { width: 12px; height: 12px; fill: currentColor; stroke: none; }
   .obs-meta .id { font-family: var(--mono); color: var(--text-2); }
@@ -213,7 +216,7 @@
   .masked-hint { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; }
   .masked-hint .ic { width: 12px; height: 12px; }
 
-  .obs-tags { display: flex; gap: 10px; align-items: center; font-size: 12px; }
+  .obs-tags { display: flex; flex-wrap: wrap; gap: 10px; row-gap: 4px; align-items: center; font-size: 12px; }
   .obs-tags .tag { color: var(--accent); opacity: 0.85; font-size: 12px; }
   .obs-tags .tag::before { content: "#"; opacity: 0.55; margin-right: 1px; }
   .obs-tags .addtag {
@@ -310,13 +313,15 @@
 
   /* ============ modal ============ */
   .backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(3px);
+    position: fixed; inset: 0; background: rgba(0,0,0,0.32);
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     display: grid; place-items: center; z-index: 100; opacity: 0; pointer-events: none;
     transition: opacity 0.18s;
   }
   .backdrop.show { opacity: 1; pointer-events: auto; }
   .modal {
-    width: 380px; background: var(--panel); border-radius: 14px; box-shadow: var(--shadow-pop);
+    width: min(380px, calc(100vw - 40px));
+    background: var(--panel); border-radius: 14px; box-shadow: var(--shadow-pop);
     padding: 24px; text-align: center; transform: scale(0.96); transition: transform 0.18s;
   }
   .backdrop.show .modal { transform: scale(1); }
@@ -337,13 +342,80 @@
   #toast {
     position: fixed; bottom: 28px; left: 50%; transform: translate(-50%, 8px);
     display: flex; align-items: center; gap: 8px;
-    background: rgba(40, 40, 42, 0.92); backdrop-filter: blur(16px); color: #fff;
+    background: rgba(40, 40, 42, 0.92); color: #fff;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
     padding: 9px 18px; border-radius: 99px; font-size: 13px;
     box-shadow: 0 8px 30px rgba(0,0,0,.25);
     opacity: 0; transition: all 0.22s cubic-bezier(.2,.9,.3,1.2); pointer-events: none; z-index: 200;
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast .ic { width: 14px; height: 14px; color: #5dd57d; }
+
+  /* ============ mobile / touch ============ */
+  /* ホバー前提の UI はタッチ端末で操作不能になるため常時表示にする */
+  @media (hover: none), (pointer: coarse) {
+    .obs-actions, .rowactions, .obs-tags .addtag { opacity: 1; }
+    .iconbtn { width: 34px; height: 34px; }
+    /* 常時表示の絶対配置アクションがメタ行に重ならないよう右側を確保
+       （〜700px では .obs-actions が static になるため下で 0 に戻す） */
+    .obs-meta { padding-right: 150px; }
+  }
+  @media (max-width: 700px) {
+    .app { display: block; }
+    aside {
+      position: sticky; z-index: 40; width: auto; height: auto;
+      flex-direction: row; align-items: center;
+      padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+      border-right: none; border-bottom: 1px solid var(--hairline);
+      /* backdrop-filter は fixed 子孫 (.nav) の containing block になるため外す（不透明背景で代替） */
+      -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg);
+    }
+    .brand { padding: 0; }
+    .side-foot { display: none; }
+
+    /* nav はボトムタブバー化 */
+    .nav {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+      flex-direction: row; gap: 0;
+      background: var(--sidebar); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      border-top: 1px solid var(--hairline);
+      padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    }
+    .nav button {
+      position: relative; flex: 1 1 0; min-width: 0;
+      flex-direction: column; justify-content: center; gap: 3px;
+      padding: 5px 2px; font-size: 10px;
+    }
+    .nav button .count { display: none; }
+    /* 候補 inbox の件数だけは要対応バッジとして残す（0 件は空文字なので :empty で消える） */
+    .nav button[data-page="cands"] .count:not(:empty) {
+      display: block; position: absolute; top: 0; left: 50%; margin: 0 0 0 6px;
+      min-width: 15px; padding: 0 4px; border-radius: 99px; text-align: center;
+      background: var(--red); color: #fff; font-size: 9.5px; line-height: 15px; font-weight: 700;
+    }
+
+    main { padding: 18px 14px calc(78px + env(safe-area-inset-bottom)); }
+    .toolbar .search { flex-basis: 100%; }
+    .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .card table { min-width: 560px; }
+
+    /* 観測カード: アクションは絶対配置だと折返したメタ行に重なるため、末尾の常設行にする */
+    .obs { display: flex; flex-direction: column; }
+    .obs-meta { padding-right: 0; }
+    .obs-actions { position: static; order: 10; opacity: 1; align-self: flex-end; margin-top: 4px; background: none; }
+
+    .seg { display: flex; width: 100%; }
+    .seg button { flex: 1 1 0; min-width: 0; justify-content: center; gap: 4px; padding: 5px 4px; font-size: 12px; }
+
+    .cand-head, .cand-actions { flex-wrap: wrap; }
+    .cand-actions .gate-note { margin-left: 0; flex-basis: 100%; }
+    .sql-bar { flex-wrap: wrap; }
+
+    /* iOS Safari は 16px 未満の入力へのフォーカスで自動ズームする */
+    .search input, .select, td input.inline, .sql-editor { font-size: 16px; }
+
+    #toast { bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100vw - 28px); }
+  }
 </style>
 </head>
 <body>
