@@ -647,7 +647,7 @@ LIMIT 20;</textarea>
     </div>
     <div class="about-card">
       <h3><svg class="ic"><use href="#i-lock"/></svg>機密の扱い</h3>
-      <p>鍵やトークンらしき値は保存時・表示時のゲートが検知して隠します（観測はぼかし表示・タップで開示、状態は値を伏せて表示）。redact した本文は [redacted] に置き換わり、復元できません。SQL タブは読み取り専用です。</p>
+      <p>鍵やトークンらしき値は保存時・表示時のゲートが検知して隠します。機密になった観測は既定では一覧に出ず、ツールバーの「機密」フィルタをオンにするとぼかし表示（タップで開示）、状態は値を伏せて表示します。redact した本文は [redacted] に置き換わり、復元できません。SQL タブは読み取り専用です。</p>
     </div>
     <div class="about-card">
       <h3><svg class="ic"><use href="#i-terminal"/></svg>もっと詳しく</h3>
@@ -834,7 +834,7 @@ function renderObs() {
         <button class="iconbtn ${o.pinned ? 'on-amber' : ''}" data-f="pinned" title="ピン留め">${I('pin')}</button>
         <button class="iconbtn ${o.secret ? 'on-purple' : ''}" data-f="secret" title="機密">${I('lock')}</button>
         <button class="iconbtn ${o.archived ? 'on-gray' : ''}" data-f="archived" title="アーカイブ">${I('archive')}</button>
-        <button class="iconbtn danger" data-f="redact" title="redact（墓石化）">${I('eraser')}</button>
+        <button class="iconbtn danger" data-f="redact" title="redact（本文を消して跡を残す）">${I('eraser')}</button>
       </div>
       ${masked ? `<div class="masked-hint" style="margin-top:7px">${I('lock')}機密 — タップで表示</div>` : ''}
       <div class="obs-text ${masked ? 'masked' : ''}">${esc(o.text)}</div>
@@ -1029,7 +1029,8 @@ document.getElementById('sql-run').onclick = async () => {
 // ---------- 起動 ----------
 reloadAll().catch(e => {
   document.body.innerHTML = `<div style="padding:40px;font-family:sans-serif">接続エラー: ${esc(e.message)}<br>` +
-    '<code>ulm web</code> が表示した URL（token 付き）から開き直してください。</div>';
+    'サーバ（<code>ulm web</code>）が起動しているか確認して開き直してください。' +
+    'token 運用の場合は <code>ulm web</code> が表示した最新の URL から開きます。</div>';
 });
 </script>
 </body>

@@ -59,6 +59,18 @@ test('webapp: PWA アセット（manifest/icon）はトークン不要・API と
       // 静的アセットを足しても API / HTML のトークン要件は不変
       assert.equal((await fetch(`${base}/api/obs`)).status, 401);
       assert.equal((await fetch(`${base}/`)).status, 401);
+      // Host 検証は静的アセットにも効く（fetch は Host を偽装できないため生の http.request）
+      const { request } = await import('node:http');
+      const port = Number(new URL(base).port);
+      const badHostStatus = await new Promise((resolveStatus, reject) => {
+        const req = request(
+          { host: '127.0.0.1', port, path: '/manifest.webmanifest', headers: { host: 'evil.example.com' } },
+          (res) => { res.resume(); resolveStatus(res.statusCode); }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+      assert.equal(badHostStatus, 403);
     });
   });
 });

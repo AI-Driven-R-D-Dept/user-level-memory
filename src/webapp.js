@@ -281,16 +281,23 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
           // アドレスバーが無く、生 JSON だと復旧手段に辿り着けない）。API の 401 は JSON のまま。
           res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
           return res.end('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">'
-            + '<meta name="viewport" content="width=device-width, initial-scale=1"><title>ulm — token が必要です</title></head>'
-            + '<body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:32px 24px;line-height:1.9;background:#f5f5f7;color:#1d1d1f;max-width:560px;margin:0 auto">'
-            + '<h1 style="font-size:18px">token が必要です</h1>'
+            + '<meta name="viewport" content="width=device-width, initial-scale=1"><title>ulm — token が必要です</title>'
+            + '<style>:root{color-scheme:light dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;'
+            + 'padding:32px 24px;line-height:1.9;background:#f5f5f7;color:#1d1d1f;max-width:560px;margin:0 auto}'
+            + 'h1{font-size:18px}@media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#f5f5f7}}</style></head>'
+            + '<body>'
+            + '<h1>token が必要です</h1>'
             + '<p>この URL の token は無効です。<code>ulm web</code> はサーバを起動し直すたびに新しい token を発行します。</p>'
             + '<p>ターミナルの <code>ulm web</code> が表示した最新の URL から開き直してください。'
             + 'ホーム画面に追加したアイコンから開いている場合は、いったん削除して新しい URL で追加し直すか、'
             + 'token 無しの <code>ulm web --tailnet</code> 運用（tailnet ACL が信頼境界）に切り替えてください。</p>'
             + '</body></html>');
         }
-        if (html === null) html = readFileSync(HTML_PATH, 'utf8');
+        // 生の readFileSync エラー（絶対パス入り）をクライアントに返さない
+        if (html === null) {
+          try { html = readFileSync(HTML_PATH, 'utf8'); }
+          catch { return json(res, 500, { error: 'UI ファイル（webapp/index.html）が見つかりません' }); }
+        }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
       }
