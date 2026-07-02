@@ -4,12 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ulm — user-level memory</title>
-<!-- PWA: manifest に start_url は書かない（追加時のページ URL が既定になり、token 付き運用でも壊れない） -->
+<!-- PWA: manifest に start_url は書かない（追加時のページ URL が既定になる）。
+     token は起動ごとにローテートするため、token 運用で追加したアイコンはサーバ再起動後に
+     開けなくなる（GET / の 401 ページが再追加を案内）。PWA 常用はトークン無し --tailnet 運用が前提。
+     status-bar-style は default にする: black-translucent は iOS が文字を白固定で描くため、
+     ライトのヘッダ背景 #f5f5f7 上で時計・電池が読めなくなる -->
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="ulm">
 <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
@@ -575,7 +579,7 @@
   <section class="page" id="page-refs">
     <div class="page-head">
       <h2>ref</h2>
-      <p>正式なルールを書いた .md ファイルの場所リスト。セッション開始時に Claude へ伝わるのは場所だけで、中身はファイル側にあります（候補の昇格先は skill であってここではありません）。</p>
+      <p>正式なルールを書いた .md ファイルの場所リスト。セッション開始時に Claude へ伝わるのは場所と短いメモだけで、中身はファイル側にあります（候補の昇格先は skill であってここではありません）。</p>
     </div>
     <div class="toolbar">
       <span style="flex:1"></span>
@@ -632,7 +636,7 @@ LIMIT 20;</textarea>
     </div>
     <div class="about-card">
       <h3><svg class="ic"><use href="#i-arrow-up-right"/></svg>気づきが知識になるまで</h3>
-      <p>貯めた観測は /ulm:mine が仮説として掘り出し、候補 inbox に入ります。採用するかは必ず人間が決めます。承認まで進んだものだけが、いつも使われる知識になります。</p>
+      <p>貯めた観測は /ulm:mine が仮説として掘り出し、候補 inbox に入ります。採用するかは必ず人間が決めます。承認まで進んだものだけが、条件の合う場面で使われる知識になります。</p>
       <div class="about-flow">
         <span class="step">観測を貯める</span><span class="arrow">→</span>
         <span class="step">mine が仮説を掘る</span><span class="arrow">→</span>
@@ -643,7 +647,7 @@ LIMIT 20;</textarea>
     </div>
     <div class="about-card">
       <h3><svg class="ic"><use href="#i-lock"/></svg>機密の扱い</h3>
-      <p>鍵やトークンらしき値は保存時・表示時のゲートが検知し、ぼかして表示します（タップで開示）。redact した本文は [redacted] に置き換わり、復元できません。SQL タブは読み取り専用です。</p>
+      <p>鍵やトークンらしき値は保存時・表示時のゲートが検知して隠します（観測はぼかし表示・タップで開示、状態は値を伏せて表示）。redact した本文は [redacted] に置き換わり、復元できません。SQL タブは読み取り専用です。</p>
     </div>
     <div class="about-card">
       <h3><svg class="ic"><use href="#i-terminal"/></svg>もっと詳しく</h3>
@@ -745,6 +749,7 @@ const openAbout = () => {
   document.querySelectorAll('#nav button').forEach(x => x.classList.remove('on'));
   document.querySelectorAll('.page').forEach(x => x.classList.remove('on'));
   document.getElementById('page-about').classList.add('on');
+  scrollTo(0, 0); // スクロール位置の持ち越しでタイトルが見えない途中位置で開かないように
 };
 document.getElementById('brand').onclick = openAbout;
 document.getElementById('brand').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAbout(); } };

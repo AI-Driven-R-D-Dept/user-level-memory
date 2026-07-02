@@ -29,6 +29,8 @@ test('webapp: token 無し/不正は 401（API 直叩きで人間操作を偽装
       assert.equal(badToken.status, 401);
       const page = await fetch(`${base}/`);
       assert.equal(page.status, 401);
+      // ページの 401 は人間向け HTML（standalone PWA にはアドレスバーが無く生 JSON では復旧できない）
+      assert.match(page.headers.get('content-type'), /text\/html/);
       // 変更系も同様
       const mut = await fetch(`${base}/api/cand/review`, { method: 'POST', body: '{}' });
       assert.equal(mut.status, 401);
@@ -44,7 +46,8 @@ test('webapp: PWA アセット（manifest/icon）はトークン不要・API と
       assert.equal(man.headers.get('content-type'), 'application/manifest+json');
       const parsed = JSON.parse(await man.text());
       assert.equal(parsed.short_name, 'ulm');
-      // start_url は書かない: 省略時はホーム画面追加時のページ URL（token 付き運用ならそれ）が既定になる
+      // start_url は書かない: 省略時は追加時のページ URL が既定になる。token はサーバ再起動で
+      // ローテートするため、token 運用の PWA は再起動後に再追加が必要（PWA 常用は --tailnet 前提）
       assert.ok(!('start_url' in parsed));
       for (const p of ['/icon-180.png', '/icon-512.png']) {
         const icon = await fetch(`${base}${p}`);

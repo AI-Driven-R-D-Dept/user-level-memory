@@ -220,6 +220,12 @@ node:http のみで依存ゼロを維持）。
   `x-ulm-token` ヘッダ）。トークンは起動した端末にだけ表示されるため、ブラウザ以外のローカルプロセス
   （エージェント等）が API を直叩きして approve 等の人間操作を偽装できない（`--yes` と同等の信頼境界）
   ③Host ヘッダ検証（DNS rebinding 対策）。変更系はカスタムヘッダ必須なので CSRF も成立しない。
+- **PWA アセットの例外**: `/manifest.webmanifest` と `/icon-*.png` だけはトークン無しで配信する（ブラウザが
+  ヘッダ無しの素の GET で取得するため）。記憶データを含まない固定ファイル 3 点のみで、ページ・API のトークン要件と
+  Host 検証は不変。トークンは起動ごとにローテートするため、トークン運用でホーム画面に追加した PWA はサーバ再起動後に
+  開けなくなる（GET / の 401 は再追加手順を示す人間向け HTML を返す）＝PWA 常用はトークン無し `--tailnet` 運用が前提。
+  なお Android Chrome の standalone インストールは secure context（HTTPS）を要求するため素の http 運用では対象外
+  （iOS Safari の「ホーム画面に追加」のみ standalone 起動になる）。
 - **tailnet 直アクセス（opt-in / closed VPN 前提）**: `ulm web --tailnet` は `tailscale` CLI から自ノードの 100.x IPv4 と
   MagicDNS 名を取得し、**0.0.0.0 ではなく 100.x に名指しバインド**（LAN への漏れを避け tailnet 限定に保つ）、
   Host 検証にその MagicDNS 名を許可する（`config.webapp.trusted_hosts` でも追加可）。`tailscale serve` の HTTPS 終端は
