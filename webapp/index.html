@@ -58,8 +58,10 @@
   }
   * { box-sizing: border-box; margin: 0; }
   html { -webkit-font-smoothing: antialiased; }
-  /* URL・トークン等の折返し不能な長トークンが狭幅でカードを突き破らないように */
-  .obs-text, .cand-hyp, .kv .v, td, .side-foot code, #toast span,
+  /* URL・トークン等の折返し不能な長トークンが狭幅でカードを突き破らないように。
+     td には付けない: min-content が潰れて日付等が数文字ずつ断片化する。
+     テーブル内の長トークンは .card の横スクロールで収める */
+  .obs-text, .cand-hyp, .kv .v, .side-foot code, #toast span,
   .obs-tags .tag, .obs-meta .proj { overflow-wrap: anywhere; }
   body {
     background: var(--bg); color: var(--text);
@@ -258,9 +260,10 @@
      テーブル右端の行アクションがクリップされたまま到達不能になる */
   .card { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card); overflow: hidden; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; }
-  /* min-width はカードが狭い時の列圧縮ガード（td の overflow-wrap: anywhere は
-     min-content を潰すため、これが無いと 701〜850px 帯で日付等が数文字ずつ折り返される） */
+  /* カードが狭い時の列圧縮ガード。足りない分は .card の横スクロールが受ける */
   .card table { min-width: 560px; }
+  /* 日時セルは折り返さない（狭い列だと「2026- / 07-02 / 08:44」に断片化するため） */
+  td.ts { white-space: nowrap; }
   th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
   tr:last-child td { border-bottom: none; }
   th {
@@ -350,7 +353,11 @@
 
   /* ============ toast ============ */
   #toast {
-    position: fixed; bottom: 28px; left: 50%; transform: translate(-50%, 8px);
+    /* left:50%+translate だと shrink-to-fit の利用可能幅が 50vw に制限され
+       max-width が効かないため、left/right + margin auto で中央寄せする */
+    position: fixed; bottom: 28px; left: 14px; right: 14px; margin-inline: auto;
+    width: fit-content; max-width: 560px;
+    transform: translateY(8px);
     display: flex; align-items: center; gap: 8px;
     background: rgba(40, 40, 42, 0.92); color: #fff;
     -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
@@ -358,7 +365,7 @@
     box-shadow: 0 8px 30px rgba(0,0,0,.25);
     opacity: 0; transition: all 0.22s cubic-bezier(.2,.9,.3,1.2); pointer-events: none; z-index: 200;
   }
-  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.show { opacity: 1; transform: translateY(0); }
   #toast .ic { width: 14px; height: 14px; color: #5dd57d; }
 
   /* ============ mobile / touch ============ */
@@ -422,7 +429,7 @@
     .cand-actions .gate-note { margin-left: 0; flex-basis: 100%; }
     .sql-bar { flex-wrap: wrap; }
 
-    #toast { bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100vw - 28px); }
+    #toast { bottom: calc(72px + env(safe-area-inset-bottom)); }
   }
 </style>
 </head>
@@ -805,8 +812,8 @@ function renderStates() {
       <td style="font-weight:600">${esc(s.key)}</td>
       <td class="mono sub">${esc(s.scope)}</td>
       <td><span class="editable" data-i="${i}">${s.sensitive ? '🔒 (secret)' : esc(s.value)}</span></td>
-      <td class="sub">${fmtTs(s.updated_at)}</td>
-      <td class="sub">${s.expires_at ? fmtTs(s.expires_at) + (expired ? ' (失効)' : '') : '—'}</td>
+      <td class="sub ts">${fmtTs(s.updated_at)}</td>
+      <td class="sub ts">${s.expires_at ? fmtTs(s.expires_at) + (expired ? ' (失効)' : '') : '—'}</td>
       <td><div class="rowactions"><button class="iconbtn danger" data-i="${i}" title="削除">${I('trash')}</button></div></td>
     </tr>`;
   }).join('');
