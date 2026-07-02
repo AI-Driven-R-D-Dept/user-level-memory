@@ -58,6 +58,8 @@
   }
   * { box-sizing: border-box; margin: 0; }
   html { -webkit-font-smoothing: antialiased; }
+  /* URL・トークン等の折返し不能な長トークンが狭幅でカードを突き破らないように */
+  .obs-text, .cand-hyp, .kv .v, td, .side-foot code, #toast span { overflow-wrap: anywhere; }
   body {
     background: var(--bg); color: var(--text);
     font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
@@ -78,6 +80,7 @@
 
   aside {
     width: 232px; flex: none; position: sticky; top: 0; height: 100vh; height: 100dvh;
+    overflow-y: auto; /* 低い viewport（スマホ横向き等）で side-foot が切れて読めなくならないように */
     display: flex; flex-direction: column;
     background: var(--sidebar); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
     border-right: 1px solid var(--hairline); padding: 20px 12px 14px;
@@ -249,7 +252,9 @@
   }
 
   /* ============ tables ============ */
-  .card { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card); overflow: hidden; }
+  /* overflow-x は常に auto: hidden だとタッチの中間幅（701〜810px 程度）で
+     テーブル右端の行アクションがクリップされたまま到達不能になる */
+  .card { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card); overflow: hidden; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
   tr:last-child td { border-bottom: none; }
@@ -359,6 +364,9 @@
     /* 常時表示の絶対配置アクションがメタ行に重ならないよう右側を確保
        （〜700px では .obs-actions が static になるため下で 0 に戻す） */
     .obs-meta { padding-right: 150px; }
+    /* iOS Safari は 16px 未満の入力へのフォーカスで自動ズームする。
+       幅ではなくタッチ能力で判定（iPhone 横向きは 700px を超える） */
+    .search input, .select, td input.inline, .sql-editor { font-size: 16px; }
   }
   @media (max-width: 700px) {
     .app { display: block; }
@@ -396,7 +404,6 @@
 
     main { padding: 18px 14px calc(78px + env(safe-area-inset-bottom)); }
     .toolbar .search { flex-basis: 100%; }
-    .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .card table { min-width: 560px; }
 
     /* 観測カード: アクションは絶対配置だと折返したメタ行に重なるため、末尾の常設行にする */
@@ -410,9 +417,6 @@
     .cand-head, .cand-actions { flex-wrap: wrap; }
     .cand-actions .gate-note { margin-left: 0; flex-basis: 100%; }
     .sql-bar { flex-wrap: wrap; }
-
-    /* iOS Safari は 16px 未満の入力へのフォーカスで自動ズームする */
-    .search input, .select, td input.inline, .sql-editor { font-size: 16px; }
 
     #toast { bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100vw - 28px); }
   }
@@ -456,7 +460,8 @@
   <div class="nav" id="nav">
     <button class="on" data-page="obs"><svg class="ic"><use href="#i-layers"/></svg>観測<span class="count" id="c-obs">—</span></button>
     <button data-page="states"><svg class="ic"><use href="#i-sliders"/></svg>状態<span class="count" id="c-states">—</span></button>
-    <button data-page="cands"><svg class="ic"><use href="#i-bulb"/></svg>候補<span class="count" id="c-cands">—</span></button>
+    <!-- c-cands は初期値を空にする（「—」だとモバイルの :not(:empty) バッジが読込中に点灯してしまう） -->
+    <button data-page="cands"><svg class="ic"><use href="#i-bulb"/></svg>候補<span class="count" id="c-cands"></span></button>
     <button data-page="refs"><svg class="ic"><use href="#i-link"/></svg>ref<span class="count" id="c-refs">—</span></button>
     <button data-page="sql"><svg class="ic"><use href="#i-terminal"/></svg>SQL</button>
   </div>
