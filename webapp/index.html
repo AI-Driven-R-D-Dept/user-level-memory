@@ -2,8 +2,21 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ulm — user-level memory</title>
+<!-- PWA: manifest に start_url は書かない（追加時のページ URL が既定になる）。
+     token は起動ごとにローテートするため、token 運用で追加したアイコンはサーバ再起動後に
+     開けなくなる（GET / の 401 ページが再追加を案内）。PWA 常用はトークン無し --tailnet 運用が前提。
+     status-bar-style は default にする: black-translucent は iOS が文字を白固定で描くため、
+     ライトのヘッダ背景 #f5f5f7 上で時計・電池が読めなくなる -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ulm">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
 <style>
   :root {
     --bg: #f5f5f7;
@@ -58,9 +71,17 @@
   }
   * { box-sizing: border-box; margin: 0; }
   html { -webkit-font-smoothing: antialiased; }
+  /* URL・トークン等の折返し不能な長トークンが狭幅でカードを突き破らないように。
+     td には付けない: min-content が潰れて日付等が数文字ずつ断片化する。
+     テーブル内の長トークンは .card の横スクロールで収める */
+  .obs-text, .cand-hyp, .kv .v, .side-foot code, #toast span,
+  .obs-tags .tag, .obs-meta .proj { overflow-wrap: anywhere; }
   body {
     background: var(--bg); color: var(--text);
     font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    /* viewport-fit=cover でノッチ下に潜り込む横インセットを避ける（非対応環境では 0） */
+    padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+    -webkit-tap-highlight-color: transparent;
   }
   button { font: inherit; color: inherit; cursor: pointer; }
 
@@ -74,12 +95,13 @@
   .app { display: flex; min-height: 100vh; }
 
   aside {
-    width: 232px; flex: none; position: sticky; top: 0; height: 100vh;
+    width: 232px; flex: none; position: sticky; top: 0; height: 100vh; height: 100dvh;
+    overflow-y: auto; /* 低い viewport（スマホ横向き等）で side-foot が切れて読めなくならないように */
     display: flex; flex-direction: column;
-    background: var(--sidebar); backdrop-filter: blur(20px);
+    background: var(--sidebar); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
     border-right: 1px solid var(--hairline); padding: 20px 12px 14px;
   }
-  .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 18px; cursor: pointer; }
   .brand-mark {
     width: 34px; height: 34px; border-radius: 9px; flex: none;
     background: linear-gradient(145deg, #3a7bd5, #2b4a8b);
@@ -133,6 +155,7 @@
   .search input::placeholder { color: var(--muted); }
 
   .select {
+    max-width: 100%; /* 長い project 名の option で intrinsic 幅が viewport を超えないように */
     appearance: none; padding: 7px 30px 7px 12px; font: inherit; font-size: 13px;
     border: none; border-radius: 9px; background: var(--panel); color: var(--text);
     box-shadow: var(--shadow-card); outline: none; cursor: pointer;
@@ -175,7 +198,7 @@
     position: relative; transition: box-shadow 0.15s;
   }
   .obs.archived .obs-text, .obs.archived .obs-meta { opacity: 0.45; }
-  .obs-meta { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--muted); }
+  .obs-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 2px; font-size: 11.5px; color: var(--muted); }
   .obs-meta .pin-ind { display: inline-flex; color: var(--amber); }
   .obs-meta .pin-ind .ic { width: 12px; height: 12px; fill: currentColor; stroke: none; }
   .obs-meta .id { font-family: var(--mono); color: var(--text-2); }
@@ -209,11 +232,11 @@
     white-space: pre-wrap; border-radius: 6px; cursor: text;
   }
   .obs-text:hover { background: var(--hover); outline: 5px solid var(--hover); }
-  .obs-text.masked { filter: blur(5px); user-select: none; cursor: pointer; }
+  .obs-text.masked { filter: blur(5px); -webkit-user-select: none; user-select: none; cursor: pointer; }
   .masked-hint { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; }
   .masked-hint .ic { width: 12px; height: 12px; }
 
-  .obs-tags { display: flex; gap: 10px; align-items: center; font-size: 12px; }
+  .obs-tags { display: flex; flex-wrap: wrap; gap: 10px; row-gap: 4px; align-items: center; font-size: 12px; }
   .obs-tags .tag { color: var(--accent); opacity: 0.85; font-size: 12px; }
   .obs-tags .tag::before { content: "#"; opacity: 0.55; margin-right: 1px; }
   .obs-tags .addtag {
@@ -246,8 +269,14 @@
   }
 
   /* ============ tables ============ */
-  .card { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card); overflow: hidden; }
+  /* overflow-x は常に auto: hidden だとタッチの中間幅（701〜810px 程度）で
+     テーブル右端の行アクションがクリップされたまま到達不能になる */
+  .card { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card); overflow: hidden; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; }
+  /* カードが狭い時の列圧縮ガード。足りない分は .card の横スクロールが受ける */
+  .card table { min-width: 560px; }
+  /* 日時セルは折り返さない（狭い列だと「2026- / 07-02 / 08:44」に断片化するため） */
+  td.ts { white-space: nowrap; }
   th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
   tr:last-child td { border-bottom: none; }
   th {
@@ -310,13 +339,15 @@
 
   /* ============ modal ============ */
   .backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(3px);
+    position: fixed; inset: 0; background: rgba(0,0,0,0.32);
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     display: grid; place-items: center; z-index: 100; opacity: 0; pointer-events: none;
     transition: opacity 0.18s;
   }
   .backdrop.show { opacity: 1; pointer-events: auto; }
   .modal {
-    width: 380px; background: var(--panel); border-radius: 14px; box-shadow: var(--shadow-pop);
+    width: min(380px, calc(100vw - 40px));
+    background: var(--panel); border-radius: 14px; box-shadow: var(--shadow-pop);
     padding: 24px; text-align: center; transform: scale(0.96); transition: transform 0.18s;
   }
   .backdrop.show .modal { transform: scale(1); }
@@ -335,15 +366,102 @@
 
   /* ============ toast ============ */
   #toast {
-    position: fixed; bottom: 28px; left: 50%; transform: translate(-50%, 8px);
+    /* left:50%+translate だと shrink-to-fit の利用可能幅が 50vw に制限され
+       max-width が効かないため、left/right + margin auto で中央寄せする */
+    position: fixed; bottom: 28px; left: 14px; right: 14px; margin-inline: auto;
+    width: fit-content; max-width: 560px;
+    transform: translateY(8px);
     display: flex; align-items: center; gap: 8px;
-    background: rgba(40, 40, 42, 0.92); backdrop-filter: blur(16px); color: #fff;
+    background: rgba(40, 40, 42, 0.92); color: #fff;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
     padding: 9px 18px; border-radius: 99px; font-size: 13px;
     box-shadow: 0 8px 30px rgba(0,0,0,.25);
     opacity: 0; transition: all 0.22s cubic-bezier(.2,.9,.3,1.2); pointer-events: none; z-index: 200;
   }
-  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.show { opacity: 1; transform: translateY(0); }
   #toast .ic { width: 14px; height: 14px; color: #5dd57d; }
+
+  /* ============ about（ブランドマークのタップで開く隠しページ） ============ */
+  .about-card {
+    background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-card);
+    padding: 18px 20px 16px; margin-bottom: 10px;
+  }
+  .about-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .about-card h3 .ic { color: var(--accent); flex: none; }
+  .about-card p { font-size: 13.5px; color: var(--text-2); }
+  .about-card p + p { margin-top: 6px; }
+  .about-card code { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); }
+  .about-item { display: flex; gap: 10px; padding: 7px 0; font-size: 13.5px; color: var(--text-2); align-items: baseline; }
+  .about-item .ic { align-self: center; color: var(--accent); }
+  .about-item b { color: var(--text); font-weight: 600; flex: none; width: 3.2em; }
+  .about-flow { display: flex; flex-wrap: wrap; gap: 6px; row-gap: 8px; align-items: center; font-size: 12.5px; margin-top: 10px; }
+  .about-flow .step { background: var(--seg-bg); border-radius: 99px; padding: 3px 12px; color: var(--text-2); font-weight: 500; }
+  .about-flow .arrow { color: var(--muted); }
+  .about-flow .step.goal { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  /* ============ mobile / touch ============ */
+  /* ホバー前提の UI はタッチ端末で操作不能になるため常時表示にする */
+  @media (hover: none), (pointer: coarse) {
+    .obs-actions, .rowactions, .obs-tags .addtag { opacity: 1; }
+    .iconbtn { width: 34px; height: 34px; }
+    /* 常時表示の絶対配置アクションがメタ行に重ならないよう右側を確保
+       （〜700px では .obs-actions が static になるため下で 0 に戻す） */
+    .obs-meta { padding-right: 150px; }
+    /* iOS Safari は 16px 未満の入力へのフォーカスで自動ズームする。
+       幅ではなくタッチ能力で判定（iPhone 横向きは 700px を超える） */
+    .search input, .select, td input.inline, .sql-editor { font-size: 16px; }
+  }
+  @media (max-width: 700px) {
+    .app { display: block; }
+    aside {
+      position: sticky; z-index: 40; width: auto; height: auto;
+      flex-direction: row; align-items: center;
+      padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+      border-right: none; border-bottom: 1px solid var(--hairline);
+      /* backdrop-filter は fixed 子孫 (.nav) の containing block になるため外す（不透明背景で代替） */
+      -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg);
+    }
+    .brand { padding: 0; }
+    .side-foot { display: none; }
+
+    /* nav はボトムタブバー化 */
+    .nav {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+      flex-direction: row; gap: 0;
+      background: var(--sidebar); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      border-top: 1px solid var(--hairline);
+      padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    }
+    .nav button {
+      position: relative; flex: 1 1 0; min-width: 0;
+      flex-direction: column; justify-content: center; gap: 3px;
+      padding: 5px 2px; font-size: 10px;
+    }
+    .nav button .count { display: none; }
+    /* 候補 inbox の件数だけは要対応バッジとして残す（0 件は空文字なので :empty で消える） */
+    .nav button[data-page="cands"] .count:not(:empty) {
+      display: block; position: absolute; top: 0; left: 50%; margin: 0 0 0 6px;
+      min-width: 15px; padding: 0 4px; border-radius: 99px; text-align: center;
+      background: var(--red); color: #fff; font-size: 9.5px; line-height: 15px; font-weight: 700;
+    }
+
+    main { padding: 18px 14px calc(78px + env(safe-area-inset-bottom)); }
+    .toolbar .search { flex-basis: 100%; }
+
+    /* 観測カード: アクションは絶対配置だと折返したメタ行に重なるため、末尾の常設行にする */
+    .obs { display: flex; flex-direction: column; }
+    .obs-meta { padding-right: 0; }
+    .obs-actions { position: static; order: 10; opacity: 1; align-self: flex-end; margin-top: 4px; background: none; }
+
+    .seg { display: flex; width: 100%; }
+    .seg button { flex: 1 1 0; min-width: 0; justify-content: center; gap: 4px; padding: 5px 4px; font-size: 12px; }
+
+    .cand-head, .cand-actions { flex-wrap: wrap; }
+    .cand-actions .gate-note { margin-left: 0; flex-basis: 100%; }
+    .sql-bar { flex-wrap: wrap; }
+
+    #toast { bottom: calc(72px + env(safe-area-inset-bottom)); }
+  }
 </style>
 </head>
 <body>
@@ -377,15 +495,18 @@
 <div class="app">
 
 <aside>
-  <div class="brand">
+  <!-- ブランドのタップで「ulm とは」ページへ（ナビには出さない隠し導線） -->
+  <div class="brand" id="brand" role="button" tabindex="0" title="ulm とは">
     <div class="brand-mark"><svg class="ic"><use href="#i-memory"/></svg></div>
     <h1>ulm<small>user-level memory</small></h1>
   </div>
+  <!-- count の初期値は全て空: 「—」だとモバイルの :not(:empty) バッジが読込中に点灯し、
+       一部だけ空にするとデスクトップの読込中表示が不揃いになる -->
   <div class="nav" id="nav">
-    <button class="on" data-page="obs"><svg class="ic"><use href="#i-layers"/></svg>観測<span class="count" id="c-obs">—</span></button>
-    <button data-page="states"><svg class="ic"><use href="#i-sliders"/></svg>状態<span class="count" id="c-states">—</span></button>
-    <button data-page="cands"><svg class="ic"><use href="#i-bulb"/></svg>候補<span class="count" id="c-cands">—</span></button>
-    <button data-page="refs"><svg class="ic"><use href="#i-link"/></svg>ref<span class="count" id="c-refs">—</span></button>
+    <button class="on" data-page="obs"><svg class="ic"><use href="#i-layers"/></svg>観測<span class="count" id="c-obs"></span></button>
+    <button data-page="states"><svg class="ic"><use href="#i-sliders"/></svg>状態<span class="count" id="c-states"></span></button>
+    <button data-page="cands"><svg class="ic"><use href="#i-bulb"/></svg>候補<span class="count" id="c-cands"></span></button>
+    <button data-page="refs"><svg class="ic"><use href="#i-link"/></svg>ref<span class="count" id="c-refs"></span></button>
     <button data-page="sql"><svg class="ic"><use href="#i-terminal"/></svg>SQL</button>
   </div>
   <div class="side-foot">
@@ -400,7 +521,7 @@
   <section class="page on" id="page-obs">
     <div class="page-head">
       <h2>観測</h2>
-      <p>追記が基本のログ。訂正は redact（墓石化）で表現されます。</p>
+      <p>作業で気づいた事実を書き足していくログ。あとから書き換えず、消したいものは redact（本文だけを消して跡を残す）を使います。</p>
     </div>
     <div class="toolbar">
       <div class="search">
@@ -423,7 +544,7 @@
   <section class="page" id="page-states">
     <div class="page-head">
       <h2>状態</h2>
-      <p>上書き型の可変状態。期限つきの値は失効後に自動で無視されます。値をクリックで編集。</p>
+      <p>「いま」を表す上書き型の値（現在の担当・作業中のファイルなど）。期限つきの値は切れると自動で無視されます。値をタップすると編集できます。</p>
     </div>
     <div class="toolbar">
       <span style="flex:1"></span>
@@ -441,7 +562,7 @@
   <section class="page" id="page-cands">
     <div class="page-head">
       <h2>候補</h2>
-      <p>採掘された仮説の遊び場。自動注入はされません。ここでの approve / reject が人間ゲート。承認済みは /ulm:promote が project の skill（.claude/skills）へ機械的に昇格します。</p>
+      <p>観測から掘り出した「こうすると良さそう」の仮説置き場。ここにある間は勝手に使われません。採用は人間が approve / reject で決め、承認したものは /ulm:promote で project の skill（.claude/skills）になります。</p>
     </div>
     <div class="toolbar">
       <div class="seg" id="cand-seg">
@@ -458,7 +579,7 @@
   <section class="page" id="page-refs">
     <div class="page-head">
       <h2>ref</h2>
-      <p>手動登録した正式規範（.md）へのポインタ。SessionStart で所在だけが注入されます。実体はファイル側。候補の昇格先ではありません（昇格先は project の skill）。</p>
+      <p>正式なルールを書いた .md ファイルの場所リスト。セッション開始時に Claude へ伝わるのは場所と短いメモだけで、中身はファイル側にあります（候補の昇格先は skill であってここではありません）。</p>
     </div>
     <div class="toolbar">
       <span style="flex:1"></span>
@@ -476,7 +597,7 @@
   <section class="page" id="page-sql">
     <div class="page-head">
       <h2>SQL</h2>
-      <p>データベースへの自由クエリ。書き込みは各画面の編集 UI から行います。</p>
+      <p>記憶 DB を読み取り専用の SQL で直接調べられます。書き換えたいときは各画面の編集ボタンを使ってください。</p>
     </div>
     <textarea class="sql-editor" spellcheck="false">-- 既定は本文(text)を出さない。機密の偶発露出を避けるため、本文が要るときは
 -- WHERE secret = 0 を保ったまま明示的に text を SELECT に足す（SQL は生 DB の読取り）。
@@ -492,6 +613,45 @@ LIMIT 20;</textarea>
     </div>
     <div class="card">
       <table><thead id="sql-head"></thead><tbody id="sql-body"></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ ulm とは（隠しページ: ブランドのタップで遷移） ============ -->
+  <section class="page" id="page-about">
+    <div class="page-head">
+      <h2>ulm とは</h2>
+      <p>user-level memory — Claude Code のためのユーザーレベル長期記憶</p>
+    </div>
+    <div class="about-card">
+      <h3><svg class="ic"><use href="#i-memory"/></svg>なにをする道具か</h3>
+      <p>セッションが終わると消えてしまう「現場の勘所」を、プロジェクトを越えてあなたに紐づけて貯めておく記憶レイヤーです。CLAUDE.md（プロジェクトの掟）や ref（正式な規範）ほど固まっていない、生の気づきの置き場になります。</p>
+      <p>セッション開始時には、状態・ピン留めした観測・最近の観測・ref の場所が Claude に自動で伝わります。</p>
+    </div>
+    <div class="about-card">
+      <h3><svg class="ic"><use href="#i-layers"/></svg>4 つの置き場</h3>
+      <div class="about-item"><svg class="ic"><use href="#i-layers"/></svg><b>観測</b><span>作業で気づいた事実を書き足すログ。書き換えず、消すときは redact で跡を残す</span></div>
+      <div class="about-item"><svg class="ic"><use href="#i-sliders"/></svg><b>状態</b><span>「いま」を表す上書き型の値。期限つきの値は切れると無視される</span></div>
+      <div class="about-item"><svg class="ic"><use href="#i-bulb"/></svg><b>候補</b><span>観測から掘り出した仮説。人間が承認するまで使われない</span></div>
+      <div class="about-item"><svg class="ic"><use href="#i-link"/></svg><b>ref</b><span>正式なルールを書いた .md ファイルの場所リスト</span></div>
+    </div>
+    <div class="about-card">
+      <h3><svg class="ic"><use href="#i-arrow-up-right"/></svg>気づきが知識になるまで</h3>
+      <p>貯めた観測は /ulm:mine が仮説として掘り出し、候補 inbox に入ります。採用するかは必ず人間が決めます。承認まで進んだものだけが、条件の合う場面で使われる知識になります。</p>
+      <div class="about-flow">
+        <span class="step">観測を貯める</span><span class="arrow">→</span>
+        <span class="step">mine が仮説を掘る</span><span class="arrow">→</span>
+        <span class="step">候補 inbox</span><span class="arrow">→</span>
+        <span class="step">人間が approve</span><span class="arrow">→</span>
+        <span class="step goal">project の skill</span>
+      </div>
+    </div>
+    <div class="about-card">
+      <h3><svg class="ic"><use href="#i-lock"/></svg>機密の扱い</h3>
+      <p>鍵やトークンらしき値は保存時・表示時のゲートが検知して隠します。機密になった観測は既定では一覧に出ず、ツールバーの「機密」フィルタをオンにするとぼかし表示（タップで開示）、状態は値を伏せて表示します。redact した本文は [redacted] に置き換わり、復元できません。SQL タブは読み取り専用です。</p>
+    </div>
+    <div class="about-card">
+      <h3><svg class="ic"><use href="#i-terminal"/></svg>もっと詳しく</h3>
+      <p>設計の全体像はリポジトリの DESIGN.md、コマンド一覧は <code>ulm --help</code> へ。この画面は左上のブランドマークをタップすると開けます。</p>
     </div>
   </section>
 
@@ -584,6 +744,16 @@ document.querySelectorAll('#nav button').forEach(b => b.onclick = () => {
   document.getElementById('page-' + b.dataset.page).classList.add('on');
 });
 
+// ブランドのタップで「ulm とは」へ（戻るのはナビのどれかをタップ）
+const openAbout = () => {
+  document.querySelectorAll('#nav button').forEach(x => x.classList.remove('on'));
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('on'));
+  document.getElementById('page-about').classList.add('on');
+  scrollTo(0, 0); // スクロール位置の持ち越しでタイトルが見えない途中位置で開かないように
+};
+document.getElementById('brand').onclick = openAbout;
+document.getElementById('brand').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAbout(); } };
+
 function refreshCounts() {
   document.getElementById('c-obs').textContent = OBS.filter(o => !o.redacted).length;
   document.getElementById('c-states').textContent = STATES.length;
@@ -664,9 +834,9 @@ function renderObs() {
         <button class="iconbtn ${o.pinned ? 'on-amber' : ''}" data-f="pinned" title="ピン留め">${I('pin')}</button>
         <button class="iconbtn ${o.secret ? 'on-purple' : ''}" data-f="secret" title="機密">${I('lock')}</button>
         <button class="iconbtn ${o.archived ? 'on-gray' : ''}" data-f="archived" title="アーカイブ">${I('archive')}</button>
-        <button class="iconbtn danger" data-f="redact" title="redact（墓石化）">${I('eraser')}</button>
+        <button class="iconbtn danger" data-f="redact" title="redact（本文を消して跡を残す）">${I('eraser')}</button>
       </div>
-      ${masked ? `<div class="masked-hint" style="margin-top:7px">${I('lock')}機密 — クリックで表示</div>` : ''}
+      ${masked ? `<div class="masked-hint" style="margin-top:7px">${I('lock')}機密 — タップで表示</div>` : ''}
       <div class="obs-text ${masked ? 'masked' : ''}">${esc(o.text)}</div>
       <div class="obs-tags">
         ${o.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}
@@ -700,10 +870,10 @@ function renderObs() {
 ['obs-search', 'obs-proj'].forEach(id => document.getElementById(id).addEventListener('input', renderObs));
 
 document.getElementById('obs-add-btn').onclick = async () => {
-  const text = prompt('観測テキスト（1〜2文・条件込み）');
+  const text = prompt('観測（いつ・どの条件で・何が起きたか を 1〜2 文で）');
   if (!text) return;
   const tags = (prompt('タグ（カンマ区切り・省略可）', '') || '').split(',').map(x => x.trim()).filter(Boolean);
-  const project = prompt('project（空 = global）', '') || null;
+  const project = prompt('対象 project（空欄 = 全 project 共通）', '') || null;
   try {
     const r = await api('/api/obs', { text, tags, project });
     for (const n of r.notes ?? []) toast(`⚠ ${n}`);
@@ -723,8 +893,8 @@ function renderStates() {
       <td style="font-weight:600">${esc(s.key)}</td>
       <td class="mono sub">${esc(s.scope)}</td>
       <td><span class="editable" data-i="${i}">${s.sensitive ? '🔒 (secret)' : esc(s.value)}</span></td>
-      <td class="sub">${fmtTs(s.updated_at)}</td>
-      <td class="sub">${s.expires_at ? fmtTs(s.expires_at) + (expired ? ' (失効)' : '') : '—'}</td>
+      <td class="sub ts">${fmtTs(s.updated_at)}</td>
+      <td class="sub ts">${s.expires_at ? fmtTs(s.expires_at) + (expired ? ' (失効)' : '') : '—'}</td>
       <td><div class="rowactions"><button class="iconbtn danger" data-i="${i}" title="削除">${I('trash')}</button></div></td>
     </tr>`;
   }).join('');
@@ -755,8 +925,8 @@ function renderStates() {
 document.getElementById('state-add-btn').onclick = async () => {
   const key = prompt('state のキー'); if (!key) return;
   const value = prompt('値'); if (value == null) return;
-  const scope = prompt('scope（空 = global / プロジェクト名）', '') || 'global';
-  const ttl = prompt('TTL（例 7d・空 = 無期限）', '') || null;
+  const scope = prompt('scope（空欄 = global、または project 名）', '') || 'global';
+  const ttl = prompt('有効期限 TTL（例 7d・空欄 = 無期限）', '') || null;
   try { await api('/api/state', { key, value, scope, ttl }); toast(`「${key}」を設定しました`); await reloadAll(); } catch (e) { oops(e); }
 };
 
@@ -771,7 +941,7 @@ function renderCands() {
   const list = document.getElementById('cand-list');
   const items = CANDS.filter(c => c.status === candFilter);
   if (!items.length) {
-    list.innerHTML = `<div class="empty">${I('inbox-empty')}<br>この status の候補はありません</div>`;
+    list.innerHTML = `<div class="empty">${I('inbox-empty')}<br>この分類の候補はありません</div>`;
     return;
   }
   list.innerHTML = items.map(c => `
@@ -792,11 +962,11 @@ function renderCands() {
           <button class="btn sm tint-green" data-a="approved" data-id="${esc(c.id)}">${I('check')}Approve</button>
           <button class="btn sm tint-red" data-a="rejected" data-id="${esc(c.id)}">${I('x')}Reject</button>
           <button class="btn sm" data-a="edit" data-id="${esc(c.id)}">${I('pencil')}条件を編集</button>
-          <span class="gate-note">${I('arrow-up-right')}approve 後は /ulm:promote で一括昇格</span>
+          <span class="gate-note">${I('arrow-up-right')}approve したら /ulm:promote でまとめて skill 化</span>
         </div>` : ''}
       ${c.status === 'approved' ? `
         <div class="cand-actions">
-          <span class="gate-note">${I('arrow-up-right')}/ulm:promote（Claude の機械的処理）が project の .claude/skills へ skill 化します</span>
+          <span class="gate-note">${I('arrow-up-right')}/ulm:promote を実行すると project の .claude/skills に skill として書き出されます</span>
         </div>` : ''}
     </div>`).join('');
   list.querySelectorAll('[data-a]').forEach(btn => btn.onclick = async () => {
@@ -859,7 +1029,8 @@ document.getElementById('sql-run').onclick = async () => {
 // ---------- 起動 ----------
 reloadAll().catch(e => {
   document.body.innerHTML = `<div style="padding:40px;font-family:sans-serif">接続エラー: ${esc(e.message)}<br>` +
-    '<code>ulm web</code> が表示した URL（token 付き）から開き直してください。</div>';
+    'サーバ（<code>ulm web</code>）が起動しているか確認して開き直してください。' +
+    'token 運用の場合は <code>ulm web</code> が表示した最新の URL から開きます。</div>';
 });
 </script>
 </body>

@@ -29,9 +29,48 @@ test('webapp: token 無し/不正は 401（API 直叩きで人間操作を偽装
       assert.equal(badToken.status, 401);
       const page = await fetch(`${base}/`);
       assert.equal(page.status, 401);
+      // ページの 401 は人間向け HTML（standalone PWA にはアドレスバーが無く生 JSON では復旧できない）
+      assert.match(page.headers.get('content-type'), /text\/html/);
       // 変更系も同様
       const mut = await fetch(`${base}/api/cand/review`, { method: 'POST', body: '{}' });
       assert.equal(mut.status, 401);
+    });
+  });
+});
+
+test('webapp: PWA アセット（manifest/icon）はトークン不要・API と HTML の要件は不変', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    await withServer(store, home, async ({ base }) => {
+      const man = await fetch(`${base}/manifest.webmanifest`);
+      assert.equal(man.status, 200);
+      assert.equal(man.headers.get('content-type'), 'application/manifest+json');
+      const parsed = JSON.parse(await man.text());
+      assert.equal(parsed.short_name, 'ulm');
+      // start_url は書かない: 省略時は追加時のページ URL が既定になる。token はサーバ再起動で
+      // ローテートするため、token 運用の PWA は再起動後に再追加が必要（PWA 常用は --tailnet 前提）
+      assert.ok(!('start_url' in parsed));
+      for (const p of ['/icon-180.png', '/icon-512.png']) {
+        const icon = await fetch(`${base}${p}`);
+        assert.equal(icon.status, 200);
+        assert.equal(icon.headers.get('content-type'), 'image/png');
+        const buf = Buffer.from(await icon.arrayBuffer());
+        assert.equal(buf.subarray(1, 4).toString(), 'PNG');
+      }
+      // 静的アセットを足しても API / HTML のトークン要件は不変
+      assert.equal((await fetch(`${base}/api/obs`)).status, 401);
+      assert.equal((await fetch(`${base}/`)).status, 401);
+      // Host 検証は静的アセットにも効く（fetch は Host を偽装できないため生の http.request）
+      const { request } = await import('node:http');
+      const port = Number(new URL(base).port);
+      const badHostStatus = await new Promise((resolveStatus, reject) => {
+        const req = request(
+          { host: '127.0.0.1', port, path: '/manifest.webmanifest', headers: { host: 'evil.example.com' } },
+          (res) => { res.resume(); resolveStatus(res.statusCode); }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+      assert.equal(badHostStatus, 403);
     });
   });
 });

@@ -24,7 +24,15 @@ import { compileGate, detectHighEntropy } from './gate.js';
 import { checkWriteTarget } from './safepath.js';
 import { parseTtl } from './util.js';
 
-const HTML_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'webapp', 'index.html');
+const WEBAPP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'webapp');
+const HTML_PATH = join(WEBAPP_DIR, 'index.html');
+// PWA 用の静的アセット。記憶データを一切含まないためトークン検証の対象外
+// （manifest / apple-touch-icon はブラウザがヘッダ無しの素の GET で取りに来る）。
+const STATIC_ASSETS = {
+  '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
+  '/icon-180.png': ['icon-180.png', 'image/png'],
+  '/icon-512.png': ['icon-512.png', 'image/png'],
+};
 const MAX_BODY = 64 * 1024;
 const SQL_ROW_CAP = 500;
 
@@ -152,6 +160,7 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       .filter(Boolean),
   );
   let html = null; // 起動後の初回アクセス時に読む（テストでは API のみ使うことがある）
+  const staticCache = new Map(); // PWA アセットも同様に初回アクセス時に読む
 
   const routes = {
     'GET /api/summary': () => {
@@ -268,15 +277,44 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
 
       if (req.method === 'GET' && url.pathname === '/') {
         if (requireToken && !tokenOk(token, url.searchParams.get('token'))) {
-          return json(res, 401, { error: 'token が必要です。`ulm web` が表示した URL から開いてください' });
+          // ページの 401 は人間向け HTML で返す（ホーム画面追加した standalone PWA には
+          // アドレスバーが無く、生 JSON だと復旧手段に辿り着けない）。API の 401 は JSON のまま。
+          res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+          return res.end('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">'
+            + '<meta name="viewport" content="width=device-width, initial-scale=1"><title>ulm — token が必要です</title>'
+            + '<style>:root{color-scheme:light dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;'
+            + 'padding:32px 24px;line-height:1.9;background:#f5f5f7;color:#1d1d1f;max-width:560px;margin:0 auto}'
+            + 'h1{font-size:18px}@media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#f5f5f7}}</style></head>'
+            + '<body>'
+            + '<h1>token が必要です</h1>'
+            + '<p>この URL の token は無効です。<code>ulm web</code> はサーバを起動し直すたびに新しい token を発行します。</p>'
+            + '<p>ターミナルの <code>ulm web</code> が表示した最新の URL から開き直してください。'
+            + 'ホーム画面に追加したアイコンから開いている場合は、いったん削除して新しい URL で追加し直すか、'
+            + 'token 無しの <code>ulm web --tailnet</code> 運用（tailnet ACL が信頼境界）に切り替えてください。</p>'
+            + '</body></html>');
         }
-        if (html === null) html = readFileSync(HTML_PATH, 'utf8');
+        // 生の readFileSync エラー（絶対パス入り）をクライアントに返さない
+        if (html === null) {
+          try { html = readFileSync(HTML_PATH, 'utf8'); }
+          catch { return json(res, 500, { error: 'UI ファイル（webapp/index.html）が見つかりません' }); }
+        }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
       }
       if (url.pathname === '/favicon.ico') {
         res.writeHead(204);
         return res.end();
+      }
+      if (req.method === 'GET' && STATIC_ASSETS[url.pathname]) {
+        const [file, type] = STATIC_ASSETS[url.pathname];
+        try {
+          if (!staticCache.has(file)) staticCache.set(file, readFileSync(join(WEBAPP_DIR, file)));
+        } catch {
+          // 無認証経路なので readFileSync の生エラー（絶対パス入り）は外に出さない
+          return json(res, 404, { error: 'not found' });
+        }
+        res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=86400' });
+        return res.end(staticCache.get(file));
       }
 
       if (url.pathname.startsWith('/api/')) {
