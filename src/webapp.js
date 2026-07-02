@@ -24,7 +24,15 @@ import { compileGate, detectHighEntropy } from './gate.js';
 import { checkWriteTarget } from './safepath.js';
 import { parseTtl } from './util.js';
 
-const HTML_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'webapp', 'index.html');
+const WEBAPP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'webapp');
+const HTML_PATH = join(WEBAPP_DIR, 'index.html');
+// PWA 用の静的アセット。記憶データを一切含まないためトークン検証の対象外
+// （manifest / apple-touch-icon はブラウザがヘッダ無しの素の GET で取りに来る）。
+const STATIC_ASSETS = {
+  '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
+  '/icon-180.png': ['icon-180.png', 'image/png'],
+  '/icon-512.png': ['icon-512.png', 'image/png'],
+};
 const MAX_BODY = 64 * 1024;
 const SQL_ROW_CAP = 500;
 
@@ -152,6 +160,7 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       .filter(Boolean),
   );
   let html = null; // 起動後の初回アクセス時に読む（テストでは API のみ使うことがある）
+  const staticCache = new Map(); // PWA アセットも同様に初回アクセス時に読む
 
   const routes = {
     'GET /api/summary': () => {
@@ -277,6 +286,12 @@ export function startWebServer(store, config, home, { host = '127.0.0.1', port =
       if (url.pathname === '/favicon.ico') {
         res.writeHead(204);
         return res.end();
+      }
+      if (req.method === 'GET' && STATIC_ASSETS[url.pathname]) {
+        const [file, type] = STATIC_ASSETS[url.pathname];
+        if (!staticCache.has(file)) staticCache.set(file, readFileSync(join(WEBAPP_DIR, file)));
+        res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=86400' });
+        return res.end(staticCache.get(file));
       }
 
       if (url.pathname.startsWith('/api/')) {

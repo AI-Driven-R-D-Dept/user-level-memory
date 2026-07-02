@@ -36,6 +36,30 @@ test('webapp: token 無し/不正は 401（API 直叩きで人間操作を偽装
   });
 });
 
+test('webapp: PWA アセット（manifest/icon）はトークン不要・API と HTML の要件は不変', async () => {
+  await withFreshStoreAsync(async (store, home) => {
+    await withServer(store, home, async ({ base }) => {
+      const man = await fetch(`${base}/manifest.webmanifest`);
+      assert.equal(man.status, 200);
+      assert.equal(man.headers.get('content-type'), 'application/manifest+json');
+      const parsed = JSON.parse(await man.text());
+      assert.equal(parsed.short_name, 'ulm');
+      // start_url は書かない: 省略時はホーム画面追加時のページ URL（token 付き運用ならそれ）が既定になる
+      assert.ok(!('start_url' in parsed));
+      for (const p of ['/icon-180.png', '/icon-512.png']) {
+        const icon = await fetch(`${base}${p}`);
+        assert.equal(icon.status, 200);
+        assert.equal(icon.headers.get('content-type'), 'image/png');
+        const buf = Buffer.from(await icon.arrayBuffer());
+        assert.equal(buf.subarray(1, 4).toString(), 'PNG');
+      }
+      // 静的アセットを足しても API / HTML のトークン要件は不変
+      assert.equal((await fetch(`${base}/api/obs`)).status, 401);
+      assert.equal((await fetch(`${base}/`)).status, 401);
+    });
+  });
+});
+
 test('webapp: Host ヘッダ検証（DNS rebinding 対策）', async () => {
   await withFreshStoreAsync(async (store, home) => {
     await withServer(store, home, async ({ base, token }) => {
