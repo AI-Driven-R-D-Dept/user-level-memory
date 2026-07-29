@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\"",
+            "command": "if [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && [ -r \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\" ]; then /bin/bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\"; else cat >/dev/null 2>&1 || :; fi",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt.sh\"",
+            "command": "if [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && [ -r \"${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt.sh\" ]; then /bin/bash \"${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt.sh\"; else cat >/dev/null 2>&1 || :; fi",
             "timeout": 8
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/stop-capture.sh\"",
+            "command": "if [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && [ -r \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-capture.sh\" ]; then /bin/bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-capture.sh\"; else cat >/dev/null 2>&1 || :; fi",
             "timeout": 150,
             "async": true
           }
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.sh\"",
+            "command": "if [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && [ -r \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.sh\" ]; then /bin/bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.sh\"; else cat >/dev/null 2>&1 || :; fi",
             "timeout": 10
           }
         ]
